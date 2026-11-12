@@ -36,8 +36,24 @@ type FeishuCardAction struct {
 
 var ErrFeishuActionConflict = errors.New("feishu action conflict")
 
+type FeishuCardActionInput struct {
+	ActionHash string
+	MessageID  string
+	ExpiresAt  time.Time
+}
+
 // SendFeishuCardAction 把同一个待审批对象的旧动作作废后记录新动作；旧回调即使到达也不能操作。
 func (s *Store) SendFeishuCardAction(ctx context.Context, hash, kind, objectKey string, assetID, subID int64, messageID string, expiresAt time.Time) error {
+	return s.SendFeishuCardActions(ctx, kind, objectKey, assetID, subID, []FeishuCardActionInput{{ActionHash: hash, MessageID: messageID, ExpiresAt: expiresAt}})
+}
+
+// SendFeishuCardActions 一次登记同一对象的多个审批人卡片。
+// 不能逐条调用 SendFeishuCardAction：后一条会把前一条刚插入的 pending 动作置为 superseded，
+// 导致多审批人时只有最后一张卡能用。旧动作只作废一次，然后在同一事务里插入全部新动作。
+func (s *Store) SendFeishuCardActions(ctx context.Context, kind, objectKey string, assetID, subID int64, actions []FeishuCardActionInput) error {
+	if len(actions) == 0 {
+		return nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -48,10 +64,12 @@ func (s *Store) SendFeishuCardAction(ctx context.Context, hash, kind, objectKey 
 		WHERE kind = ? AND object_key = ? AND status IN ('pending','processing')`, t, kind, objectKey); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO feishu_card_actions
-		(action_hash, kind, object_key, asset_id, sub_id, message_id, status, expires_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`, hash, kind, objectKey, assetID, subID, messageID, expiresAt, t, t); err != nil {
-		return err
+	for _, a := range actions {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO feishu_card_actions
+			(action_hash, kind, object_key, asset_id, sub_id, message_id, status, expires_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`, a.ActionHash, kind, objectKey, assetID, subID, a.MessageID, a.ExpiresAt, t, t); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
