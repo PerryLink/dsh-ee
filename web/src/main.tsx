@@ -28,6 +28,7 @@ import DevicePage from "./pages/device";
 import Onboarding from "./pages/onboarding";
 import GetStarted from "./pages/get-started";
 import Report from "./pages/report";
+import ConfirmPage from "./pages/confirm";
 import { useApi } from "./lib/use-api";
 import { useTranslation } from "react-i18next";
 import { Compass } from "lucide-react";
@@ -182,6 +183,7 @@ function AppRoutes() {
         <Route path="assets/:id/edit" element={<AssetEditor />} />
         <Route path="connections/:slug" element={<ConnectionBySlug />} />
         <Route path="request" element={<AccessRequestPage />} />
+        <Route path="confirm/:id" element={<ConfirmPage />} />
         <Route path="knowledge/docs/:id" element={<KnowledgeDoc />} />
         <Route path="knowledge/:id" element={<KnowledgeBase />} />
         {!pages.some((m) => m.path === "/market") && <Route path="market" element={<LegacyHub />} />}

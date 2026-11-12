@@ -313,10 +313,10 @@ func cliConfig(args []string, stdout, stderr io.Writer) int {
 			for _, r := range res.Results {
 				if r.OK {
 					pass++
-					fmt.Fprintf(stdout, "✓ 第 %d 条（%s）\n", r.Case+1, r.As)
+					fmt.Fprintf(stdout, "✓ 第 %d 条（%s）\n", r.Case, r.As)
 					continue
 				}
-				fmt.Fprintf(stdout, "✗ 第 %d 条（%s）\n", r.Case+1, r.As)
+				fmt.Fprintf(stdout, "✗ 第 %d 条（%s）\n", r.Case, r.As)
 				for _, e := range r.Errors {
 					fmt.Fprintf(stdout, "    %s\n", e)
 				}
@@ -362,7 +362,7 @@ func cliConfig(args []string, stdout, stderr io.Writer) int {
 		}
 		_ = json.Unmarshal(raw, &res)
 		printPlan(stdout, &res.Plan)
-		fmt.Fprintf(stdout, "\n已提交变更请求 #%d：%s\n网页查看：%s/admin/changes\n", res.Change.ID, res.Message, c.base)
+		fmt.Fprintf(stdout, "\n已提交变更请求 #%d：%s\n网页查看：%s/admin/fields?tab=changes\n", res.Change.ID, res.Message, c.base)
 		return 0
 
 	case "changes":

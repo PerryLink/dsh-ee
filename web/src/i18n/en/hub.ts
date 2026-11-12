@@ -289,7 +289,7 @@ export default {
     none: "None",
     eeJwt: "Identity token (ee_jwt)",
     userSecret: "Employee's own credential",
-    modeShort: { ee_jwt: "ee_jwt", user_secret: "Own credential" },
+    modeShort: { ee_jwt: "ee_jwt", user_secret: "Own credential", oauth: "OAuth" },
     eeJwtDesc: "For every call, dsh-ee signs a JWT for the current employee that is valid for 5 minutes. The upstream system verifies it with the JWKS URL below and knows who is calling; dsh-ee never stores the employee's password for that system.",
     userSecretDesc: "Each employee enters their own token on this connection's page; it is stored encrypted per person. Employees who haven't entered one are told to do so when they call a tool. You can see who has entered one, never the value.",
     header: "Header",

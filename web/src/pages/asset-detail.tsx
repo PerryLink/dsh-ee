@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Download, MoreHorizontal, RefreshCw, Terminal } from "lucide-react";
 import { api, formatTime, type ConnectionTool, type HubAsset } from "../lib/api";
@@ -16,6 +16,7 @@ import { AppMap } from "../components/app-map";
 import { AppDepsCard } from "../components/access-requests";
 import { UsedByCard } from "../components/used-by";
 import { CredentialHolders, MyCredentialCard } from "../components/connection-identity";
+import { ExtensionPanel } from "../components/extension-panel";
 import { ScopeDialog, useScopeOptions } from "../components/scope-dialog";
 import { Badge, Button, Card, CardHeader, cx, inputCls, Toggle, Empty, backLinkCls } from "../components/ui";
 import { statusBadge } from "../components/status";
@@ -137,6 +138,15 @@ function AssetDetail() {
   const navigate = useNavigate();
   const confirm = useConfirm();
   const { notify } = useStore();
+  // OAuth 授权完成后对方系统把人带回 /assets/<id>?oauth=ok（或 oauth_error=…）
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const ok = params.get("oauth");
+    const bad = params.get("oauth_error");
+    if (!ok && !bad) return;
+    notify(bad ? t("identityOAuth.failed", { error: bad }) : t("identityOAuth.ok"));
+    setParams({}, { replace: true });
+  }, [params, setParams, notify, t]);
   const { user, can } = useAuth();
   const { pathOf } = useMenus();
   const detail = useApi(() => api.hubAsset(Number(id)));
@@ -448,7 +458,8 @@ function AssetDetail() {
           )}
 
           {a.kind === "connection" && d.my_credential && a.live_version > 0 && <MyCredentialCard assetId={a.id} cred={d.my_credential} reload={detail.reload} />}
-          {a.kind === "connection" && a.can_manage && a.spec.user_auth?.mode === "user_secret" && <CredentialHolders key={d.my_credential?.updated_at ?? ""} assetId={a.id} />}
+          {a.kind === "connection" && a.can_manage && (a.spec.user_auth?.mode === "user_secret" || a.spec.user_auth?.mode === "oauth") && <CredentialHolders key={d.my_credential?.updated_at ?? ""} assetId={a.id} />}
+          {a.kind === "connection" && a.can_manage && a.spec.extension && a.live_version > 0 && <ExtensionPanel connectionId={a.id} />}
 
           {a.kind === "connection" && d.calls && (
             <Card>
@@ -524,7 +535,7 @@ function AssetDetail() {
                   </Info>
                 )}
                 {a.secret_hint && <Info label={t("connections.secret")}>{t("asset.secretHint", { hint: a.secret_hint })}</Info>}
-                {a.spec.user_auth && <Info label={t("identity.mode")}>{t(a.spec.user_auth.mode === "ee_jwt" ? "identity.eeJwt" : "identity.userSecret")}</Info>}
+                {a.spec.user_auth && <Info label={t("identity.mode")}>{a.spec.user_auth.mode === "oauth" ? t("identityOAuth.mode") : t(a.spec.user_auth.mode === "ee_jwt" ? "identity.eeJwt" : "identity.userSecret")}</Info>}
               </>
             )}
             {d.feedback && (

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { KeyRound, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { api, formatTime, type AssetSpec, type MyCredential, type UserAuth } from "../lib/api";
 import { useAction, useApi } from "../lib/use-api";
+import { extApi } from "../lib/ext-api";
 import { useStore } from "../lib/store";
 import { useConfirm } from "../lib/confirm";
 import { Badge, Button, Card, CardHeader, CopyBox, cx, Empty, Field, inputCls, Notice, PasswordInput, Segmented } from "./ui";
@@ -104,6 +105,47 @@ export function MyCredentialCard({ assetId, cred, reload }: { assetId: number; c
           <ShieldCheck size={16} className="mt-0.5 shrink-0 text-neutral-400" />
           {t("identity.mineEeJwt")}
         </p>
+      </Card>
+    );
+  }
+  if (cred.mode === "oauth") {
+    return (
+      <Card data-oauth-card>
+        <CardHeader
+          title={t("identity.mineTitle")}
+          aside={cred.filled ? <Badge tone="green">{t("identityOAuth.authorized")}</Badge> : <Badge tone="amber">{t("identityOAuth.notAuthorized")}</Badge>}
+        />
+        <div className="space-y-3 px-5 pb-5">
+          <p className="text-sm text-neutral-600">{t("identityOAuth.mine")}</p>
+          {cred.hint && <Notice>{cred.hint}</Notice>}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={busy}
+              onClick={async () => {
+                const r = await run(() => extApi.oauthStart(assetId));
+                if (!r.ok) return notify(r.error);
+                window.location.assign(r.value.url);
+              }}
+            >
+              <ShieldCheck size={14} /> {cred.filled ? t("identityOAuth.reauthorize") : t("identityOAuth.authorize")}
+            </Button>
+            {cred.filled && (
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={async () => {
+                  if (!(await confirm({ kind: "revoke", description: t("identityOAuth.revokeConfirm") }))) return;
+                  const r = await run(() => api.deleteMyCredential(assetId));
+                  notify(r.ok ? t("identityOAuth.revoked") : r.error);
+                  if (r.ok) reload();
+                }}
+              >
+                <Trash2 size={14} /> {t("identityOAuth.revoke")}
+              </Button>
+            )}
+          </div>
+          {cred.filled && cred.updated_at && <p className="text-xs text-neutral-500">{t("identity.updatedAt", { time: formatTime(cred.updated_at) })}</p>}
+        </div>
       </Card>
     );
   }

@@ -18,10 +18,12 @@ import { kdocPath, QueryTable } from "./knowledge";
 import { UsedByCard } from "../components/used-by";
 import { filesFromDrop, UploadDialog, type QueuedFile } from "../components/kb-upload";
 import { DocList } from "../components/kb-doc-list";
+import { KBSources } from "../components/kb-sources";
+import { ObjectFields } from "../components/object-fields";
 import { useAuth } from "../lib/auth";
 import { useMenus } from "../lib/menus";
 
-type Tab = "docs" | "search" | "queries";
+type Tab = "docs" | "search" | "queries" | "sources";
 type Mode = "any" | "all" | "phrase" | "regex";
 
 function NewDocDialog({ kb, open, onOpenChange, onCreated }: { kb: KBase; open: boolean; onOpenChange: (v: boolean) => void; onCreated: (id: number) => void }) {
@@ -468,9 +470,14 @@ export default function KnowledgeBase() {
               <Segmented
                 value={tab}
                 onChange={setTab}
-                options={(["docs", "search", ...(kb.can_edit ? ["queries"] : [])] as Tab[]).map((x) => ({
+                options={(["docs", "search", ...(kb.can_edit ? ["queries", "sources"] : [])] as Tab[]).map((x) => ({
                   value: x,
-                  label: x === "queries" && kb.gaps ? `${t("kbase.tabs.queries")} · ${t("kbase.gapsShort", { count: kb.gaps })}` : t(`kbase.tabs.${x}`),
+                  label:
+                    x === "sources"
+                      ? t("kbSources.title")
+                      : x === "queries" && kb.gaps
+                        ? `${t("kbase.tabs.queries")} · ${t("kbase.gapsShort", { count: kb.gaps })}`
+                        : t(`kbase.tabs.${x}`),
                 }))}
               />
             </div>
@@ -504,7 +511,13 @@ export default function KnowledgeBase() {
               )}
               {tab === "search" && <SearchTab kb={kb} />}
               {tab === "queries" && kb.can_edit && <QueriesTab kb={kb} onUpload={() => setDialog("upload")} onChanged={detail.reload} />}
+              {tab === "sources" && kb.can_edit && <KBSources kbId={kb.id} onChanged={detail.reload} />}
             </Card>
+            {kb.can_edit && (
+              <div className="mt-4">
+                <ObjectFields object="kbase" id={kb.id} />
+              </div>
+            )}
             {detail.data?.used_by && (
               <div className="mt-4">
                 <UsedByCard apps={detail.data.used_by} />

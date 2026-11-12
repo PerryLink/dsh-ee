@@ -28,6 +28,7 @@ const META = {
   "admin-users": { title: "用户", defaultPath: "/admin/users", description: "账号、禁用、重置密码、分配角色" },
   "admin-roles": { title: "角色与权限", defaultPath: "/admin/roles", description: "角色、权限点与授权" },
   "admin-menus": { title: "菜单与页面", defaultPath: "/admin/menus", description: "页面名称、路由、图标、分组与访问权限" },
+  "admin-fields": { title: "字段与访问规则", defaultPath: "/admin/fields", description: "扩展字段、按字段的访问规则、管理约束与配置变更请求" },
   "admin-providers": { title: "模型接入", defaultPath: "/admin/providers", description: "上游模型服务、企业 key 与对外模型" },
   "admin-quotas": { title: "额度分配", defaultPath: "/admin/quotas", description: "用户的月度 token 额度与可用模型" },
   "admin-keys": { title: "令牌管理", defaultPath: "/admin/tokens", description: "全部员工的令牌：查看、代发、吊销" },

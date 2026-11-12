@@ -287,7 +287,7 @@ export default {
     none: "不带",
     eeJwt: "身份令牌（ee_jwt）",
     userSecret: "员工自己的凭据",
-    modeShort: { ee_jwt: "ee_jwt", user_secret: "员工凭据" },
+    modeShort: { ee_jwt: "ee_jwt", user_secret: "员工凭据", oauth: "OAuth" },
     eeJwtDesc: "每次调用，dsh-ee 为当前员工签一个 5 分钟有效的 JWT。对方系统用下面的 JWKS 地址验签，就知道是谁；dsh-ee 不用保存员工在那个系统里的密码。",
     userSecretDesc: "每位员工在这个连接的页面上填自己的 token，按人加密保存。没填的员工调用时会被提示先去填。你只能看到谁填了，看不到内容。",
     header: "放在哪个请求头",

@@ -1,7 +1,7 @@
 /** 应用的依赖与权限申请（M7）。 */
 export default {
   requests: {
-    kinds: { connection: "连接", skill: "技能", knowledge: "知识库", plugin: "插件" },
+    kinds: { connection: "连接", skill: "技能", knowledge: "知识库", plugin: "插件", extension: "扩展" },
     status: { ok: "可用", off: "未启用", missing: "缺权限", partial: "部分可用", gone: "不存在或已下架" },
     state: { pending: "审批中", approved: "已通过", rejected: "已驳回" },
     depsTitle: "依赖与权限",

@@ -8,7 +8,8 @@ import { useLabels } from "../../lib/labels";
 import { DataTable, columnHelper, type DataColumn } from "@/components/data-table";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/shadcn/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/shadcn/tooltip";
-import { KeyRound, MoreHorizontal, ShieldCheck, Unlink, UserCheck, UserX } from "lucide-react";
+import { KeyRound, MoreHorizontal, ShieldCheck, Tags, Unlink, UserCheck, UserX } from "lucide-react";
+import { ObjectFields } from "../../components/object-fields";
 import { ErrorNote, LoadState } from "../../components/api-ui";
 import { Badge, Button, Card, CardHeader, cx, Field, inputBase, inputCls, PageHeader, Segmented } from "../../components/ui";
 import { useTranslation } from "react-i18next";
@@ -145,6 +146,8 @@ export default function AdminUsers() {
   const [creating, setCreating] = useState(false);
   const [resetFor, setResetFor] = useState<number | null>(null);
   const [rolesFor, setRolesFor] = useState<{ id: number; ids: number[] } | null>(null);
+  const [fieldsFor, setFieldsFor] = useState<number | null>(null);
+  const canFields = can("fields.manage", "users.manage");
   const [newPw, setNewPw] = useState("");
 
   const patch = async (u: User, p: Parameters<typeof api.updateUser>[1], done: string) => {
@@ -259,9 +262,21 @@ export default function AdminUsers() {
                     <ShieldCheck /> {t("users.rolesAction")}
                   </DropdownMenuItem>
                 )}
+                {canFields && (
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setRolesFor(null);
+                      setResetFor(null);
+                      setFieldsFor(u.id);
+                    }}
+                  >
+                    <Tags /> {t("objectFields.title")}
+                  </DropdownMenuItem>
+                )}
                 {canManage && u.auth_source === "local" && (
                   <DropdownMenuItem
                     onSelect={() => {
+                      setFieldsFor(null);
                       setRolesFor(null);
                       setResetFor(u.id);
                       setNewPw("");
@@ -408,6 +423,13 @@ export default function AdminUsers() {
                       {t("common.cancel")}
                     </Button>
                   </div>
+                </div>
+              ) : fieldsFor === u.id ? (
+                <div className="space-y-3">
+                  <ObjectFields object="user" id={u.id} compact showEmpty />
+                  <Button size="sm" variant="ghost" onClick={() => setFieldsFor(null)}>
+                    {t("common.close")}
+                  </Button>
                 </div>
               ) : null
             }

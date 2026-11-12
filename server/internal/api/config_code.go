@@ -815,7 +815,28 @@ func (s *Server) handleConfigChanges(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": list})
+	// 页面上要显示谁提交、谁批准的
+	type item struct {
+		*store.ChangeRequest
+		CreatedByName string `json:"created_by_name"`
+		DecidedByName string `json:"decided_by_name,omitempty"`
+	}
+	names := map[int64]string{}
+	name := func(id int64) string {
+		if n, ok := names[id]; ok {
+			return n
+		}
+		names[id] = s.usernameByID(r.Context(), id)
+		return names[id]
+	}
+	out := make([]item, len(list))
+	for i, c := range list {
+		out[i] = item{ChangeRequest: c, CreatedByName: name(c.CreatedBy)}
+		if c.DecidedBy != nil {
+			out[i].DecidedByName = name(*c.DecidedBy)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 var errChangeConflict = errors.New("conflict")
