@@ -112,6 +112,9 @@ type checker struct {
 	out     []Diagnostic
 	ignores []Ignore
 	used    map[int]bool
+	// 接口文档只解析一次；keep 每个工具都查同一份文档，不能每个工具都 yaml.Unmarshal 整份
+	docRoot   map[string]any
+	docParsed bool
 }
 
 func (c *checker) add(code, where, msg, fix string) { c.addFor("", code, where, msg, fix) }
@@ -650,7 +653,7 @@ func fixedParams(t *Tool) []FixedParam {
 // keep 检查「只保留这些字段」写得对不对：写法只能是「字段」或「字段.子字段」；
 // 接口文档写了返回结构时，再查字段是不是真有。接口文档没写返回结构时查不了字段，不报。
 func (c *checker) keep(t *Tool, op *openapi.Tool, doc []byte, where string) {
-	shape, known := responseShape(doc, op.Op.Method, op.Op.Path)
+	shape, known := c.responseShape(doc, op.Op.Method, op.Op.Path)
 	// 最常见的写错：列表包在 items / data 里，keep 却直接写每一项的字段，结果返回给模型的是空的
 	if known && !slices.ContainsFunc(t.Keep, func(k string) bool { return slices.Contains(shape.fields, strings.Split(k, ".")[0]) }) {
 		for _, parent := range shape.fields {
@@ -895,6 +898,19 @@ func responseShape(doc []byte, method, path string) (shape respShape, known bool
 	if yaml.Unmarshal(doc, &root) != nil {
 		return shape, false
 	}
+	return shapeFromRoot(root, method, path)
+}
+
+// responseShape 给 checker 用：同一份文档只解析一次。
+func (c *checker) responseShape(doc []byte, method, path string) (respShape, bool) {
+	if !c.docParsed {
+		_ = yaml.Unmarshal(doc, &c.docRoot)
+		c.docParsed = true
+	}
+	return shapeFromRoot(c.docRoot, method, path)
+}
+
+func shapeFromRoot(root map[string]any, method, path string) (shape respShape, known bool) {
 	get := func(v any, keys ...string) any {
 		for _, k := range keys {
 			m, ok := v.(map[string]any)
