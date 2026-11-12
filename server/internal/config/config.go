@@ -23,6 +23,8 @@ type Config struct {
 	// 部署在 HTTPS 后面时设为 true，会话 cookie 加 Secure。
 	CookieSecure bool
 	SessionTTL   time.Duration
+	// 公开协议面（/v1/* 与 /mcp）的每令牌限流，单位「次/分钟」；默认 60，0 或 off 关闭。
+	RateLimitPerMinute int
 	// 首次启动、用户表为空时创建的管理员。
 	BootstrapAdmin         string
 	BootstrapAdminPassword string
@@ -59,6 +61,7 @@ func Load() (*Config, error) {
 		BootstrapAdmin:         getenv("DSH_EE_BOOTSTRAP_ADMIN", "admin"),
 		BootstrapAdminPassword: os.Getenv("DSH_EE_BOOTSTRAP_ADMIN_PASSWORD"),
 		SessionTTL:             7 * 24 * time.Hour,
+		RateLimitPerMinute:     60,
 		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
 		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
 		DBWait:                 2 * time.Minute,
@@ -119,6 +122,18 @@ func Load() (*Config, error) {
 	}
 	if c.DemoMode && c.BootstrapAdminPassword == "" {
 		return nil, errors.New("DSH_EE_DEMO_MODE 需要同时设置 DSH_EE_BOOTSTRAP_ADMIN_PASSWORD：登录页要把演示账号显示出来")
+	}
+	if v := os.Getenv("DSH_EE_RATE_LIMIT"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "off", "false":
+			c.RateLimitPerMinute = 0
+		default:
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("DSH_EE_RATE_LIMIT 要是正整数（次/分钟），或 0/off 关闭")
+			}
+			c.RateLimitPerMinute = n
+		}
 	}
 	if v := os.Getenv("DSH_EE_SESSION_TTL"); v != "" {
 		d, err := time.ParseDuration(v)

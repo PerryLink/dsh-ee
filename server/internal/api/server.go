@@ -56,6 +56,11 @@ type Options struct {
 	DemoSite *DemoSite
 	// 轮换 ee_jwt 密钥时，新钥匙过多久开始签名；0 用默认的 10 分钟（测试里调短）
 	EEKeyDelay time.Duration
+	// 协议面（/v1/* 与 /mcp）每令牌每分钟的请求数；0 表示关闭。
+	// 线上默认由 config 的 DSH_EE_RATE_LIMIT 给 60，测试里按需设置。
+	RateLimitPerMinute int
+	// 限流窗口，默认 1 分钟；只给自动化测试缩短用。
+	RateLimitWindow time.Duration
 }
 
 type Server struct {
@@ -81,6 +86,8 @@ type Server struct {
 	// 服务扩展：连续出错时的熔断、回调地址的限流（service_ext.go）
 	extBreak        extBreaker
 	extEndpointRate keyRate
+	// /v1/* 与 /mcp 的每令牌限流；nil 表示关闭（见 rate_limit.go）
+	tokenRate *tokenRate
 	// 示例内容里演示差旅系统的内存数据
 	demo demoTravel
 	crm  demoCRM
@@ -132,6 +139,9 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 		})}
 	}
 	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	if opts.RateLimitPerMinute > 0 {
+		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
+	}
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()
@@ -204,7 +214,7 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/", s.opts.Web)
 	}
 
-	return s.logRequests(mux)
+	return s.requestID(s.logRequests(s.rateLimit(mux)))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -212,7 +222,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
-		s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds())
+		s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds(), "request_id", requestIDFrom(r))
 	})
 }
 

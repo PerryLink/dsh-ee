@@ -74,7 +74,20 @@ curl -fsS "$BASE/mcp" \
 | 401 `token_invalid` / `token_revoked` | 令牌错误、过期或被吊销 | 重新生成，别复用旧值 |
 | 403「没有使用工作台的权限」 | 令牌缺少 `/mcp` 需要的 `connections`，或账号没有 portal 权限 | 补 scope / 找管理员开权限 |
 | 404 模型不存在 | 用了上游名或未导入的模型 | 先 `GET /v1/models` 看对外名 |
-| 429 | 触发租户 / 令牌额度或上游限流 | 退避重试，或找管理员调额度 |
+| 429 `code=rate_limit_exceeded`（`/v1`）或 JSON-RPC `-32000`（`/mcp`） | 该令牌的请求频率超过服务端限流 | 读 `Retry-After` 秒数退避；见下节 |
+| 429 `code=monthly_quota_exceeded` 等 | 触发账号 / 令牌月度额度或上游限流 | 退避重试，或找管理员调额度 |
+
+### 限流与请求 ID
+
+`/v1/*` 与 `/mcp` 按令牌限流（同一令牌共用一份额度，不同令牌互不影响），默认每分钟 60 次；服务端可用 `DSH_EE_RATE_LIMIT` 调整或关闭，实际值以响应头为准。超限时：
+
+- HTTP 429 + `Retry-After`（秒）；
+- `X-RateLimit-Limit`（窗口额度）、`X-RateLimit-Remaining`（本次之后的剩余次数）、`X-RateLimit-Reset`（窗口重置的 Unix 秒）；
+- 错误体形状不变：`/v1` 仍是 OpenAI 的 `{"error":{"message","type","code"}}`（`code=rate_limit_exceeded`），`/mcp` 仍是 JSON-RPC 错误对象（`code=-32000`）。
+
+正常响应也会带 `X-RateLimit-Limit/Remaining/Reset`，客户端可以在 `Remaining` 接近 0 时主动降速。超限后按 `Retry-After` 退避，不要立即重试。
+
+每个响应还带 `X-Request-Id`：请求里带了这个头就原样沿用（不覆盖），否则服务端生成。建议集成方自己生成并记录这个 id，出问题时把它连同时间、接口一起提供给管理员，服务端访问日志里能按同一个 id 找到请求。
 
 ## 6. 与 DSH 的关系
 
