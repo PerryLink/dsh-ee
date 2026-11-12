@@ -197,6 +197,26 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "不能禁用、重置密码或解除权限比自己大的用户的身份绑定")
 		return
 	}
+	// 部门是资产 / 知识库的可见范围，也是「本部门令牌管理」的作用域：改部门等于替
+	// 目标调整可访问的范围，所以只能由权限严格大于目标的管理员调整下级部门，
+	// 改自己、同级或上级都不行（超级管理员本来就绕开一切检查，不受此限）。
+	if req.Department != nil && !canChangeDepartment(currentAccess(r), target) {
+		writeErr(w, http.StatusForbidden, "不能修改自己、同级或权限比自己大的用户的部门")
+		return
+	}
+	// 部门变更要记前后值，先读一次变更前的用户
+	var before *store.User
+	if req.Department != nil {
+		before, err = s.store.GetUser(r.Context(), id)
+		if err != nil {
+			if notFound(err) {
+				writeErr(w, http.StatusNotFound, "用户不存在")
+				return
+			}
+			s.internalErr(w, r, err)
+			return
+		}
+	}
 	if target.Super && req.Disabled != nil && *req.Disabled {
 		if n, err := s.store.CountSuperUsers(r.Context(), id); err != nil {
 			s.internalErr(w, r, err)
@@ -264,9 +284,31 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.DisplayName != nil || req.Department != nil {
 		detail["profile"] = true
 	}
+	if req.Department != nil {
+		detail["old_department"] = before.Department
+		detail["new_department"] = u.Department
+	}
 	s.audit(r, auditUserUpdate, u.Username, detail)
 	s.hub.notify()
 	writeJSON(w, http.StatusOK, u)
+}
+
+// canChangeDepartment：actor 能不能改目标的部门。部门决定资产 / 知识库的可见范围，
+// 也是「本部门令牌管理」的作用域，所以只允许调整权限严格小于自己的下级：自己、
+// 同级（权限集合相同）和权限更大的用户都不行。超级管理员不受限。
+func canChangeDepartment(actor, target *rbac.Access) bool {
+	if actor.Super {
+		return true
+	}
+	if target.Super || len(target.Perms) >= len(actor.Perms) {
+		return false
+	}
+	for p := range target.Perms {
+		if !actor.Perms[p] {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- 代发 key（员工也可以在自己的「我的 API key」里自助创建）----
