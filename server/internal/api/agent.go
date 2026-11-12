@@ -251,6 +251,10 @@ var agentExcluded = map[string]string{
 	"POST /api/admin/config/changes/{id}":          "批准配置变更必须由人在网页上做",
 	"POST /api/admin/config/changes/{id}/rollback": "回滚在管理页面上点",
 
+	// 端侧扩展（local_ext.go）：给本机 SDK 用的，不是给模型的工具
+	"POST /api/local/confirm": "端侧扩展 SDK 写操作前自己调；确认由员工在网页上点",
+	"POST /api/local/audit":   "端侧扩展 SDK 回报调用摘要，不是给模型用的",
+
 	// 写操作的服务端确认（write_confirm.go）：确认就是为了让人看一眼，不能让 Agent 替人点
 	"GET /api/me/confirmations":       "待确认的写操作只在网页上看",
 	"GET /api/me/confirmations/{id}":  "待确认的写操作只在网页上看",

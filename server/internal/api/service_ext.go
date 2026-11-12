@@ -52,6 +52,10 @@ func (e *connExtension) service() bool { return e != nil && e.Kind == extension.
 
 // has 报告服务扩展有没有声明某项能力。
 func (e *connExtension) has(capability string) bool {
+	if e != nil && e.Kind == extKindBuiltin {
+		// 内置知识源（kb_feishu_docs.go）只做同步
+		return capability == "knowledge.documents"
+	}
 	if !e.service() {
 		return false
 	}
@@ -311,6 +315,9 @@ func (s *Server) extHeaders(ctx context.Context, a *store.Asset, sp *assetSpec, 
 
 // extCall 调服务扩展的一个约定接口：POST <服务地址>/ee/<名字>。out 为 nil 时不读响应内容。
 func (s *Server) extCall(ctx context.Context, a *store.Asset, sp *assetSpec, v viewer, base, name string, in, out any) error {
+	if isBuiltinSource(a.ID) {
+		return s.builtinKBCall(ctx, name, in, out)
+	}
 	e := sp.Extension
 	if !e.service() {
 		return errors.New("这个连接不是服务扩展")

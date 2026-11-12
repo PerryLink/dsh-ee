@@ -26,7 +26,9 @@ func badExtension(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		var in map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		reply := func(v any) { _ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": in["id"], "result": v}) }
+		reply := func(v any) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": in["id"], "result": v})
+		}
 		switch r.URL.Path {
 		case "/.well-known/dsh-ee-extension.json":
 			_, _ = io.WriteString(w, manifest(ts.URL))

@@ -262,6 +262,9 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/ee-jwt/rotate", s.handleEEJWTRotate, rbac.ConnectionsManage),
 		pub("GET /.well-known/jwks.json", s.handleJWKS),
 		pub("/x/{token}/{rest...}", s.handleExtEndpoint),
+		// 端侧扩展（local_ext.go）：本机 SDK 用员工的接入令牌，写操作前要确认、调用后回报
+		pub("POST /api/local/confirm", s.requireToken(s.handleLocalConfirm)),
+		pub("POST /api/local/audit", s.requireToken(s.handleLocalAudit)),
 
 		// 知识库：建库、权限、文档、试搜与检索记录（员工在 DSH 里用 /mcp 的 kb__ 工具检索）
 		prm("GET /api/kb", s.handleKBList, rbac.PortalView),

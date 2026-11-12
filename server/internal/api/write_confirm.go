@@ -161,6 +161,7 @@ func (s *Server) confirmView(ctx context.Context, c *store.WriteConfirmation) *c
 			}
 		}
 	}
+	localConfirmView(out)
 	return out
 }
 

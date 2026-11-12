@@ -51,6 +51,10 @@ type kbSourceResult struct {
 
 // sourceExtension 取知识源背后的扩展连接。
 func (s *Server) sourceExtension(ctx context.Context, assetID int64) (*store.Asset, *assetSpec, error) {
+	if isBuiltinSource(assetID) {
+		a, sp := builtinFeishuDocsSource()
+		return a, sp, nil
+	}
 	a, err := s.store.GetAsset(ctx, assetID)
 	if err != nil {
 		return nil, nil, err
@@ -279,6 +283,13 @@ func (s *Server) knowledgeExtensions(ctx context.Context, v viewer) ([]map[strin
 		return nil, err
 	}
 	out := []map[string]any{}
+	// 内置的飞书文档：用飞书应用的身份读知识空间，内容同步进来后按库的权限给人看，所以只给能管理连接的人挂
+	if v.manages(store.KindConnection) {
+		if c, _ := s.feishuDocsClient(ctx); c != nil {
+			a, sp := builtinFeishuDocsSource()
+			out = append(out, map[string]any{"asset_id": a.ID, "slug": a.Slug, "title": a.Title, "extension": sp.Extension.ID, "modes": []string{store.KBSourceSync}, "builtin": true})
+		}
+	}
 	for _, a := range exts {
 		e := specs[a.ID].Extension
 		modes := []string{}
@@ -318,6 +329,15 @@ func (s *Server) handleKBSources(w http.ResponseWriter, r *http.Request) {
 // usableSourceExtension 取出请求里要挂的扩展，并确认这个人能用它。
 func (s *Server) usableSourceExtension(ctx context.Context, v viewer, assetID int64) (*store.Asset, *assetSpec, string) {
 	a, sp, err := s.sourceExtension(ctx, assetID)
+	if err == nil && isBuiltinSource(assetID) {
+		if !v.manages(store.KindConnection) {
+			return nil, nil, "内置的飞书文档只有能管理企业连接的人能挂"
+		}
+		if _, why := s.feishuDocsClient(ctx); why != "" {
+			return nil, nil, "飞书文档用不了：" + why
+		}
+		return a, sp, ""
+	}
 	if err != nil || (!available(v, a) && !v.manages(a.Kind)) {
 		return nil, nil, "没有这个扩展，或你没有使用它的权限"
 	}
