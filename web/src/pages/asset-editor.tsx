@@ -140,7 +140,7 @@ function ConnectionFields({ spec, set, secret, setSecret, secretHint, slug, asse
         <Field label={t("connections.auth")}>
           <Segmented
             value={auth.type}
-            onChange={(v) => set({ auth: { type: v, header: v === "header" ? auth.header || "X-API-Key" : undefined } })}
+            onChange={(v) => set({ auth: { ...auth, type: v, header: v === "header" ? auth.header || "X-API-Key" : undefined } })}
             options={[
               { value: "none", label: t("connections.authNone") },
               { value: "bearer", label: t("connections.authBearer") },
@@ -343,7 +343,7 @@ function AssetEditor({ forceKind, tabs }: { forceKind?: AssetKind; tabs?: ReactN
           ...(can("plugins.manage") ? { template: !!spec.template } : {}),
         };
       case "connection":
-        return { ...base, type: spec.type, url: spec.url, auth: spec.auth, user_auth: spec.user_auth, instructions: spec.instructions, timeout_seconds: spec.timeout_seconds, ...(spec.type === "openapi" ? { openapi: spec.openapi } : {}) };
+        return { ...base, type: spec.type, url: spec.url, auth: spec.auth, user_auth: spec.user_auth, instructions: spec.instructions, timeout_seconds: spec.timeout_seconds, ...(spec.type === "openapi" ? { openapi: spec.openapi } : {}), ...(spec.extension ? { extension: spec.extension } : {}) };
     }
   };
 
