@@ -161,6 +161,8 @@ func (s *Server) sendFeishuApproval(ctx context.Context, kind, objectKey string,
 		return
 	}
 	// 真正回调批准之前先尝试发卡片。卡片 id 是回调要核对的另一个边界，不能只按 object key 接受。
+	// 多审批人要全部登记完再一次性写入；逐条写会把前一个人的卡片标记成 superseded。
+	var cards []store.FeishuCardActionInput
 	for _, operator := range operators {
 		if operator <= 0 {
 			continue
@@ -182,7 +184,10 @@ func (s *Server) sendFeishuApproval(ctx context.Context, kind, objectKey string,
 			s.log.Warn("发送飞书审批卡失败", "kind", kind, "object", objectKey, "err", err)
 			continue
 		}
-		if err := s.store.SendFeishuCardAction(ctx, secret.Hash(actionID), kind, objectKey, assetID, subID, messageID, time.Now().Add(feishuCardTTL)); err != nil {
+		cards = append(cards, store.FeishuCardActionInput{ActionHash: secret.Hash(actionID), MessageID: messageID, ExpiresAt: time.Now().Add(feishuCardTTL)})
+	}
+	if len(cards) > 0 {
+		if err := s.store.SendFeishuCardActions(ctx, kind, objectKey, assetID, subID, cards); err != nil {
 			s.log.Warn("登记飞书审批动作失败", "kind", kind, "object", objectKey, "err", err)
 		}
 	}
