@@ -13,6 +13,7 @@ export const AUDIT_CATEGORIES = [
   "key",
   "settings",
   "ldap",
+  "oidc",
   "package",
   "review",
   "upstream",
