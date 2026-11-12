@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"sync"
@@ -37,6 +38,9 @@ type Options struct {
 	DataDir string
 	// 对外地址，用于生成 tarball 下载地址；为空时按请求推断。
 	PublicURL string
+	// 可信反向代理的地址或网段（DSH_EE_TRUSTED_PROXIES）。只有来自这些对端的
+	// X-Forwarded-* 才会被采信；为空时只信任本机回环地址。
+	TrustedProxies []netip.Prefix
 	// 监听地址；示例里的演示差旅系统连接从这里访问 dsh-ee 自己。为空时用请求的 Host。
 	Addr string
 	// 管理模式里「小时」的长度，默认 1 小时；只给自动化测试缩短用。
@@ -66,9 +70,11 @@ type Server struct {
 	limiter         *loginLimiter
 	deviceCodeRate  *ipRate
 	deviceTokenRate *ipRate
-	upstream        *http.Client
-	registry        *registry.Service
-	settings        settingsCache
+	// 可信反向代理网段；只有这些对端的 X-Forwarded-* 会被采信（见 proxy.go）
+	trustedProxies []netip.Prefix
+	upstream       *http.Client
+	registry       *registry.Service
+	settings       settingsCache
 	// 能力目录变化的通知（DSH 的 MCP 长连接据此刷新工具）
 	hub hubBroker
 	// 停机时关闭，让 /mcp 事件流自己结束
@@ -115,6 +121,10 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 	if opts.SessionTTL == 0 {
 		opts.SessionTTL = 7 * 24 * time.Hour
 	}
+	if len(opts.TrustedProxies) == 0 {
+		// 没接线时也保持安全默认：只信任本机回环地址上的代理。
+		opts.TrustedProxies = defaultTrustedProxies()
+	}
 	if opts.DemoSite != nil {
 		d := *opts.DemoSite
 		if _, port, err := net.SplitHostPort(opts.Addr); err == nil {
@@ -131,7 +141,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 			MaxIdleConnsPerHost:   32,
 		})}
 	}
-	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()

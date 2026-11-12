@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-sql-driver/mysql"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -31,6 +32,11 @@ type Config struct {
 	// 对外访问地址（如 https://dsh.acme.internal），用于生成 tarball 下载地址；
 	// 为空时按请求的 Host / X-Forwarded-* 推断。
 	PublicURL string
+	// 可信反向代理的地址或网段（DSH_EE_TRUSTED_PROXIES，逗号分隔的 IP / CIDR）。
+	// 只有来自这些对端的 X-Forwarded-For/Host/Proto 才会被采信；不设置时只信任本机回环地址。
+	// 反向代理在别的机器、容器网络或云负载均衡后面时必须显式配置，否则客户端 IP 会记成
+	// 代理地址，HTTPS 代理下生成的绝对链接也可能退回 http。
+	TrustedProxies []netip.Prefix
 	// 启动时等待数据库就绪的最长时间（docker compose 里数据库常比服务晚起来）。
 	DBWait time.Duration
 	// 管理模式「1 小时 / 8 小时」里「小时」的长度，默认 1h；只给自动化测试缩短用，生产不要设
@@ -66,6 +72,11 @@ func Load() (*Config, error) {
 	if c.DSN == "" {
 		return nil, errors.New("缺少 DSH_EE_DSN，例如 root:@tcp(127.0.0.1:4000)/dsh_ee")
 	}
+	trusted, err := ParseTrustedProxies(os.Getenv("DSH_EE_TRUSTED_PROXIES"))
+	if err != nil {
+		return nil, err
+	}
+	c.TrustedProxies = trusted
 	c.DataReadDSN = os.Getenv("DSH_EE_DATA_READ_DSN")
 	switch v := os.Getenv("DSH_EE_DATA_DSN"); v {
 	case "off":

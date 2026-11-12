@@ -87,17 +87,18 @@ func run(log *slog.Logger) error {
 		}
 	}
 	srv := api.New(st, box, api.Options{
-		CookieSecure:  cfg.CookieSecure,
-		SessionTTL:    cfg.SessionTTL,
-		Version:       version,
-		Web:           webui.Handler(),
-		DataDir:       cfg.DataDir,
-		PublicURL:     cfg.PublicURL,
-		Addr:          cfg.Addr,
-		AdminModeUnit: cfg.AdminModeUnit,
-		DataHub:       dataHub,
-		DataHubErr:    dataErr,
-		DemoSite:      demoSite(cfg),
+		CookieSecure:   cfg.CookieSecure,
+		SessionTTL:     cfg.SessionTTL,
+		Version:        version,
+		Web:            webui.Handler(),
+		DataDir:        cfg.DataDir,
+		PublicURL:      cfg.PublicURL,
+		TrustedProxies: cfg.TrustedProxies,
+		Addr:           cfg.Addr,
+		AdminModeUnit:  cfg.AdminModeUnit,
+		DataHub:        dataHub,
+		DataHubErr:     dataErr,
+		DemoSite:       demoSite(cfg),
 	}, log)
 
 	go sweepSessions(ctx, st, log)
