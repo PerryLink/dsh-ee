@@ -104,10 +104,14 @@ export function UploadDialog({ kb, open, onOpenChange, onDone, initial, initialF
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const dirInput = useRef<HTMLInputElement>(null);
+  const checkSeq = useRef(0);
+  const folderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 按目录分组查同名文档
   const check = async (queued: QueuedFile[], base: string) => {
-    const next: Row[] = queued.map((q) => ({ ...q, folder: joinFolder(base, q.dir), asNew: false }));
+    const seq = ++checkSeq.current;
+    const previous = new Map(rows.map((r) => [`${r.dir}/${r.file.name}`, r.asNew]));
+    const next: Row[] = queued.map((q) => ({ ...q, folder: joinFolder(base, q.dir), asNew: previous.get(`${q.dir}/${q.file.name}`) ?? false }));
     setRows(next);
     if (next.length === 0) return;
     setChecking(true);
@@ -125,11 +129,12 @@ export function UploadDialog({ kb, open, onOpenChange, onDone, initial, initialF
           }
         }
       }
+      if (seq !== checkSeq.current) return;
       setRows([...next]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (seq === checkSeq.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setChecking(false);
+      if (seq === checkSeq.current) setChecking(false);
     }
   };
 
@@ -142,10 +147,18 @@ export function UploadDialog({ kb, open, onOpenChange, onDone, initial, initialF
     void check(initial ?? [], base);
   }, [open]);
 
-  // 改了目标目录：重新查同名
+  useEffect(() => () => {
+    if (folderTimer.current) clearTimeout(folderTimer.current);
+    checkSeq.current++;
+  }, []);
+
+  // 改了目标目录：防抖后重新查同名；旧请求由 checkSeq 丢弃
   const changeFolder = (v: string) => {
     setFolder(v);
-    if (rows.length && !done) void check(rows, v);
+    if (folderTimer.current) clearTimeout(folderTimer.current);
+    folderTimer.current = setTimeout(() => {
+      if (rows.length && !done) void check(rows, v);
+    }, 250);
   };
   const add = (more: QueuedFile[]) => {
     if (done) return void check(more, folder);
