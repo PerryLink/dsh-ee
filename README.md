@@ -168,7 +168,7 @@ Confirm the device code in the browser, and DSH is connected to the company's ca
 | `DSH_EE_ADDR` | Listen address, default `127.0.0.1:8080` |
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | Admin created when the user table is empty (default user `admin`) |
 | `DSH_EE_PUBLIC_URL` | Public URL, e.g. `https://dsh.example.internal`; npm tarball URLs are generated from it |
-| `DSH_EE_COOKIE_SECURE` | Set to `true` behind HTTPS |
+| `DSH_EE_COOKIE_SECURE` | Force the `Secure` flag on the session cookie; defaults to on when `DSH_EE_PUBLIC_URL` is `https://…` |
 | `DSH_EE_DATA_DIR` | Data directory (npm tarballs, caches), default `./data` |
 | `DSH_EE_DATA_DSN` / `DSH_EE_DATA_READ_DSN` | Data hub database (writable / read-only); `off` disables the data hub |
 

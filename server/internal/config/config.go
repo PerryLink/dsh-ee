@@ -20,7 +20,8 @@ type Config struct {
 	DSN string
 	// 加密上游 API key 的 32 字节主密钥。
 	SecretKey []byte
-	// 部署在 HTTPS 后面时设为 true，会话 cookie 加 Secure。
+	// 会话 cookie 是否加 Secure。不显式设置时跟随 DSH_EE_PUBLIC_URL：
+	// 对外地址是 https 就默认开启；显式 DSH_EE_COOKIE_SECURE 覆盖这个默认。
 	CookieSecure bool
 	SessionTTL   time.Duration
 	// 首次启动、用户表为空时创建的管理员。
@@ -90,12 +91,14 @@ func Load() (*Config, error) {
 		return nil, errors.New("DSH_EE_SECRET_KEY 必须是 32 字节的 base64")
 	}
 	c.SecretKey = key
+	cookieSecureSet := false
 	if v := os.Getenv("DSH_EE_COOKIE_SECURE"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
 			return nil, fmt.Errorf("DSH_EE_COOKIE_SECURE: %w", err)
 		}
 		c.CookieSecure = b
+		cookieSecureSet = true
 	}
 	if v := os.Getenv("DSH_EE_DEMO_MODE"); v != "" {
 		b, err := strconv.ParseBool(v)
@@ -146,6 +149,11 @@ func Load() (*Config, error) {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return nil, errors.New("DSH_EE_PUBLIC_URL 必须是 http(s)://host[:port][/path] 形式")
 		}
+	}
+	if !cookieSecureSet && strings.HasPrefix(c.PublicURL, "https://") {
+		// 生产部署最常见的配置是只填 PUBLIC_URL。对外是 HTTPS 时会话 cookie 默认加 Secure，
+		// 避免漏设 DSH_EE_COOKIE_SECURE 时 cookie 还能被同主机的 HTTP 请求带出去。
+		c.CookieSecure = true
 	}
 	return c, nil
 }
