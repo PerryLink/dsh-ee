@@ -83,6 +83,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 额度属于「分配额度」权限：只有「管理用户」权限时，不能借建号显式设置或清空额度
+	if !canSetQuotaOnCreate(currentAccess(r), req.MonthlyTokenLimit) {
+		writeErr(w, http.StatusForbidden, "设置月度额度需要「分配额度」权限")
+		return
+	}
 	if req.AccountType == "" {
 		req.AccountType = store.AccountHuman
 	}
@@ -115,7 +120,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 新用户默认 0：管理员分配额度后才能调用模型。显式传 null 表示不限额。
+	// 新用户默认 0：管理员分配额度后才能调用模型；显式传 null 表示不限额（要「分配额度」权限）。
 	limit := int64(0)
 	if req.MonthlyTokenLimit.Set {
 		if req.MonthlyTokenLimit.Value != nil && *req.MonthlyTokenLimit.Value < 0 {
@@ -156,8 +161,14 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if u.AccountType == store.AccountBot {
 		action = "user.create_bot"
 	}
-	s.audit(r, action, u.Username, map[string]any{"id": u.ID, "source": u.AuthSource, "roles": dedupe(roleIDs), "owner_id": u.OwnerID})
+	s.audit(r, action, u.Username, map[string]any{"id": u.ID, "source": u.AuthSource, "roles": dedupe(roleIDs), "owner_id": u.OwnerID, "monthly_token_limit": u.MonthlyTokenLimit})
 	writeJSON(w, http.StatusCreated, u)
+}
+
+// canSetQuotaOnCreate：建账号时能不能显式设置 / 清空月度额度。额度属于「分配额度」
+// 权限，只有「管理用户」时不能借建号开出不限额账号；不传这个字段按默认额度处理。
+func canSetQuotaOnCreate(a *rbac.Access, limit nullableInt64) bool {
+	return !limit.Set || a.Has(rbac.QuotasManage)
 }
 
 type updateUserReq struct {
