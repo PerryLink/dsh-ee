@@ -1,6 +1,6 @@
 # 让 Agent 完成扩展和权限配置的开发（草案，2026-11-11）
 
-> 状态：设计稿，还没开工。§10 记了已定的事。先后顺序统一写在 [plugins.md](./plugins.md) §12，评审记录在它的 §14。和 [plugins.md](./plugins.md)（扩展）、[access-control.md](./access-control.md)（管理角色、扩展字段、访问规则）配套。
+> 状态：设计稿，还没开工。§10 记了已定的事。先后顺序统一写在 [plugins.md](./plugins.md) §12，评审记录在它的 §14。和 [plugins.md](./plugins.md)（扩展）、[extension-authors.md](./extension-authors.md)（扩展作者手册）、[access-control.md](./access-control.md)（管理角色、扩展字段、访问规则）配套。
 
 ## 1. 目标
 
@@ -27,8 +27,8 @@
 
 | 技能 | 用途 |
 |---|---|
-| `dsh-ee-extension-dev` | 写扩展：声明式扩展、Go 服务扩展、端侧 TS 扩展 |
-| `dsh-ee-access-config` | 配权限：管理角色、扩展字段、访问规则 |
+| [`dsh-ee-extension-dev`](../extensions/skills/dsh-ee-extension-dev/SKILL.md) | 写扩展：声明式扩展、Go 服务扩展、端侧 TS 扩展 |
+| [`dsh-ee-access-config`](../extensions/skills/dsh-ee-access-config/SKILL.md) | 配权限：管理角色、扩展字段、访问规则 |
 | `dsh-ee-extension-review` | 审扩展：拿到别人写的扩展，检查权限申请、写操作标记、凭据用法，给管理员出一份审阅意见 |
 
 ### 2.2 怎么下发

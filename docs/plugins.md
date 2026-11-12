@@ -2,7 +2,7 @@
 
 > 状态：第 1 批进行中（进度见 §12.1），第 2～5 批的基本部分已经做出来（§12.2）。§13 记了已定的事和还没定的问题，§14 是对照代码做的一次评审（可行性、取舍、风险）。这是对 [roadmap.md](./roadmap.md) 阶段 D / E 的细化，v0.1 的范围冻结不受影响。
 >
-> 配套文档：[access-control.md](./access-control.md)（可配置的管理角色、扩展字段和访问规则）、[agent-dev.md](./agent-dev.md)（让 Agent 完成扩展和权限配置的开发）。三份文档的先后顺序统一写在本文 §12。
+> 配套文档：[extension-authors.md](./extension-authors.md)（扩展作者手册：选形式、选凭据、工具契约、命令、上线和升级边界）、[harness-integration.md](./harness-integration.md)（非 DSH 的 Harness 怎么接：H1/H2/H3）、[access-control.md](./access-control.md)（可配置的管理角色、扩展字段和访问规则）、[agent-dev.md](./agent-dev.md)（让 Agent 完成扩展和权限配置的开发）。设计文档的先后顺序统一写在本文 §12。
 >
 > 改稿经过：
 > - 第一稿：凭据模式、端侧执行、MCP + 清单。
@@ -134,7 +134,7 @@ acme-hr/
 - **工具走 MCP**，就是现在的 MCP 连接。
 - **工具之外的能力**（配置检查、动态选项、知识源、OAuth 钩子、回调、健康检查）走同一个服务上的几个约定接口（§6），用 JSON 收发。SDK 把这些都包好了。
 - **清单由服务自己提供**：`GET <服务地址>/.well-known/dsh-ee-extension.json`。管理员装的时候只要填服务地址。
-- **dsh-ee 调扩展时要证明自己**：每个请求都带一个 dsh-ee 签的短期 JWT（和 §7.2 的 `ee_jwt` 是同一套），`aud` 是这个扩展，`sub` 是当前员工。SDK 用 dsh-ee 的 JWKS 验签，所以扩展不用另外配密钥，也天然知道是哪个员工在调。
+- **dsh-ee 调扩展时要证明自己**：每个请求都带一个 dsh-ee 签的短期 JWT（和 §7.2 的 `ee_jwt` 是同一套），`aud` 是清单里的 `id`，`sub` 是当前员工。SDK 用 dsh-ee 的 JWKS 验签，所以扩展不用另外配密钥，也天然知道是哪个员工在调。
 - **扩展调 dsh-ee**（查知识库、发起审批、回报审计）用安装时发给它的扩展令牌，只能做清单里申请过的事（§5.3）。
 - **扩展出问题不能拖累 dsh-ee**：每次调用有超时（沿用现有连接的超时和 `connResultLimit` 结果上限）；一个扩展连续失败就暂时熔断，期间它的工具直接返回 `unavailable`，其他扩展和 dsh-ee 自身不受影响。
 - **反向连接**（有需求再做，照 Dify 远程调试的思路）：扩展所在的网络 dsh-ee 访问不到时（比如分支机构的内网），由扩展主动连到 dsh-ee，调用从这条长连接上走。远程调试（§10）用的就是这个机制。服务端现在没有 WebSocket 依赖，实现时在 WebSocket 和「长轮询 + POST」之间选，后者只用标准库。
@@ -331,7 +331,7 @@ Dify 的模型插件和 Agent 策略插件不做：dsh-ee 不自己跑 AI（road
 **`ee_jwt` 最先做：**
 
 - dsh-ee 在 `/.well-known/jwks.json` 公开签名公钥。私钥用主密钥加密后存在数据库里（复用 `server/internal/secret`），多个副本共用；轮换时新旧公钥同时公开一段时间，JWT 头里的 `kid` 标明用的是哪一把。服务端现在没有 JWT 依赖，签发只需要标准库的 `crypto`，不必引入新的库。
-- 每次调用签一个 JWT：`iss` 是 dsh-ee 的地址，`aud` 是扩展的 `id`（防止拿 A 系统的令牌去调 B 系统），`sub` 和 `email` 标识员工，`dept` 和 `roles` 按管理员的设置带上，`exp` 是 5 分钟，再加一个 `jti`。
+- 每次调用签一个 JWT：`iss` 是 dsh-ee 的地址，`aud` 是对方系统的标识（连接里填的 `audience`，没填就是连接标识；服务扩展固定用清单 `id`），`sub` 和 `email` 标识员工，`dept` 和 `roles` 按管理员的设置带上，`exp` 是 5 分钟，再加一个 `jti`。
 - 企业那边：系统支持 JWKS 验签就直接用；不支持就写一层很薄的适配，验签之后换成系统自己的会话。
 - 服务扩展收到的也是这个 JWT（§4.2），SDK 已经验过签，处理函数直接拿到员工是谁。
 - 好处：dsh-ee 不用存员工密码；权限仍由源系统判定。
@@ -385,6 +385,7 @@ Dify 的模型插件和 Agent 策略插件不做：dsh-ee 不自己跑 AI（road
 - 审计：本机调用不经过服务端，SDK 把调用摘要（扩展、版本、工具、耗时、成败，不含返回内容）回报给 dsh-ee。**这是一个弱保证**，见 §13 问题 2。
 - 写操作确认：SDK 在执行没标 `readOnly` 的工具前，先调 dsh-ee 的确认接口，员工确认之后才执行。
 - 端侧扩展的包要过签名策略（§9.3），升级走升级策略（§9.4）。
+- 端侧扩展的开发者文档见 [extension-local.md](./extension-local.md)；SDK 用法见 [`extensions/sdk-local/README.md`](../extensions/sdk-local/README.md)，要开始做可以复制 [`extensions/official/legacy-local`](../extensions/official/legacy-local)。
 
 ## 9. 安装、签名和升级
 
@@ -406,23 +407,23 @@ Dify 的模型插件和 Agent 策略插件不做：dsh-ee 不自己跑 AI（road
 - **上传**：声明式扩展打成 zip 上传，给完全隔离的内网。
 - **企业目录**：管理员可以配一个或几个「扩展目录」地址。目录是一个 JSON 文件，列出扩展、版本、来源和校验和，由企业自己维护一份审核过的清单，也可以把几个扩展和应用列成一组。
 
-### 9.3 签名（默认「警告后允许」，已定）
+### 9.3 签名（默认「警告后允许」，已定；设计，未实现）
 
-- `dsh-ee extension sign` 用私钥给清单（声明式扩展连同接口文档）签名；`dsh-ee extension verify` 校验。服务扩展的签名放在清单旁边一起提供。
+- `dsh-ee extension sign` 用私钥给清单（声明式扩展连同接口文档）签名；`dsh-ee extension verify` 校验。服务扩展的签名放在清单旁边一起提供。**（设计，未实现：CLI 里没有 `sign` / `verify` 这两个命令，安装时也不校验签名，见 §10 命令表和 §12「有人要才做」。）**
 - 「设置 → 扩展 → 签名」里可以加受信任的公钥（dsh-ee 官方的、企业自己的、某个供应商的），并选择对没签名或签名不受信任的扩展怎么办：允许 / **警告后允许（默认）** / 拒绝。
 - 选「警告后允许」，是因为 dsh-ee 没有官方市场，强制签名会把第三方扩展都挡在外面；企业可以随时改成「拒绝」。
 - dsh-ee 官方扩展都用官方密钥签名。
 
 ### 9.4 安装、升级和卸载
 
-1. **取清单并检查**：核对校验和与签名，检查清单格式；服务扩展再做一次健康检查，确认清单和 MCP 工具一致。
-2. **给管理员看**：身份和版本、签名状态、扩展形式、请求会发往哪些地址、凭据模式和会交给扩展什么凭据（§7.4）、申请的反向权限、提供哪些工具、哪些是写操作、附带哪些应用、兼容的版本。
+1. **取清单并检查**：核对校验和（签名校验是 §9.3 的设计，还未实现），检查清单格式；服务扩展再做一次健康检查，确认清单和 MCP 工具一致。
+2. **给管理员看**：身份和版本、签名状态（§9.3 的设计，现在没有）、扩展形式、请求会发往哪些地址、凭据模式和会交给扩展什么凭据（§7.4）、申请的反向权限、提供哪些工具、哪些是写操作、附带哪些应用、兼容的版本。
 3. 管理员确认后，填配置（保存前调 `validate`），选可见范围（哪些部门、角色能用），启用。
 4. **升级**：
    - 声明式扩展和端侧扩展，照 Dify 的升级策略：关闭 / 只升补丁版本（默认）/ 升到最新；可以只对名单里的扩展生效或排除名单里的；可以指定每天几点升。
    - 服务扩展由企业自己升级，dsh-ee 在健康检查时发现清单变了就记下新版本。
    - 不管哪种，**新版本申请了更多权限、多了写操作工具、或者换了凭据模式，新增的部分都先不启用**，等管理员确认（照 mygo-music）。
-5. 声明式扩展保留上一个版本，一键回滚。
+5. 声明式扩展保留上一个版本，一键回滚。**（设计，未实现：现在升级只能再装一次，没有单独的回滚入口；升级前请自己留好旧版本的 zip / 仓库。）**
 6. **卸载**时问管理员：保留数据（以后装回来还能用），还是连共享凭据和员工授权一起删（OAuth 先撤销）；同时吊销扩展令牌。
 
 ### 9.5 让扩展能被找到
@@ -456,19 +457,20 @@ Dify 的模型插件和 Agent 策略插件不做：dsh-ee 不自己跑 AI（road
 
 **示例扩展代替脚手架。** `examples/demo-extension`（Go）用服务端 SDK 和假数据把所有能力都做一遍：模型填和应用填的参数、动态选项、`validate`、一个写工具、文档库知识源（带 `browse`）、联邦检索、回调地址、`ee_jwt` 和 `user_secret` 两种凭据、所有错误码、中英双语、附带一个应用。README 第一句就是「复制它就能开始」。另外再给一个声明式扩展的示例。CI 里把两个示例都装上，把每个能力调一遍。
 
-**命令**（`check`、`sign` 在 dsh-ee 二进制里；`dev` 在各自的 SDK 里）：
+**命令**（`dsh-ee extension …` 和 `dsh-ee schema …` 都在 dsh-ee 二进制里；SDK 另有各自的本机辅助命令）：
 
 | 命令 | 作用 |
 |---|---|
-| `go run . dev`（服务端）/ `npx @dsh-ee/extension-local dev`（端侧） | 本机起扩展，改了代码自动重启，带一个网页可以直接调每个工具和接口、看请求和日志，不需要 dsh-ee |
-| `go run . dev --remote https://ee.acme.com --key …` | **远程调试**（照 Dify）：扩展在开发者电脑上跑，主动连到真实的 dsh-ee（走 §4.2 的反向连接），只对开发者本人可见。可以直接用真实的员工身份、真实的内网系统调试。调试密钥在管理后台生成，要先有 §9.1 的调试权限 |
-| `dsh-ee extension init <目录>` | 复制示例扩展，改好名字，带上 `AGENTS.md` |
-| `dsh-ee extension check <目录\|地址>` | 静态检查：清单、接口文档、清单和 MCP 工具是否一致、`readOnly` 标记是否可疑、知识源接口是否完整 |
+| `dsh-ee extension dev [--listen 地址]` | 起一个**模拟的 dsh-ee**（预置员工、JWKS、假凭据），不需要数据库；扩展用原来的方式启动（`go run .`、`node --watch`），再用 `call` / `test` 调它。扩展热重载和网页调用面板**（设计，未实现）** |
+| `dsh-ee extension call <地址> <工具> [--as 员工]` | 以模拟环境里某位员工的身份调一次扩展的工具；扩展启动时的 `DSH_EE_URL` 要指向模拟环境 |
+| `go run . dev --remote https://ee.acme.com --key …` | **远程调试**（照 Dify，设计，未实现）：扩展在开发者电脑上跑，主动连到真实的 dsh-ee（走 §4.2 的反向连接），只对开发者本人可见。调试密钥在管理后台生成，要先有 §9.1 的调试权限 |
+| `dsh-ee extension init <目录> --id 作者/名字 [--kind declarative\|service]` | 生成扩展模板，改好名字，带上 `AGENTS.md`。端侧扩展没有脚手架，复制 `extensions/official/legacy-local` |
+| `dsh-ee extension check <目录> [--json]` | 静态检查：清单、接口文档、清单和 MCP 工具是否一致、`readOnly` 标记是否可疑、知识源接口是否完整。**只收目录**，没有 URL 形式（检查已经在跑的服务用 `test <地址>`） |
 | `dsh-ee extension test <目录\|地址>` | 把扩展跑起来，按协议逐项测（[agent-dev.md](./agent-dev.md) §4.2）。全部通过才算合格 |
 | `dsh-ee extension pack <目录>` | 声明式扩展打成 zip，算出校验和。服务扩展不用打包，交付的是代码仓库或镜像 |
-| `dsh-ee extension report <目录>` | 生成给管理员看的交付说明 |
-| `dsh-ee schema list / get` | 查清单、约定接口、错误码的规格 |
-| `dsh-ee extension sign / verify` | 签名和校验 |
+| `dsh-ee extension report <目录\|地址>` | 生成给管理员看的交付说明 |
+| `dsh-ee schema list / get` | 查清单、错误码等规格 |
+| `dsh-ee extension sign / verify` | 签名和校验。**（设计，未实现：CLI 没有这两个命令）** |
 
 **都放在 dsh-ee 主仓库里，先不另开仓库**（2026-11-11 已定）。协议还在变，SDK、示例、官方扩展和服务端放在一起，改一次协议能在一个 PR 里全部改完、一起跑 CI；维护者只有一个人，少一个仓库就少一套发布流程。等协议稳定（至少 v0.3 之后）再考虑拆出去。目录：
 
@@ -492,7 +494,7 @@ extensions/
 - `/extensions` 列表页（§9.5）除了按 topic 搜第三方仓库，还要把主仓库 `extensions/official/` 下的官方扩展列进去。
 - Go SDK 直接用主仓库的 Go 模块路径引用，打 `extensions/sdk-go/v0.x.y` 这样的 tag 发版；端侧 SDK 从 `extensions/sdk-local` 发到 npm，在那之前示例用本地路径引用。
 
-让 Agent 从头到尾完成扩展开发（配套技能、机器能读的规格、`extension test` 协议一致性测试、开发环境、交付说明）的设计在 [agent-dev.md](./agent-dev.md)。
+让 Agent 从头到尾完成扩展开发（配套技能、机器能读的规格、`extension test` 协议一致性测试、开发环境、交付说明）的设计在 [agent-dev.md](./agent-dev.md)。写扩展的作者手册（选形式、选凭据、工具契约、命令、上线和升级边界）见 [extension-authors.md](./extension-authors.md)。非 DSH 的 Harness（Claude Code、Codex、自研 Agent）怎么接见 [harness-integration.md](./harness-integration.md)。
 
 ## 11. 现有功能怎么过渡
 
