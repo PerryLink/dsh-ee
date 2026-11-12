@@ -28,12 +28,16 @@ const cliUsage = `用法：
   dsh-ee extension report <目录|地址>      生成给管理员看的交付说明（Markdown）
   dsh-ee config export|plan|test|apply|explain|simulate …
                                          把权限配置（角色、字段、访问规则）当文件来改，见 dsh-ee config help
+  dsh-ee package check <文件.tgz> [--json]
+                                         把 npm 包交给服务端做发布前预检，不发布、不占版本号
+  dsh-ee doctor [--json]                 只读诊断发布链路：服务连通、令牌范围、npmrc、Node/dsh 版本
   dsh-ee admin recover                   在服务器上生成一个 1 小时有效的恢复账号（把自己锁在外面时用）
   dsh-ee schema list [--json]            列出规格
   dsh-ee schema get <名字>                打印一份规格（manifest：清单；errors：检查项）
 
 extension check 有错误时退出码为 1。加 --json 输出给程序和 Agent 看的结果：
 每一条都有 code、severity、where（文件和位置）、message、fix（具体改法）。
+package check 和 doctor 的地址/令牌也可以用 DSH_EE_URL、DSH_EE_TOKEN，或读 .npmrc 与 $DSH_HOME/dsh-ee/token。
 `
 
 // runCLI 处理子命令。不是子命令时 handled 为 false，由调用方启动服务。
@@ -51,6 +55,10 @@ func runCLI(args []string, stdout, stderr io.Writer) (handled bool, code int) {
 		return true, cliSchema(args[1:], stdout, stderr)
 	case "config":
 		return true, cliConfig(args[1:], stdout, stderr)
+	case "package":
+		return true, cliPackage(args[1:], stdout, stderr)
+	case "doctor":
+		return true, cliDoctor(args[1:], stdout, stderr)
 	case "admin":
 		return true, cliAdmin(args[1:], stdout, stderr)
 	}

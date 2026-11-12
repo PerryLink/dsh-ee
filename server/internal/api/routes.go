@@ -18,6 +18,9 @@ const (
 	authAgent
 	// authConfig：网页会话，或带 config 范围的令牌（命令行 dsh-ee config …、Agent 改权限配置时用）
 	authConfig
+	// authUserToken：网页会话，或带任意范围的令牌（命令行 dsh-ee package check … 用）。
+	// 令牌权限按账号权限与范围求交，再按路由权限点校验；没有 Authorization 时仍按网页会话处理。
+	authUserToken
 )
 
 // route 是路由表的一行。网页接口与 Agent 工具同源：处理函数只有一份，
@@ -41,6 +44,8 @@ func (r route) handler(s *Server) http.Handler {
 		return s.requireAgent(r.inner(s))
 	case authConfig:
 		return s.requireConfig(r.inner(s))
+	case authUserToken:
+		return s.requireUserOrToken(r.inner(s))
 	}
 	return r.inner(s)
 }
@@ -69,6 +74,10 @@ func (s *Server) routes() []route {
 	}
 	agt := func(pattern string, h http.HandlerFunc, codes ...string) route {
 		return route{pattern: pattern, h: h, auth: authAgent, perms: codes}
+	}
+	// 网页和命令行共用的接口：浏览器带会话，命令行带访问令牌（DSH_EE_TOKEN）
+	prmt := func(pattern string, h http.HandlerFunc, codes ...string) route {
+		return route{pattern: pattern, h: h, auth: authUserToken, perms: codes}
 	}
 
 	rs := []route{
@@ -355,7 +364,7 @@ func (s *Server) routes() []route {
 		prm("GET /api/catalog/{name...}", s.handleCatalogDetail, rbac.PortalView),
 		prm("GET /api/me/packages", s.handleMyPackages, rbac.RegistryPublish),
 		prm("POST /api/me/packages", s.handleUploadPackage, rbac.RegistryPublish),
-		prm("POST /api/me/packages/check", s.handleCheckPackage, rbac.RegistryPublish),
+		prmt("POST /api/me/packages/check", s.handleCheckPackage, rbac.RegistryPublish),
 		agt("POST /api/agent/packages", s.handleUploadPackage, rbac.RegistryPublish),
 		prm("POST /api/me/import-requests", s.handleImportRequest, rbac.RegistryPublish),
 		prm("GET /api/me/npm-tokens", s.handleMyNpmTokens, rbac.RegistryUse, rbac.RegistryPublish),
