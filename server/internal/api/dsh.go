@@ -378,7 +378,8 @@ func (s *Server) handleDshWhoami(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username": p.User.Username, "department": p.User.Department, "scopes": scopes,
 		"token_prefix": p.Prefix, "expires_at": p.ExpiresAt, "client_name": p.Client, "client_kind": p.ClientKind, "legacy": p.Legacy,
-		"agent": s.agentOn(r.Context(), p), "admin_live": p.AdminLive, "admin_until": p.AdminUntil,
+		"legacy_scopes_restricted": s.opts.RestrictLegacyTokenScopes,
+		"agent":                    s.agentOn(r.Context(), p), "admin_live": p.AdminLive, "admin_until": p.AdminUntil,
 	})
 }
 

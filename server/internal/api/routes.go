@@ -97,6 +97,8 @@ func (s *Server) routes() []route {
 		pub("POST /api/auth/feishu/card", s.handleFeishuCard),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
 		pub("POST /api/auth/login", s.handleLogin),
+		// 令牌自省：Bearer 自身（第三方 Harness/SDK）或管理员网页会话查任意令牌
+		pub("POST /api/auth/introspect", s.handleIntrospect),
 		pub("POST /api/auth/demo-login", s.handleDemoLogin),
 		pub("GET /demo/intro/{lang}", s.handleDemoVideo),
 		pub("POST /api/auth/logout", s.handleLogout),

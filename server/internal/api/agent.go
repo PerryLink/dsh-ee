@@ -136,6 +136,7 @@ var agentExcluded = map[string]string{
 	"POST /api/auth/demo-login":                 "演示站访客在登录页上点选身份",
 	"GET /demo/intro/{lang}":                    "演示站首页的介绍视频",
 	"POST /api/auth/logout":                     "会话由网页管理",
+	"POST /api/auth/introspect":                 "令牌自省由第三方 Harness/SDK 直接带令牌调用，模型不需要代理",
 	"POST /api/auth/password":                   "凭据只在网页上由本人操作",
 	"POST /api/device/code":                     "设备登录协议入口",
 	"POST /api/device/token":                    "设备登录协议入口",

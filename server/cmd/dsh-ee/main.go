@@ -95,9 +95,11 @@ func run(log *slog.Logger) error {
 		PublicURL:     cfg.PublicURL,
 		Addr:          cfg.Addr,
 		AdminModeUnit: cfg.AdminModeUnit,
-		DataHub:       dataHub,
-		DataHubErr:    dataErr,
-		DemoSite:      demoSite(cfg),
+		// 旧令牌 scope 收敛（DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES）；默认关闭，不破坏现有客户端
+		RestrictLegacyTokenScopes: cfg.RestrictLegacyTokenScopes,
+		DataHub:                   dataHub,
+		DataHubErr:                dataErr,
+		DemoSite:                  demoSite(cfg),
 	}, log)
 
 	go sweepSessions(ctx, st, log)

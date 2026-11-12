@@ -60,6 +60,46 @@ func (p *Principal) quota() *store.UserQuota {
 
 func tokenError(code string) error { return bearerError(code) }
 
+// effectiveAccessTokenScopes 按「管理模式是否有效」收窄 access 令牌的 scope：
+// admin 范围只在 admin_until 有效且账号本身有管理权限时生效。resolveBearer 与 introspection 共用。
+func effectiveAccessTokenScopes(account *rbac.Access, scopes []string, adminUntil *time.Time, now time.Time) (ScopeSet, []string, bool) {
+	live := slices.Contains(scopes, rbac.ScopeAdmin) && adminUntil != nil && adminUntil.After(now) && rbac.HasAdminPerms(account)
+	effective := make([]string, 0, len(scopes))
+	set := ScopeSet{}
+	for _, scope := range scopes {
+		if scope == rbac.ScopeAdmin && !live {
+			continue
+		}
+		effective = append(effective, scope)
+		set[scope] = true
+	}
+	return set, effective, live
+}
+
+// legacyNpmScopes 是旧版 npm 令牌（ee_npm_）的固定 scope。
+// restricted 时收敛回它的原始用途（npm registry）；默认保留旧的「顺便能调模型/工作台/连接」行为，
+// 以免现有客户端突然失效。
+func legacyNpmScopes(access string, restricted bool) []string {
+	var scopes []string
+	if restricted {
+		scopes = []string{rbac.ScopeRegistryRead}
+	} else {
+		scopes = []string{rbac.ScopeModels, rbac.ScopeRegistryRead, rbac.ScopeHub, rbac.ScopeConnections}
+	}
+	if access == "publish" {
+		scopes = append(scopes, rbac.ScopeRegistryPublish)
+	}
+	return scopes
+}
+
+// legacyKeyScopes 是旧版 API key（sk-ee-）的固定 scope；restricted 时收敛回模型网关。
+func legacyKeyScopes(restricted bool) []string {
+	if restricted {
+		return []string{rbac.ScopeModels}
+	}
+	return []string{rbac.ScopeModels, rbac.ScopeHub, rbac.ScopeConnections}
+}
+
 func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost ...string) (*Principal, error) {
 	token = strings.TrimSpace(token)
 	hash := secret.Hash(token)
@@ -91,17 +131,8 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 		}
 		// admin 范围只在管理模式有效期内生效：到期（或提前结束）后令牌立刻退回员工权限，
 		// 不依赖任何定时任务；账号本身没有管理权限时也不放行。
-		live := slices.Contains(t.Scopes, rbac.ScopeAdmin) && t.AdminUntil != nil && t.AdminUntil.After(time.Now()) && rbac.HasAdminPerms(account)
-		effective := make([]string, 0, len(t.Scopes))
-		scopes := ScopeSet{}
-		for _, scope := range t.Scopes {
-			if scope == rbac.ScopeAdmin && !live {
-				continue
-			}
-			effective = append(effective, scope)
-			scopes[scope] = true
-		}
 		now := time.Now()
+		scopes, effective, live := effectiveAccessTokenScopes(account, t.Scopes, t.AdminUntil, now)
 		needsTouch := t.LastUsedAt == nil || t.LastUsedAt.Before(now.Add(-time.Minute))
 		if t.SlidingDays != nil && (t.ExpiresAt == nil || t.ExpiresAt.Before(now.AddDate(0, 0, *t.SlidingDays-1))) {
 			needsTouch = true
@@ -123,10 +154,7 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 			return nil, err
 		}
 		_ = s.store.TouchNpmToken(ctx, t.ID)
-		scopes := []string{rbac.ScopeModels, rbac.ScopeRegistryRead, rbac.ScopeHub, rbac.ScopeConnections}
-		if t.Access == "publish" {
-			scopes = append(scopes, rbac.ScopeRegistryPublish)
-		}
+		scopes := legacyNpmScopes(t.Access, s.opts.RestrictLegacyTokenScopes)
 		account, err := s.store.UserAccess(ctx, u.ID)
 		if err != nil {
 			return nil, err
@@ -153,7 +181,7 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 		if err != nil {
 			return nil, err
 		}
-		scopes := []string{rbac.ScopeModels, rbac.ScopeHub, rbac.ScopeConnections}
+		scopes := legacyKeyScopes(s.opts.RestrictLegacyTokenScopes)
 		set := ScopeSet{}
 		for _, scope := range scopes {
 			set[scope] = true
