@@ -27,6 +27,7 @@ import studio from "./studio";
 import appGuide from "./app-guide";
 import { sharedCredentials } from "./shared-credentials";
 import ext from "./ext";
+import devdocs from "./devdocs";
 
 export default {
   ...common,
@@ -56,4 +57,5 @@ export default {
   ...studio,
   ...appGuide,
   ...ext,
+  ...devdocs,
 } satisfies Messages<typeof zh>;
