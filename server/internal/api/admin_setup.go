@@ -419,6 +419,9 @@ var installHooks = []string{"preinstall", "install", "postinstall", "prepare", "
 
 // GET /api/admin/review/inspect?name=&version=&file=：看一个插件版本的内容——清单、脚本、依赖、疑似密钥、可疑点，以及指定文件的文本。
 func (s *Server) handleInspectPackage(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	q := r.URL.Query()
 	name, version, file := q.Get("name"), q.Get("version"), strings.TrimPrefix(q.Get("file"), "/")
 	if !registry.ValidName(name) {
