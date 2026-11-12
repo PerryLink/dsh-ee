@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Download, MoreHorizontal } from "lucide-react";
 import { api, formatTime, type KDocConvert, type KDocDetail } from "../lib/api";
+import { ObjectFields } from "../components/object-fields";
 import { useAction, useApi } from "../lib/use-api";
 import { useStore } from "../lib/store";
 import { useConfirm } from "../lib/confirm";
@@ -480,6 +481,7 @@ export default function KnowledgeDoc() {
                     detail.reload();
                   }}
                 />
+                <ObjectFields object="document" id={d.doc.id} />
                 {(d.outline?.length ?? 0) >= 3 && (
                   <Card>
                     <CardHeader title={t("kdoc.outline")} />

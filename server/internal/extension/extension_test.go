@@ -210,7 +210,12 @@ func TestCheckReports(t *testing.T) {
 			m["package"] = "Acme OA"
 		}},
 		{name: "凭据模式不对", code: "credential.mode_invalid", where: "#/credential/mode", edit: set("credential.mode", "jwt")},
-		{name: "oauth 还不支持", code: "credential.unsupported", where: "#/credential/mode", edit: set("credential.mode", "oauth")},
+		{name: "oauth 没写授权地址", code: "oauth.config_missing", where: "#/oauth", edit: set("credential.mode", "oauth")},
+		{name: "oauth 地址不对", code: "oauth.url_invalid", where: "#/oauth/tokenUrl", edit: func(m map[string]any) {
+			set("credential.mode", "oauth")(m)
+			m["oauth"] = map[string]any{"authorizeUrl": "https://sso.acme.com/authorize", "tokenUrl": "token"}
+		}},
+		{name: "协议版本不认识", code: "protocol.unsupported", where: "#/protocol", edit: set("protocol", "9")},
 		{name: "请求头名字不对", code: "credential.header_invalid", where: "#/credential/header", edit: set("credential.header", "X User")},
 		{name: "两份凭据同一个请求头", code: "credential.header_conflict", where: "#/credential", edit: set("credential.shared", map[string]any{"type": "bearer"})},
 		{name: "共享凭据类型不对", code: "credential.shared_invalid", where: "#/credential/shared/type", edit: set("credential.shared", map[string]any{"type": "basic"})},
@@ -266,7 +271,7 @@ func TestCheckReports(t *testing.T) {
 		{name: "人填的参数没有 label", code: "param.label_missing", where: "#/tools/0/params/0/label", edit: tool(0, "params", []any{map[string]any{"name": "status", "fill": "app"}})},
 		{name: "附带的应用找不到", code: "apps.missing", where: "#/apps/0", edit: set("apps", []any{"apps/oa-helper.yaml"})},
 		{name: "图标找不到", code: "icon.missing", where: "#/icon", edit: set("icon", "icon.svg")},
-		{name: "扩展字段还不处理", code: "fields.not_yet", where: "#/fields", edit: set("fields", []any{map[string]any{"key": "project"}})},
+		{name: "扩展字段写得不对", code: "fields.invalid", where: "#/fields/0/object", edit: set("fields", []any{map[string]any{"key": "project", "object": "page", "type": "tags", "label": "项目"}})},
 		{name: "忽略不存在的检查项", code: "ignore.invalid", where: "#/checkIgnore/0/code", edit: set("checkIgnore", []any{map[string]any{"code": "tool.readonly", "reason": "x"}})},
 		{name: "忽略不能忽略的检查项", code: "ignore.invalid", where: "#/checkIgnore/0/code", edit: set("checkIgnore", []any{map[string]any{"code": "tool.unknown", "reason": "x"}})},
 		{name: "忽略没写理由", code: "ignore.invalid", where: "#/checkIgnore/0/reason", edit: func(m map[string]any) {

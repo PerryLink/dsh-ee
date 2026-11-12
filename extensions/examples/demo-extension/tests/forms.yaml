@@ -1,0 +1,43 @@
+# 场景测试：谁、调什么、应该得到什么。`dsh-ee extension test --run "go run ." . --credential demo-123` 会一起跑。
+- name: 员工只看到自己的审批单
+  as: zhangsan
+  credential: demo-123
+  call: list_forms
+  expect:
+    ok: true
+    count: { gte: 2 }
+    contains: ["F-1001"]
+- name: 按状态筛选
+  as: zhangsan
+  credential: demo-123
+  call: list_forms
+  args: { status: done }
+  expect:
+    count: { eq: 1 }
+    contains: ["F-1002"]
+- name: 别人的单子看不到
+  as: lisi
+  credential: demo-456
+  call: list_forms
+  expect:
+    count: { eq: 1 }
+    contains: ["F-1003"]
+- name: 没填凭据时提示授权
+  as: lisi
+  credential: none
+  call: list_forms
+  expect:
+    error: authorize
+- name: 源系统说没权限时原样告诉员工
+  as: zhangsan
+  credential: demo-readonly-blocked
+  call: list_forms
+  expect:
+    error: forbidden
+- name: 请假天数不合法
+  as: zhangsan
+  credential: demo-123
+  call: submit_leave
+  args: { days: 99 }
+  expect:
+    error: invalid

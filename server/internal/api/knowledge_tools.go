@@ -70,8 +70,8 @@ func kbToolDefs() []map[string]any {
 			}, "query"),
 		def("read", "读文档原文，每行前面带行号（「12| 内容」）。用 from、to 指定行号区间，或用 section 指定标题；一次最多 400 行。"+
 			"长文档可以先用 query 在这篇里定位：返回同时含有全部关键词的几处原文（各带前后几行），再按行号接着读。回答只能依据这里读到的原文。",
-			map[string]any{"doc": integer("文档编号"), "from": integer("起始行号，默认 1"), "to": integer("结束行号（含）"), "section": str("标题（包含这几个字的第一个标题），读这一节"),
-				"query": str("在这篇里找同时含有这些关键词（空格分开，不分先后）的地方"), "version": integer("读旧版本；不填读当前版本")}, "doc"),
+			map[string]any{"doc": integer("文档编号"), "external": str("外部来源的文档：原样填检索结果 external 里的 doc（ext: 开头）。填了它就不用填 doc；只支持 from、to"), "from": integer("起始行号，默认 1"), "to": integer("结束行号（含）"), "section": str("标题（包含这几个字的第一个标题），读这一节"),
+				"query": str("在这篇里找同时含有这些关键词（空格分开，不分先后）的地方"), "version": integer("读旧版本；不填读当前版本")}),
 		def("popular", "最近 30 天被读得最多的文档；不够 10 篇时补上最近更新的。", map[string]any{"kb": str("只看这个知识库")}),
 		def("verify", "核对引用：每条引用的摘句是否真的出现在那篇文档那几行里。写进工作台看板的引用会被自动核对，也可以自己先核对。",
 			map[string]any{"citations": map[string]any{"type": "array", "maxItems": 30, "items": map[string]any{
@@ -90,6 +90,7 @@ type kbArgs struct {
 	Mode      string          `json:"mode"`
 	Limit     int             `json:"limit"`
 	Doc       int64           `json:"doc"`
+	External  string          `json:"external"`
 	From      int             `json:"from"`
 	To        int             `json:"to"`
 	Section   string          `json:"section"`
@@ -171,9 +172,9 @@ func (s *Server) kbCall(ctx context.Context, v viewer, bases []*store.KBase, nam
 	case "read":
 		return s.kbRead(ctx, v, bases, a)
 	case "popular":
-		return s.kbPopular(ctx, bases, a)
+		return s.kbPopular(ctx, v, bases, a)
 	case "verify":
-		return s.kbVerify(ctx, bases, a.Citations)
+		return s.kbVerify(ctx, v, bases, a.Citations)
 	}
 	return agentError("没有这个知识库工具：" + name)
 }
@@ -220,6 +221,9 @@ func (s *Server) kbBrowse(ctx context.Context, v viewer, bases []*store.KBase, a
 		return agentError(msg)
 	}
 	docs, texts, err := s.store.KBaseTexts(ctx, b.ID)
+	if err == nil {
+		docs, err = filterDocs(ctx, s, v, b, docs, func(d *store.KDoc) int64 { return d.ID })
+	}
 	if err != nil {
 		return agentError("读取目录失败")
 	}
@@ -275,7 +279,7 @@ func (s *Server) kbSearchTool(ctx context.Context, v viewer, bases []*store.KBas
 	if len(a.Docs) > kbMaxSearchDocs {
 		return agentError(fmt.Sprintf("docs 最多 %d 篇", kbMaxSearchDocs))
 	}
-	res, err := s.kbSearch(ctx, picked, nil, a.Docs, a.Query, a.Mode, folder, limit)
+	res, err := s.kbSearch(ctx, v, picked, nil, a.Docs, a.Query, a.Mode, folder, limit)
 	var qe *kb.QueryError
 	if errors.As(err, &qe) {
 		return agentError(qe.Msg)
@@ -313,7 +317,20 @@ func (s *Server) kbSearchTool(ctx context.Context, v viewer, bases []*store.KBas
 	if res.Note != "" {
 		notes = append(notes, res.Note)
 	}
-	if res.Total == 0 && len(res.Docs) > 0 {
+	// 联邦检索：挂在这些库上的外部来源，用员工自己的身份实时去查，结果按来源分组排在后面
+	externalHits := 0
+	if a.Mode != "regex" && len(a.Docs) == 0 && folder == "" {
+		if ext := s.kbFederatedSearch(ctx, v, picked, a.Query); len(ext) > 0 {
+			out["external"] = ext
+			for _, e := range ext {
+				externalHits += len(e.Hits)
+			}
+			notes = append(notes, "external 是外部系统按你本人的权限实时查到的结果，不在知识库里：要读原文用 kb__read 的 external 参数；有 error 的来源这次没查成，如实告诉用户")
+		}
+	}
+	if res.Total == 0 && externalHits > 0 {
+		// 本地没有但外部来源有：不算「没查到」
+	} else if res.Total == 0 && len(res.Docs) > 0 {
 		notes = append(notes, "正文没有命中，但 docs 里的文档标题对得上，可以直接用 kb__read 读。")
 	} else if res.Total == 0 {
 		notes = append(notes, "没有命中。换同义词、拆短关键词再搜，或用 kb__browse 看目录；换过几轮还是没有，就如实告诉用户知识库里没有找到。")
@@ -334,13 +351,19 @@ func (s *Server) kbSearchTool(ctx context.Context, v viewer, bases []*store.KBas
 }
 
 // kbDocFor 取一篇员工能查的文档。
-func (s *Server) kbDocFor(ctx context.Context, bases []*store.KBase, id int64) (*store.KDoc, *store.KBase, error) {
+func (s *Server) kbDocFor(ctx context.Context, v viewer, bases []*store.KBase, id int64) (*store.KDoc, *store.KBase, error) {
 	d, err := s.store.GetKDoc(ctx, id)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, b := range bases {
 		if b.ID == d.BaseID {
+			// 按字段规则看不到的文档当不存在
+			if seen, err := s.canSeeDoc(ctx, v, b, d.ID); err != nil {
+				return nil, nil, err
+			} else if !seen {
+				return nil, nil, store.ErrNotFound
+			}
 			return d, b, nil
 		}
 	}
@@ -348,10 +371,17 @@ func (s *Server) kbDocFor(ctx context.Context, bases []*store.KBase, id int64) (
 }
 
 func (s *Server) kbRead(ctx context.Context, v viewer, bases []*store.KBase, a kbArgs) json.RawMessage {
+	if ref := strings.TrimSpace(a.External); ref != "" {
+		out, msg := s.kbReadExternal(ctx, v, bases, ref, a.From, a.To)
+		if msg != "" {
+			return agentError(msg)
+		}
+		return jsonText(out, false)
+	}
 	if a.Doc <= 0 {
 		return agentError("要指定文档编号 doc")
 	}
-	d, b, err := s.kbDocFor(ctx, bases, a.Doc)
+	d, b, err := s.kbDocFor(ctx, v, bases, a.Doc)
 	if notFound(err) {
 		return agentError("没有这篇文档（编号 " + strconv.FormatInt(a.Doc, 10) + "），或你没有查看权限")
 	}
@@ -460,7 +490,7 @@ func (s *Server) kbReadFind(ctx context.Context, v viewer, b *store.KBase, d *st
 	return jsonText(out, false)
 }
 
-func (s *Server) kbPopular(ctx context.Context, bases []*store.KBase, a kbArgs) json.RawMessage {
+func (s *Server) kbPopular(ctx context.Context, v viewer, bases []*store.KBase, a kbArgs) json.RawMessage {
 	picked, msg := pickKBases(bases, a.KB)
 	if msg != "" {
 		return agentError(msg)
@@ -488,6 +518,9 @@ func (s *Server) kbPopular(ctx context.Context, bases []*store.KBase, a kbArgs) 
 	var rows []row
 	for _, b := range picked {
 		docs, err := s.store.ListKDocs(ctx, b.ID)
+		if err == nil {
+			docs, err = filterDocs(ctx, s, v, b, docs, func(d *store.KDoc) int64 { return d.ID })
+		}
 		if err != nil {
 			return agentError("读取失败")
 		}
@@ -551,7 +584,7 @@ func nearSkippedPage(d *store.KDoc, md string, line int) int {
 	return 0
 }
 
-func (s *Server) kbVerify(ctx context.Context, bases []*store.KBase, cites []kbCitation) json.RawMessage {
+func (s *Server) kbVerify(ctx context.Context, v viewer, bases []*store.KBase, cites []kbCitation) json.RawMessage {
 	if len(cites) == 0 {
 		return agentError("citations 不能为空")
 	}
@@ -562,7 +595,7 @@ func (s *Server) kbVerify(ctx context.Context, bases []*store.KBase, cites []kbC
 	out := make([]kbVerifyResult, len(cites))
 	for i, c := range cites {
 		res := kbVerifyResult{Index: i, Doc: c.Doc, Status: "missing"}
-		d, _, err := s.kbDocFor(ctx, bases, c.Doc)
+		d, _, err := s.kbDocFor(ctx, v, bases, c.Doc)
 		if err != nil {
 			out[i] = res
 			continue

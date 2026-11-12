@@ -1,0 +1,22 @@
+{
+  "id": "__ID__",
+  "version": "0.1.0",
+  "name": "__NAME__",
+  "description": "（一句话说清楚这个扩展让员工能做什么）",
+  "kind": "declarative",
+  "openapi": "openapi.yaml",
+  "servers": ["https://__NAME__.example.internal"],
+  "credential": { "mode": "ee_jwt" },
+  "tools": [
+    {
+      "name": "list_items",
+      "readOnly": true,
+      "description": "列出当前员工的条目",
+      "keep": ["items.id", "items.title", "total"]
+    },
+    {
+      "name": "create_item",
+      "description": "新建一个条目。这是写操作，调用前要员工确认。"
+    }
+  ]
+}

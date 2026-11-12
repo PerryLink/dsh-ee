@@ -16,7 +16,19 @@ import (
 const cliUsage = `用法：
   dsh-ee                                 启动服务
   dsh-ee version                         打印版本
+  dsh-ee extension init <目录> --id 作者/名字 [--kind declarative|service]
+                                         新建一个扩展（带 AGENTS.md），复制后照着改
   dsh-ee extension check <目录> [--json]  检查一个扩展：清单、接口文档、只读标记、凭据写法
+  dsh-ee extension test <目录|地址> [--run "启动命令"] [--credential 值] [--config JSON] [--write] [--json]
+                                         把服务扩展跑起来按协议逐项测；全部通过才算合格
+  dsh-ee extension dev [--listen 地址]    起一个模拟的 dsh-ee（不要数据库），写扩展时用
+  dsh-ee extension call <地址> <工具> [--as 员工] [--args JSON] [--credential 值] [--config JSON]
+                                         以某位员工的身份调一次扩展的工具
+  dsh-ee extension pack <目录> [-o 文件]   把声明式扩展打成 zip，算出校验和
+  dsh-ee extension report <目录|地址>      生成给管理员看的交付说明（Markdown）
+  dsh-ee config export|plan|test|apply|explain|simulate …
+                                         把权限配置（角色、字段、访问规则）当文件来改，见 dsh-ee config help
+  dsh-ee admin recover                   在服务器上生成一个 1 小时有效的恢复账号（把自己锁在外面时用）
   dsh-ee schema list [--json]            列出规格
   dsh-ee schema get <名字>                打印一份规格（manifest：清单；errors：检查项）
 
@@ -37,6 +49,10 @@ func runCLI(args []string, stdout, stderr io.Writer) (handled bool, code int) {
 		return true, cliExtension(args[1:], stdout, stderr)
 	case "schema":
 		return true, cliSchema(args[1:], stdout, stderr)
+	case "config":
+		return true, cliConfig(args[1:], stdout, stderr)
+	case "admin":
+		return true, cliAdmin(args[1:], stdout, stderr)
 	}
 	return false, 0
 }
@@ -57,6 +73,11 @@ func flags(args []string) (rest []string, asJSON bool, err error) {
 }
 
 func cliExtension(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		if cmd, ok := extCommands[args[0]]; ok {
+			return cmd(args[1:], stdout, stderr)
+		}
+	}
 	if len(args) == 0 || args[0] != "check" {
 		fmt.Fprint(stderr, cliUsage)
 		return 2

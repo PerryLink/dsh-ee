@@ -227,7 +227,8 @@ func TestPerUserIdentity(t *testing.T) {
 		want string
 	}{
 		{"同一个请求头", map[string]any{"title": "X", "type": "openapi", "url": hr.URL, "openapi": doc, "auth": map[string]any{"type": "bearer"}, "user_auth": map[string]any{"mode": "ee_jwt"}}, "同一个请求头"},
-		{"模式不对", hrSpec(map[string]any{"mode": "oauth"}), "ee_jwt 或 user_secret"},
+		{"模式不对", hrSpec(map[string]any{"mode": "basic"}), "ee_jwt、user_secret 或 oauth"},
+		{"手工连接不能用 oauth", hrSpec(map[string]any{"mode": "oauth"}), "只能用在扩展装的连接上"},
 		{"员工信息不对", hrSpec(map[string]any{"mode": "ee_jwt", "claims": []string{"salary"}}), "dept / roles / idp_sub"},
 		{"请求头名字不对", hrSpec(map[string]any{"mode": "user_secret", "header": "X Bad"}), "请求头名字"},
 	} {

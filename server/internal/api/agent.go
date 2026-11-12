@@ -217,6 +217,59 @@ var agentExcluded = map[string]string{
 	"GET /api/admin/connections/{id}/shared-credentials":           "命名共享凭据只在管理员页面查看，不把授权清单交给 Agent 批量枚举",
 	"PUT /api/admin/connections/{id}/shared-credentials/{name}":    "共享凭据只能由管理员写入或替换，密钥不进入模型上下文",
 	"DELETE /api/admin/connections/{id}/shared-credentials/{name}": "删除或收回命名共享凭据由管理员在网页上做",
+
+	// 服务扩展、oauth、回调地址（service_ext.go、ext_oauth.go）
+	"GET /api/admin/connections/{id}/extension":          "扩展的配置和回调地址只在管理页面看",
+	"POST /api/admin/connections/{id}/extension/health":  "健康检查在管理页面点；后台每小时自动查一次",
+	"POST /api/admin/connections/{id}/extension/options": "安装扩展时填配置用的选项，只在网页上用",
+	"POST /api/me/connections/{id}/oauth/start":          "授权要员工本人在浏览器里跳去对方系统完成，不经过模型",
+	"GET /api/oauth/callback":                            "OAuth 回调，浏览器跳转用",
+	"/x/{token}/{rest...}":                               "第三方系统打给扩展的回调地址，不是给 Agent 用的",
+
+	// 扩展字段和访问规则（fields.go）：用于访问控制的设置只在网页上改；Agent 改配置走 dsh-ee config（配置令牌 + 变更请求）
+	"GET /api/admin/fields":               "字段和规则在管理页面看；Agent 用 dsh-ee config export",
+	"POST /api/admin/fields":              "加字段在管理页面做，或用 dsh-ee config 提交变更请求",
+	"PATCH /api/admin/fields/{id}":        "改字段在管理页面做，或用 dsh-ee config 提交变更请求",
+	"DELETE /api/admin/fields/{id}":       "删字段在管理页面做",
+	"POST /api/admin/access-rules":        "访问规则在管理页面改，或用 dsh-ee config 提交变更请求",
+	"PUT /api/admin/access-rules/{id}":    "访问规则在管理页面改，或用 dsh-ee config 提交变更请求",
+	"DELETE /api/admin/access-rules/{id}": "访问规则在管理页面改",
+	"GET /api/fields/{object}/{oid}":      "字段值在文档、用户页面上看",
+	"GET /api/admin/field-sync":           "组织同步带的字段映射在管理页面看",
+	"PUT /api/admin/field-sync":           "组织同步带的字段映射决定用户的访问控制属性，只在网页上改",
+	"PUT /api/fields/{object}/{oid}":      "用于访问控制的字段值不交给模型改",
+	"POST /api/admin/access/explain":      "用 dsh-ee config explain（配置令牌）",
+	"POST /api/admin/access/simulate":     "用 dsh-ee config simulate（配置令牌）",
+
+	// 管理约束和配置即代码（admin_policy.go、config_code.go）：Agent 只能用配置令牌导出、试算、提交，批准永远是人
+	"GET /api/admin/policy":                        "管理约束在管理页面看",
+	"PUT /api/admin/policy":                        "关掉超级管理员这类管理约束只在网页上改",
+	"POST /api/admin/policy/preset":                "预设只在网页上选",
+	"GET /api/admin/config":                        "用 dsh-ee config export（配置令牌）",
+	"POST /api/admin/config/plan":                  "用 dsh-ee config plan（配置令牌）",
+	"POST /api/admin/config/test":                  "用 dsh-ee config test（配置令牌）",
+	"POST /api/admin/config/changes":               "用 dsh-ee config apply（配置令牌）提交变更请求",
+	"GET /api/admin/config/changes":                "用 dsh-ee config status（配置令牌）",
+	"POST /api/admin/config/changes/{id}":          "批准配置变更必须由人在网页上做",
+	"POST /api/admin/config/changes/{id}/rollback": "回滚在管理页面上点",
+
+	// 端侧扩展（local_ext.go）：给本机 SDK 用的，不是给模型的工具
+	"POST /api/local/confirm": "端侧扩展 SDK 写操作前自己调；确认由员工在网页上点",
+	"POST /api/local/audit":   "端侧扩展 SDK 回报调用摘要，不是给模型用的",
+
+	// 写操作的服务端确认（write_confirm.go）：确认就是为了让人看一眼，不能让 Agent 替人点
+	"GET /api/me/confirmations":       "待确认的写操作只在网页上看",
+	"GET /api/me/confirmations/{id}":  "待确认的写操作只在网页上看",
+	"POST /api/me/confirmations/{id}": "同意或拒绝写操作必须由员工本人在网页上点，不能由 Agent 代劳",
+	"GET /api/admin/write-confirm":    "服务端确认的开关只在管理页面看",
+	"PUT /api/admin/write-confirm":    "关掉服务端确认是安全设置，只能由管理员在网页上改",
+
+	// 知识源（kb_sources.go）：挂载用的是共享凭据，同步会批量写知识库，由维护者在网页上做
+	"GET /api/kb/{id}/sources":                "知识源在知识库页面上管",
+	"POST /api/kb/{id}/sources":               "挂知识源由维护者在网页上勾选范围后确认",
+	"POST /api/kb/{id}/sources/browse":        "勾选知识源范围时用，只在网页上用",
+	"POST /api/kb/{id}/sources/{source}/sync": "同步知识源在知识库页面上点；后台定时同步",
+	"DELETE /api/kb/{id}/sources/{source}":    "摘掉知识源在知识库页面上做",
 }
 
 // agentPending 是还没开放、等后续阶段的路由（管理侧工具）。

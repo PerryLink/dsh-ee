@@ -3,7 +3,7 @@ import type { Messages } from "../types";
 
 export default {
   requests: {
-    kinds: { connection: "Connection", skill: "Skill", knowledge: "Knowledge base", plugin: "Plugin" },
+    kinds: { connection: "Connection", skill: "Skill", knowledge: "Knowledge base", plugin: "Plugin", extension: "Extension" },
     status: { ok: "Available", off: "Not enabled", missing: "No access", partial: "Partly available", gone: "Missing or unpublished" },
     state: { pending: "Pending", approved: "Approved", rejected: "Rejected" },
     depsTitle: "Dependencies and access",

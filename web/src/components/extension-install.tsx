@@ -2,10 +2,10 @@ import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 import { PackageOpen } from "lucide-react";
-import { api, type ExtAdminParam, type ExtPackage, type ExtPlan } from "../lib/api";
+import { api, type ExtAdminParam, type ExtConfigField, type ExtPackage, type ExtPlan, type ExtText } from "../lib/api";
 import { useAction } from "../lib/use-api";
 import { ErrorNote } from "./api-ui";
-import { Badge, Button, Field, Notice, PasswordInput, Segmented, cx, inputCls } from "./ui";
+import { Badge, Button, Field, Notice, PasswordInput, Segmented, Toggle, cx, inputCls } from "./ui";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/shadcn/dialog";
 
 const MANIFEST = "dsh-ee.extension.json";
@@ -25,6 +25,19 @@ async function readPackage(files: File[]): Promise<ExtPackage> {
   const out: Record<string, string> = {};
   for (const f of files) out[f.name] = await f.text();
   return { files: out };
+}
+
+/** 清单里给人看的文字：字符串，或 {zh, en}。 */
+export function extText(v: ExtText | undefined, lang: string) {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  return (lang.startsWith("zh") ? v.zh || v.en : v.en || v.zh) ?? "";
+}
+
+/** 服务扩展配置项的选项（静态的）。 */
+function configOptions(f: ExtConfigField, lang: string) {
+  if (!Array.isArray(f.options)) return [];
+  return f.options.map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: extText(o.label, lang) || o.value }));
 }
 
 /** 管理员设置的参数在输入框里怎么显示：字符串去掉引号，其余按 JSON。 */
@@ -66,6 +79,12 @@ export function InstallExtensionButton() {
   const [secret, setSecret] = useState("");
   const [admin, setAdmin] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState(false);
+  const [start, setStart] = useState(false);
+  const [serviceUrl, setServiceUrl] = useState("");
+  const [config, setConfig] = useState<Record<string, unknown>>({});
+  const [oauthId, setOauthId] = useState("");
+  const [oauthSecret, setOauthSecret] = useState("");
+  const lang = useTranslation().i18n.language;
 
   const close = () => {
     setPkg(null);
@@ -82,8 +101,14 @@ export function InstallExtensionButton() {
       return setError(t("extensions.readFailed"));
     }
     if ("files" in p && !p.files[MANIFEST]) return setError(t("extensions.needManifest", { file: MANIFEST }));
+    await checkPackage(p);
+  };
+
+  const checkPackage = async (p: ExtPackage) => {
+    setError(null);
     const r = await run(() => api.checkExtension(p));
     if (!r.ok) return setError(r.error);
+    setStart(false);
     const pl = r.value;
     setPkg(p);
     setPlan(pl);
@@ -94,6 +119,14 @@ export function InstallExtensionButton() {
     const init: Record<string, string> = {};
     for (const ap of pl.admin_params) init[ap.key] = shown(pl.admin?.[ap.key] ?? ap.default);
     setAdmin(init);
+    const cfg: Record<string, unknown> = {};
+    for (const f of pl.config ?? []) {
+      const old = pl.config_values?.[f.key];
+      cfg[f.key] = f.type === "secret" ? "" : (old ?? f.default ?? (f.type === "boolean" ? false : ""));
+    }
+    setConfig(cfg);
+    setOauthId(pl.oauth_client_id ?? "");
+    setOauthSecret("");
   };
 
   const install = async () => {
@@ -109,6 +142,13 @@ export function InstallExtensionButton() {
         secret: secret.trim() ? secret.trim() : undefined,
         admin: values,
         confirm,
+        ...(plan.kind === "service"
+          ? {
+              // secret 留空表示沿用原来的：不传这一项
+              config: Object.fromEntries(Object.entries(config).filter(([k, v]) => !((plan.config ?? []).find((f) => f.key === k)?.type === "secret" && v === ""))),
+            }
+          : {}),
+        ...(plan.oauth_client ? { oauth_client_id: oauthId.trim(), oauth_client_secret: oauthSecret.trim() || undefined } : {}),
       }),
     );
     if (!r.ok) return setError(r.error);
@@ -138,11 +178,40 @@ export function InstallExtensionButton() {
           e.target.value = "";
         }}
       />
-      <Button variant="secondary" disabled={busy} onClick={() => input.current?.click()}>
+      <Button variant="secondary" disabled={busy} onClick={() => setStart(true)}>
         <PackageOpen size={15} /> {t("extensions.install")}
       </Button>
 
-      <Dialog open={!!error && !plan} onOpenChange={(v) => !v && setError(null)}>
+      <Dialog open={start} onOpenChange={setStart}>
+        <DialogContent data-extension-start>
+          <DialogHeader>
+            <DialogTitle>{t("extensions.install")}</DialogTitle>
+            <DialogDescription>{t("extInstall.serviceUrlHint")}</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (serviceUrl.trim()) void checkPackage({ service_url: serviceUrl.trim() });
+            }}
+          >
+            <Field label={t("extInstall.serviceUrl")}>
+              <input className={cx(inputCls, "font-mono")} placeholder="https://oa-ext.acme.internal" value={serviceUrl} onChange={(e) => setServiceUrl(e.target.value)} />
+            </Field>
+            {error && <ErrorNote>{error}</ErrorNote>}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button type="button" variant="ghost" onClick={() => input.current?.click()}>
+                {t("extInstall.fromFile")}
+              </Button>
+              <Button type="submit" disabled={busy || !serviceUrl.trim()}>
+                {t("extInstall.fetch")}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!error && !plan && !start} onOpenChange={(v) => !v && setError(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("extensions.checkFailed")}</DialogTitle>
@@ -184,8 +253,33 @@ export function InstallExtensionButton() {
                 {check.ok && (
                   <>
                     <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2">
-                      <dt className="text-neutral-500">{t("extensions.servers")}</dt>
-                      <dd className="font-mono text-xs break-all">{(check.servers ?? []).join("\n") || "—"}</dd>
+                      {plan.kind === "service" ? (
+                        <>
+                          <dt className="text-neutral-500">{t("extInstall.serviceUrl")}</dt>
+                          <dd className="font-mono text-xs break-all">{plan.service_url}</dd>
+                          {(plan.capabilities ?? []).length > 0 && (
+                            <>
+                              <dt className="text-neutral-500">{t("extInstall.capabilities")}</dt>
+                              <dd className="flex flex-wrap gap-1">
+                                {plan.capabilities!.map((c) => (
+                                  <Badge key={c}>{c}</Badge>
+                                ))}
+                              </dd>
+                            </>
+                          )}
+                          {plan.permissions && Object.keys(plan.permissions).length > 0 && (
+                            <>
+                              <dt className="text-neutral-500">{t("extInstall.permissions")}</dt>
+                              <dd className="font-mono text-xs">{Object.entries(plan.permissions).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join("  ")}</dd>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <dt className="text-neutral-500">{t("extensions.servers")}</dt>
+                          <dd className="font-mono text-xs break-all">{(check.servers ?? []).join("\n") || "—"}</dd>
+                        </>
+                      )}
                       <dt className="text-neutral-500">{t("extensions.credential")}</dt>
                       <dd>{cred ? t(`extensions.mode.${cred.mode}`) : t("extensions.mode.none")}</dd>
                       <dt className="text-neutral-500">{t("extensions.tools")}</dt>
@@ -282,6 +376,76 @@ export function InstallExtensionButton() {
                       </>
                     )}
                     {(cred?.mode === "ee_jwt" || cred?.mode === "user_secret") && <Notice>{t(`extensions.identity.${cred.mode}`)}</Notice>}
+
+                    {(plan.handover ?? []).length > 0 && (
+                      <Notice tone="warn">
+                        <p className="font-medium">{t("extInstall.handover")}</p>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                          {plan.handover!.map((h) => (
+                            <li key={h}>{h}</li>
+                          ))}
+                        </ul>
+                      </Notice>
+                    )}
+
+                    {(plan.config ?? []).length > 0 && (
+                      <div className="space-y-3" data-extension-config>
+                        <p className="font-medium text-neutral-900">{t("extInstall.config")}</p>
+                        {plan.config!.map((f) => {
+                          const label = extText(f.label, lang) || f.key;
+                          const help = extText(f.help, lang);
+                          const v = config[f.key];
+                          const set = (x: unknown) => setConfig({ ...config, [f.key]: x });
+                          const opts = configOptions(f, lang);
+                          return (
+                            <Field key={f.key} label={f.required ? `${label} *` : label} hint={f.type === "secret" && plan.existing ? t("extInstall.keepSecret") : help || undefined}>
+                              {f.type === "boolean" ? (
+                                <Toggle checked={!!v} onChange={set} />
+                              ) : f.type === "secret" ? (
+                                <PasswordInput label={label} className={inputCls} autoComplete="new-password" value={String(v ?? "")} onChange={(e) => set(e.target.value)} />
+                              ) : f.type === "select" && opts.length > 0 ? (
+                                <select className={inputCls} value={String(v ?? "")} onChange={(e) => set(e.target.value)}>
+                                  <option value="">—</option>
+                                  {opts.map((o) => (
+                                    <option key={o.value} value={o.value}>
+                                      {o.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input className={cx(inputCls, f.type === "url" && "font-mono")} value={String(v ?? "")} onChange={(e) => set(e.target.value)} />
+                              )}
+                            </Field>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {plan.oauth_client && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label={t("extInstall.oauthClientId")} hint={t("extInstall.oauthHint", { redirect: `${window.location.origin}/api/oauth/callback` })}>
+                          <input className={cx(inputCls, "font-mono")} value={oauthId} onChange={(e) => setOauthId(e.target.value)} />
+                        </Field>
+                        <Field label={t("extInstall.oauthClientSecret")} hint={plan.existing ? t("extInstall.keepSecret") : undefined}>
+                          <PasswordInput label={t("extInstall.oauthClientSecret")} className={inputCls} autoComplete="new-password" value={oauthSecret} onChange={(e) => setOauthSecret(e.target.value)} />
+                        </Field>
+                      </div>
+                    )}
+
+                    {(plan.fields ?? []).length > 0 && (
+                      <div>
+                        <p className="font-medium text-neutral-900">{t("extInstall.fields")}</p>
+                        <p className="mb-1 text-xs text-neutral-500">{t("extInstall.fieldsHint")}</p>
+                        <ul className="list-disc space-y-0.5 pl-5 text-neutral-700">
+                          {plan.fields!.map((f) => (
+                            <li key={f.object + f.key}>
+                              <span className="font-mono text-xs">{f.key}</span> · {t(`fieldsAdmin.object.${f.object}` as never)} · {t(`fieldsAdmin.type.${f.type}` as never)}
+                              {f.access && ` · ${t("objectFields.accessBadge")}`}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
                     {plan.sensitive.length > 0 && (
                       <Notice tone="warn">

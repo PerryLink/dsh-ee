@@ -16,6 +16,8 @@ const (
 	authUser
 	// authAgent：DSH 里的接入插件带 agent 范围的令牌，等价于代这位员工操作。
 	authAgent
+	// authConfig：网页会话，或带 config 范围的令牌（命令行 dsh-ee config …、Agent 改权限配置时用）
+	authConfig
 )
 
 // route 是路由表的一行。网页接口与 Agent 工具同源：处理函数只有一份，
@@ -37,6 +39,8 @@ func (r route) handler(s *Server) http.Handler {
 		return s.requireUser(r.inner(s))
 	case authAgent:
 		return s.requireAgent(r.inner(s))
+	case authConfig:
+		return s.requireConfig(r.inner(s))
 	}
 	return r.inner(s)
 }
@@ -59,6 +63,9 @@ func (s *Server) routes() []route {
 	usr := func(pattern string, h http.HandlerFunc) route { return route{pattern: pattern, h: h, auth: authUser} }
 	prm := func(pattern string, h http.HandlerFunc, codes ...string) route {
 		return route{pattern: pattern, h: h, auth: authUser, perms: codes}
+	}
+	cfg := func(pattern string, h http.HandlerFunc, codes ...string) route {
+		return route{pattern: pattern, h: h, auth: authConfig, perms: codes}
 	}
 	agt := func(pattern string, h http.HandlerFunc, codes ...string) route {
 		return route{pattern: pattern, h: h, auth: authAgent, perms: codes}
@@ -118,6 +125,13 @@ func (s *Server) routes() []route {
 		prm("GET /api/me/connections", s.handleMyConnections, rbac.PortalView),
 		prm("PUT /api/me/connections/{id}/credential", s.handleSetMyCredential, rbac.PortalView),
 		prm("DELETE /api/me/connections/{id}/credential", s.handleDeleteMyCredential, rbac.PortalView),
+		prm("POST /api/me/connections/{id}/oauth/start", s.handleOAuthStart, rbac.PortalView),
+		usr("GET /api/me/confirmations", s.handleMyConfirmations),
+		usr("GET /api/me/confirmations/{id}", s.handleGetConfirmation),
+		usr("POST /api/me/confirmations/{id}", s.handleDecideConfirmation),
+		prm("GET /api/admin/write-confirm", s.handleGetWriteConfirm, rbac.SettingsManage),
+		prm("PUT /api/admin/write-confirm", s.handlePutWriteConfirm, rbac.SettingsManage),
+		usr("GET /api/oauth/callback", s.handleOAuthCallback),
 		prm("POST /api/me/connection-requests", s.handleCreateConnectionRequest, rbac.PortalView),
 		prm("GET /api/me/access-target", s.handleAccessTarget, rbac.PortalView),
 		prm("GET /api/me/access-requests", s.handleMyAccessRequests, rbac.PortalView),
@@ -215,6 +229,32 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/connections/test", s.handleConnTest, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/check", s.handleExtCheck, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/install", s.handleExtInstall, rbac.ConnectionsManage),
+		prm("GET /api/admin/fields", s.handleListFields, rbac.FieldsManage, rbac.UsersView),
+		prm("POST /api/admin/fields", s.handleCreateField, rbac.FieldsManage),
+		prm("PATCH /api/admin/fields/{id}", s.handlePatchField, rbac.FieldsManage),
+		prm("DELETE /api/admin/fields/{id}", s.handleDeleteField, rbac.FieldsManage),
+		prm("POST /api/admin/access-rules", s.handleCreateRule, rbac.FieldsManage),
+		prm("PUT /api/admin/access-rules/{id}", s.handleUpdateRule, rbac.FieldsManage),
+		prm("DELETE /api/admin/access-rules/{id}", s.handleDeleteRule, rbac.FieldsManage),
+		prm("GET /api/admin/field-sync", s.handleGetFieldSync, rbac.FieldsManage),
+		prm("PUT /api/admin/field-sync", s.handlePutFieldSync, rbac.FieldsManage),
+		prm("GET /api/fields/{object}/{oid}", s.handleObjectFields, rbac.PortalView),
+		prm("PUT /api/fields/{object}/{oid}", s.handleSetObjectFields, rbac.PortalView),
+		prm("GET /api/admin/policy", s.handleGetPolicy, rbac.RolesManage),
+		prm("PUT /api/admin/policy", s.handlePutPolicy, rbac.RolesManage),
+		prm("POST /api/admin/policy/preset", s.handleApplyPreset, rbac.RolesManage),
+		cfg("GET /api/admin/config", s.handleConfigExport, rbac.FieldsManage, rbac.RolesManage),
+		cfg("POST /api/admin/config/plan", s.handleConfigPlan, rbac.FieldsManage, rbac.RolesManage),
+		cfg("POST /api/admin/config/test", s.handleConfigTest, rbac.FieldsManage, rbac.RolesManage),
+		cfg("POST /api/admin/config/changes", s.handleConfigSubmit, rbac.FieldsManage, rbac.RolesManage),
+		cfg("GET /api/admin/config/changes", s.handleConfigChanges, rbac.FieldsManage, rbac.RolesManage),
+		prm("POST /api/admin/config/changes/{id}", s.handleConfigDecide, rbac.FieldsManage, rbac.RolesManage),
+		prm("POST /api/admin/config/changes/{id}/rollback", s.handleConfigRollback, rbac.FieldsManage, rbac.RolesManage),
+		cfg("POST /api/admin/access/explain", s.handleExplain, rbac.FieldsManage, rbac.RolesManage),
+		cfg("POST /api/admin/access/simulate", s.handleSimulate, rbac.FieldsManage, rbac.RolesManage),
+		prm("GET /api/admin/connections/{id}/extension", s.handleExtInfo, rbac.ConnectionsManage),
+		prm("POST /api/admin/connections/{id}/extension/health", s.handleExtHealth, rbac.ConnectionsManage),
+		prm("POST /api/admin/connections/{id}/extension/options", s.handleExtOptions, rbac.ConnectionsManage),
 		prm("POST /api/admin/connections/{id}/sync", s.handleConnSync, rbac.ConnectionsManage),
 		prm("PATCH /api/admin/connections/{id}/tools/{name}", s.handleConnTool, rbac.ConnectionsManage),
 		// 按员工本人的身份调用（user_identity.go）：谁填了凭据、ee_jwt 的签名密钥和公钥
@@ -223,6 +263,10 @@ func (s *Server) routes() []route {
 		prm("GET /api/admin/ee-jwt", s.handleEEJWTInfo, rbac.ConnectionsManage),
 		prm("POST /api/admin/ee-jwt/rotate", s.handleEEJWTRotate, rbac.ConnectionsManage),
 		pub("GET /.well-known/jwks.json", s.handleJWKS),
+		pub("/x/{token}/{rest...}", s.handleExtEndpoint),
+		// 端侧扩展（local_ext.go）：本机 SDK 用员工的接入令牌，写操作前要确认、调用后回报
+		pub("POST /api/local/confirm", s.requireToken(s.handleLocalConfirm)),
+		pub("POST /api/local/audit", s.requireToken(s.handleLocalAudit)),
 
 		// 知识库：建库、权限、文档、试搜与检索记录（员工在 DSH 里用 /mcp 的 kb__ 工具检索）
 		prm("GET /api/kb", s.handleKBList, rbac.PortalView),
@@ -235,6 +279,11 @@ func (s *Server) routes() []route {
 		prm("DELETE /api/kb/{id}", s.handleKBDelete, rbac.KnowledgeManage),
 		prm("POST /api/kb/{id}/docs", s.handleKBUpload, rbac.PortalView),
 		prm("POST /api/kb/{id}/docs/check", s.handleKBUploadCheck, rbac.PortalView),
+		prm("GET /api/kb/{id}/sources", s.handleKBSources, rbac.PortalView),
+		prm("POST /api/kb/{id}/sources", s.handleKBSourceCreate, rbac.PortalView),
+		prm("POST /api/kb/{id}/sources/browse", s.handleKBSourceBrowse, rbac.PortalView),
+		prm("POST /api/kb/{id}/sources/{source}/sync", s.handleKBSourceSync, rbac.PortalView),
+		prm("DELETE /api/kb/{id}/sources/{source}", s.handleKBSourceDelete, rbac.PortalView),
 		prm("GET /api/kb/{id}/gaps", s.handleKBGaps, rbac.PortalView),
 		prm("POST /api/kb/{id}/gaps/ignore", s.handleKBGapIgnore, rbac.PortalView),
 		prm("GET /api/kb-docs/{id}", s.handleKDocDetail, rbac.PortalView),

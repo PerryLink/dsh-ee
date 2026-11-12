@@ -117,6 +117,8 @@ type Query struct {
 	// 只搜这几篇文档；空表示不限。每篇都要在 Bases 里，否则报错
 	Docs  []int64
 	Limit int
+	// 按扩展字段的访问规则过滤：返回 false 的文档在算分和截取片段之前就去掉（docs/access-control.md §5.2）。nil 表示不过滤
+	Allow func(base, doc int64) bool
 }
 
 // Hit 是一个命中的段。
@@ -247,15 +249,16 @@ func docInFolder(d *Doc, folder string) bool {
 type scope struct {
 	folder string
 	docs   map[int64]bool
+	allow  func(base, doc int64) bool
 }
 
 func (sc scope) has(d *Doc) bool {
-	return docInFolder(d, sc.folder) && (sc.docs == nil || sc.docs[d.ID])
+	return docInFolder(d, sc.folder) && (sc.docs == nil || sc.docs[d.ID]) && (sc.allow == nil || sc.allow(d.Base, d.ID))
 }
 
 // scopeOf 检查指定的文档都在所选的库里。
 func (ix *Index) scopeOf(q Query) (scope, error) {
-	sc := scope{folder: q.Folder}
+	sc := scope{folder: q.Folder, allow: q.Allow}
 	if len(q.Docs) == 0 {
 		return sc, nil
 	}
@@ -263,7 +266,7 @@ func (ix *Index) scopeOf(q Query) (scope, error) {
 	for _, id := range q.Docs {
 		found := false
 		for _, base := range q.Bases {
-			if bi := ix.bases[base]; bi != nil && bi.docs[id] != nil {
+			if bi := ix.bases[base]; bi != nil && bi.docs[id] != nil && (q.Allow == nil || q.Allow(base, id)) {
 				found = true
 				break
 			}

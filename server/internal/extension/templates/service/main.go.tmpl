@@ -1,0 +1,49 @@
+// __ID__：一个 dsh-ee 服务扩展。把下面的假数据换成对你们系统的调用。
+package main
+
+import (
+	"context"
+	"log"
+
+	sdk "github.com/hikariming/dsh-ee/extensions/sdk-go"
+)
+
+func main() {
+	ext := sdk.New(sdk.Manifest{
+		ID:          "__ID__",
+		Version:     "0.1.0",
+		Name:        sdk.T("__NAME__", ""),
+		Description: sdk.T("（一句话说清楚这个扩展让员工能做什么）", ""),
+		// 源系统能验 JWT 就不用写 Credential：每次调用本来就带着 ee_jwt（c.User）。
+		// 员工各有 token：&sdk.Credential{Mode: "user_secret", Hint: sdk.T("去哪里拿", "")}，处理函数里读 c.Credential
+	})
+
+	// 只读的工具才标 ReadOnly；没标的一律当写操作，调用前要员工确认
+	ext.Tool(sdk.Tool{
+		Name:        "list_items",
+		Description: sdk.T("列出当前员工的条目", ""),
+		ReadOnly:    true,
+		Params: []sdk.Param{
+			{Name: "status", Type: "string", Enum: []any{"open", "done"}, Description: sdk.T("只看这种状态的", "")},
+		},
+		Handler: func(ctx context.Context, c *sdk.Call) (any, error) {
+			// c.User 来自验过签的 ee_jwt，是真的调用人；不要相信模型在参数里说自己是谁
+			return map[string]any{"items": []map[string]any{{"id": "1", "title": "示例", "owner": c.User.Username}}, "total": 1}, nil
+		},
+	})
+
+	ext.Tool(sdk.Tool{
+		Name:        "create_item",
+		Description: sdk.T("新建一个条目", ""),
+		Params:      []sdk.Param{{Name: "title", Type: "string", Required: true}},
+		Handler: func(ctx context.Context, c *sdk.Call) (any, error) {
+			if c.String("title") == "" {
+				return nil, sdk.Errorf(sdk.CodeInvalid, "标题不能为空")
+			}
+			return map[string]any{"id": "2", "title": c.String("title")}, nil
+		},
+	})
+
+	// 监听地址取环境变量 EXTENSION_ADDR（默认 :9000）；DSH_EE_URL 是 dsh-ee 的地址，用来取验签的公钥
+	log.Fatal(ext.ListenAndServe(""))
+}

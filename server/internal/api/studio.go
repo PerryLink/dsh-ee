@@ -478,6 +478,8 @@ type appFile struct {
 	Connections []appFileItem `json:"connections,omitempty"`
 	Knowledge   []appFileKB   `json:"knowledge,omitempty"`
 	Plugins     []string      `json:"plugins,omitempty"`
+	// 应用用到的扩展：["acme/oa@^1.2"]，导入时核对目标环境装没装、版本够不够（docs/plugins.md §6.5）
+	Requires []string `json:"requires,omitempty"`
 	// 工作台里用到的数据中台数据集（只有名字，导入后要在目标环境里有同名数据集）
 	Datasets []string `json:"datasets,omitempty"`
 }
@@ -540,7 +542,7 @@ func (s *Server) handleAppFileExport(w http.ResponseWriter, r *http.Request) {
 	}
 	sp.Template = false
 	f := appFile{Format: appFileFormat, Version: 1, ExportedAt: time.Now().UTC(), App: appFileItem{Slug: a.Slug, Title: sp.Title, Spec: sp},
-		Plugins: sp.Plugins, Datasets: workbenchDatasets(sp.Workbench)}
+		Plugins: sp.Plugins, Datasets: workbenchDatasets(sp.Workbench), Requires: s.appRequires(ctx, sp.Connections)}
 	for _, slug := range sp.Skills {
 		x, err := s.store.GetAssetBySlug(ctx, slug)
 		if err != nil || x.Kind != store.KindSkill || (!available(v, x) && !v.owns(x) && !v.manages(x.Kind)) {
@@ -743,6 +745,11 @@ func (s *Server) handleAppImport(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.syncConnectionTools(ctx, a.ID, viewerOf(r), s.callerBase(r)); err != nil {
 			it.Note += "；同步工具失败：" + cut(err.Error(), 120)
 		}
+		add(it)
+	}
+
+	// 扩展：只核对、提示，不替管理员装
+	for _, it := range s.checkRequires(ctx, f.Requires) {
 		add(it)
 	}
 

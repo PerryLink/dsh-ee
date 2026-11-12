@@ -1,0 +1,10 @@
+# 场景测试：`dsh-ee extension test --run "go run ." .` 会一起跑。
+# as 是模拟环境里预置的员工：zhangsan（研发部）、lisi（财务部）、wangwu（人事部）、admin。
+- name: 员工能看到自己的条目
+  as: zhangsan
+  call: list_items
+  args: { status: open }
+  expect:
+    ok: true
+    count: { gte: 1 }
+    contains: ["zhangsan"]

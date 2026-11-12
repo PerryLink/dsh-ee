@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -23,7 +24,15 @@ var ErrNotFound = errors.New("not found")
 
 type Store struct {
 	db *sql.DB
+	// 超级管理员被关掉了（docs/access-control.md §3.1）：UserAccess 里 Super 永远是 false
+	superOff atomic.Bool
 }
+
+// SetSuperDisabled 打开或关掉「超级管理员」这个内置角色。
+func (s *Store) SetSuperDisabled(off bool) { s.superOff.Store(off) }
+
+// SuperDisabled 报告超级管理员是不是关掉了。
+func (s *Store) SuperDisabled() bool { return s.superOff.Load() }
 
 // Open 连接数据库；库不存在时（MySQL 错误 1049）尝试创建，方便本地开发。
 func Open(ctx context.Context, dsn string) (*Store, error) {

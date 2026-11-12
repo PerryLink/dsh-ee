@@ -20,6 +20,7 @@ export const SEARCH_ITEMS: SearchItem[] = [
   { id: "settings-upstream", page: "admin-settings", keywords: ["上游", "镜像", "npmmirror", "离线", "同步", "upstream", "offline", "mirror"] },
   { id: "settings-distribution", page: "admin-settings", keywords: ["下载", "分发", "desktop", "download"] },
   { id: "settings-connect", page: "admin-settings", keywords: ["接入插件", "默认模型", "发布", "轮询", "设备令牌", "agent", "connect", "default model", "dsh-connect"] },
+  { id: "settings-write-confirm", page: "admin-settings", keywords: ["写操作", "确认", "自动同意", "Claude Code", "Codex", "write", "confirm", "approval"] },
   { id: "settings-demo", page: "admin-settings", keywords: ["示例", "演示", "星河科技", "导入", "demo", "sample"] },
   { id: "brand-basics", page: "admin-brand", keywords: ["品牌", "名称", "名字", "侧栏", "标题", "首屏", "brand", "name", "title"] },
   { id: "brand-logo", page: "admin-brand", keywords: ["logo", "图标", "标志", "上传", "圆形", "icon"] },

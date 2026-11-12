@@ -5,6 +5,7 @@ import type { Settings } from "../../lib/types";
 import { Button, Card, cx, Field, inputBase, inputCls, PageHeader, Segmented, ToggleRow } from "../../components/ui";
 import { DemoSettings } from "../../components/demo-import";
 import ConnectSettings from "./connect-settings";
+import { WriteConfirmSettings } from "../../components/write-confirm-settings";
 import { PageLink, useMenus } from "../../lib/menus";
 import { useConfirm } from "../../lib/confirm";
 import { Trans, useTranslation } from "react-i18next";
@@ -173,6 +174,10 @@ export default function AdminSettings() {
           <ConnectSettings />
         </Section>
 
+        <Section id="settings-write-confirm" title={t("writeConfirm.title")} desc={t("writeConfirm.desc")}>
+          <WriteConfirmSettings />
+        </Section>
+
         <Section id="settings-demo" title={t("demo.title")} desc={t("demo.desc")}>
           <DemoSettings />
         </Section>
@@ -189,6 +194,7 @@ const TOC: { id: string; label: string }[] = [
   { id: "settings-upstream", label: "settingsAdmin.upstream" },
   { id: "settings-distribution", label: "settingsAdmin.distribution" },
   { id: "settings-connect", label: "connectAdmin.title" },
+  { id: "settings-write-confirm", label: "writeConfirm.title" },
   { id: "settings-demo", label: "demo.title" },
 ];
 

@@ -91,6 +91,8 @@ func (d dshClient) do(method, path string, body any, header map[string]string) (
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// 这个客户端演的是 DSH 里的接入插件；要演别的 Agent（Claude Code 之类）时把这个头传成空
+	req.Header.Set("X-DshEE-Client", "dsh-connect/test")
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}

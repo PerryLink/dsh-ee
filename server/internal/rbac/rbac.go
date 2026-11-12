@@ -37,6 +37,11 @@ const (
 	UpstreamManage     = "upstream.manage"
 	DistributionManage = "distribution.manage"
 	SettingsManage     = "settings.manage"
+
+	// 扩展字段和访问规则（docs/access-control.md）
+	FieldsManage = "fields.manage"
+	// 写扩展、跑开发命令（docs/agent-dev.md §7）
+	ExtensionsDevelop = "extensions.develop"
 )
 
 type Permission struct {
@@ -75,6 +80,8 @@ var Catalog = []Permission{
 	{UpstreamManage, "管理上游预载", "能力与分发", "在线同步与离线导入", nil},
 	{DistributionManage, "管理 DSH 分发", "能力与分发", "DSH 本体与桌面版的分发", nil},
 	{SettingsManage, "管理系统设置", "能力与分发", "评分、收录策略、上游、LDAP 登录等全局设置", nil},
+	{FieldsManage, "管理字段和访问规则", "用户与权限", "给文档、知识库、用户加扩展字段，设置按字段控制访问的规则，改用于访问控制的字段值", nil},
+	{ExtensionsDevelop, "开发扩展", "能力与分发", "拿到写扩展用的技能和命令说明（dsh-ee-extension-dev）", nil},
 }
 
 // Menu 是默认菜单树的一项。Kind: group / page / link。Hidden 的页面有路由、不在侧边栏显示。
@@ -121,6 +128,7 @@ var DefaultMenus = []Menu{
 		{Kind: "page", Title: "用户", Path: "/admin/users", PageKey: "admin-users", Icon: "Users", Permission: UsersView},
 		{Kind: "page", Title: "角色与权限", Path: "/admin/roles", PageKey: "admin-roles", Icon: "ShieldCheck", Permission: RolesManage},
 		{Kind: "page", Title: "菜单与页面", Path: "/admin/menus", PageKey: "admin-menus", Icon: "PanelsTopLeft", Permission: MenusManage},
+		{Kind: "page", Title: "字段与访问规则", Path: "/admin/fields", PageKey: "admin-fields", Icon: "Tags", Permission: FieldsManage},
 	}},
 	{Kind: "group", Title: "模型与额度", Children: []Menu{
 		{Kind: "page", Title: "模型接入", Path: "/admin/providers", PageKey: "admin-providers", Icon: "Bot", Permission: ProvidersManage},

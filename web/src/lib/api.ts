@@ -940,10 +940,39 @@ export interface ExtPlan {
   changes: string[];
   sensitive: string[];
   admin?: Record<string, unknown>;
+  /** declarative / service（docs/plugins.md §4） */
+  kind?: "declarative" | "service";
+  service_url?: string;
+  /** 服务扩展：管理员要填的配置（清单 config） */
+  config?: ExtConfigField[];
+  /** 升级时原来填的配置；secret 类型不回显 */
+  config_values?: Record<string, unknown>;
+  capabilities?: string[];
+  permissions?: Record<string, unknown>;
+  /** 会交给扩展的凭据（§7.4），给管理员看 */
+  handover?: string[];
+  /** oauth 模式要管理员填 OAuth 客户端 */
+  oauth_client?: boolean;
+  oauth_client_id?: string;
+  /** 扩展带进来的字段（access-control.md §6.0） */
+  fields?: { object: string; key: string; label: unknown; type: string; options?: string[]; access?: boolean }[];
 }
 
-/** 上传的扩展：zip 包（base64），或几个文件（相对路径 → 文本）。 */
-export type ExtPackage = { zip: string } | { files: Record<string, string> };
+export type ExtText = string | { zh?: string; en?: string };
+
+export interface ExtConfigField {
+  key: string;
+  type: "text" | "secret" | "url" | "select" | "boolean" | "kb" | "app";
+  label: ExtText;
+  help?: ExtText;
+  required?: boolean;
+  default?: unknown;
+  /** 选项数组，或 "dynamic"（扩展的 options 接口给） */
+  options?: (string | { value: string; label?: ExtText })[] | "dynamic";
+}
+
+/** 上传的扩展：zip 包（base64），或几个文件（相对路径 → 文本），或服务扩展的地址。 */
+export type ExtPackage = { zip: string } | { files: Record<string, string> } | { service_url: string };
 
 export interface ExtInstallReq {
   slug?: string;
@@ -952,11 +981,15 @@ export interface ExtInstallReq {
   secret?: string;
   admin?: Record<string, unknown>;
   confirm?: boolean;
+  /** 服务扩展：清单 config 的值；secret 留空表示沿用原来的 */
+  config?: Record<string, unknown>;
+  oauth_client_id?: string;
+  oauth_client_secret?: string;
 }
 
 /** 连接上的员工身份设置：ee_jwt 由 dsh-ee 每次现签，user_secret 由员工自己填。 */
 export interface UserAuth {
-  mode: "ee_jwt" | "user_secret";
+  mode: "ee_jwt" | "user_secret" | "oauth";
   header?: string;
   audience?: string;
   claims?: string[];
@@ -965,7 +998,8 @@ export interface UserAuth {
 
 /** 员工在一个连接上看到的自己的凭据状态。 */
 export interface MyCredential {
-  mode: "ee_jwt" | "user_secret";
+  /** oauth：filled 表示已经授权过 */
+  mode: "ee_jwt" | "user_secret" | "oauth";
   hint?: string;
   filled: boolean;
   tail?: string;
@@ -1239,7 +1273,7 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
-async function request<T>(
+export async function request<T>(
   method: string,
   path: string,
   body?: unknown,

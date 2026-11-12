@@ -1,0 +1,41 @@
+openapi: 3.0.3
+info: { title: __NAME__, version: "1" }
+servers:
+  - url: https://__NAME__.example.internal
+paths:
+  /api/items:
+    get:
+      operationId: list_items
+      summary: 列出条目
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        internal_note: { type: string }
+    post:
+      operationId: create_item
+      summary: 新建条目
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+      responses: { "201": { description: created } }

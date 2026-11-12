@@ -15,6 +15,7 @@ import MyKeys from "./my-keys";
 import AdminUsers from "./admin/users";
 import AdminRoles from "./admin/roles";
 import AdminMenus from "./admin/menus";
+import AdminFields from "./admin/fields";
 import AdminProviders from "./admin/providers";
 import AdminQuotas from "./admin/quotas";
 import AdminKeys from "./admin/keys";
@@ -48,6 +49,7 @@ export const PAGE_COMPONENTS: Record<PageKey, ComponentType> = {
   "admin-users": AdminUsers,
   "admin-roles": AdminRoles,
   "admin-menus": AdminMenus,
+  "admin-fields": AdminFields,
   "admin-providers": AdminProviders,
   "admin-quotas": AdminQuotas,
   "admin-keys": AdminKeys,

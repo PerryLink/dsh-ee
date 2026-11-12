@@ -261,6 +261,16 @@ type viewer struct {
 	agent bool
 	// 账号本身有管理权限；令牌此刻开着管理模式
 	canAdmin, adminLive bool
+	// 账号本身的权限（令牌范围收窄之前）；只用来决定下发哪些系统技能
+	account *rbac.Access
+}
+
+// accountHas：账号本身有没有这个权限点（不看令牌范围）。没有记录时退回到这次请求的权限。
+func (v viewer) accountHas(code string) bool {
+	if v.account != nil {
+		return v.account.Has(code)
+	}
+	return v.access != nil && v.access.Has(code)
 }
 
 func viewerOf(r *http.Request) viewer { return viewer{user: currentUser(r), access: currentAccess(r)} }
@@ -426,6 +436,10 @@ func (s *Server) hubItems(r *http.Request, withBody bool) ([]*hubItem, error) {
 		}
 		if !withBody {
 			it.Spec.Body, it.Spec.Persona, it.Spec.OpenAPI = "", "", ""
+		}
+		if e := it.Spec.Extension; e != nil && !v.manages(a.Kind) {
+			// 扩展的配置、回调地址、OAuth 客户端只给管连接的人看；别人只需要知道是哪个扩展、哪个版本
+			it.Spec.Extension = &connExtension{ID: e.ID, Version: e.Version, Digest: e.Digest, Kind: e.Kind}
 		}
 		if u := users[derefID(a.OwnerID)]; u != nil {
 			it.Owner, it.OwnerName, it.Department = u.Username, u.DisplayName, u.Department

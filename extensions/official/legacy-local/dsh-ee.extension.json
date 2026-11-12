@@ -1,0 +1,63 @@
+{
+  "id": "acme/legacy-oa",
+  "version": "0.1.0",
+  "minVersion": "0.3.0",
+  "name": {
+    "zh": "老 OA（本机）",
+    "en": "Legacy OA (local)"
+  },
+  "description": {
+    "zh": "用你自己的 OA 登录态查待办、提交请假单。在你自己的电脑上执行。",
+    "en": "Query and submit forms in the legacy OA with your own login, on your own computer."
+  },
+  "kind": "local",
+  "package": "@acme/legacy-oa-local",
+  "permissions": {
+    "approval": true,
+    "audit": true
+  },
+  "tools": [
+    {
+      "name": "list_forms",
+      "description": {
+        "zh": "列出我在老 OA 里的审批单",
+        "en": "List my forms in the legacy OA"
+      },
+      "readOnly": true,
+      "params": [
+        {
+          "name": "status",
+          "type": "string",
+          "enum": [
+            "pending",
+            "done"
+          ],
+          "description": "pending：待办；done：已办",
+          "fill": "model"
+        }
+      ]
+    },
+    {
+      "name": "submit_leave",
+      "description": {
+        "zh": "提交一张请假单",
+        "en": "Submit a leave request"
+      },
+      "params": [
+        {
+          "name": "days",
+          "type": "number",
+          "required": true,
+          "description": "请几天",
+          "fill": "model"
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "description": "事由",
+          "fill": "model"
+        }
+      ]
+    }
+  ]
+}

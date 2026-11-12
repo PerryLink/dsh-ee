@@ -49,6 +49,7 @@ func (s *Server) loadLDAP(ctx context.Context) (*ldapauth.Config, error) {
 		}
 		cfg.BindPassword = string(pw)
 	}
+	cfg.ExtraAttrs = s.syncAttrs(ctx, "ldap")
 	return &cfg, nil
 }
 
@@ -420,6 +421,7 @@ func (s *Server) createLDAPUser(ctx context.Context, cfg *ldapauth.Config, usern
 	if err := s.store.SetUserRoles(ctx, u.ID, roles); err != nil {
 		return nil, err
 	}
+	s.applyDirectoryFields(ctx, "ldap", u.ID, e.Attrs)
 	s.log.Info("LDAP 用户首次登录，已创建账号", "user", username, "roles", roles)
 	return s.store.GetUser(ctx, u.ID)
 }
@@ -443,6 +445,7 @@ func (s *Server) applyLDAPEntry(ctx context.Context, cfg *ldapauth.Config, u *st
 			return err
 		}
 	}
+	s.applyDirectoryFields(ctx, "ldap", u.ID, e.Attrs)
 	if len(cfg.RoleMappings) == 0 {
 		return nil
 	}

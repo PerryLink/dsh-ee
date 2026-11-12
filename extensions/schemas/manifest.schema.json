@@ -111,7 +111,7 @@
       "properties": {
         "mode": {
           "enum": ["shared", "user_secret", "ee_jwt", "oauth"],
-          "description": "shared：管理员配的一份共享凭据，适合只读的公共数据；user_secret：员工各自填自己的 token；ee_jwt：dsh-ee 为当前员工现签一个 5 分钟有效的 JWT，对方用 JWKS 验签；oauth：这个版本还不支持。对方能验 JWT 时优先用 ee_jwt。"
+          "description": "shared：管理员配的一份共享凭据，适合只读的公共数据；user_secret：员工各自填自己的 token；ee_jwt：dsh-ee 为当前员工现签一个 5 分钟有效的 JWT，对方用 JWKS 验签；oauth：员工授权一次，dsh-ee 按人保存令牌、到期前刷新（要配 oauth，或由服务扩展实现 oauth 约定接口）。对方能验 JWT 时优先用 ee_jwt。"
         },
         "header": { "type": "string", "description": "凭据放在哪个请求头：ee_jwt / user_secret 模式下是员工身份，shared 模式下是那份共享凭据。写了名字，值会原样放进这个请求头，前面不加 Bearer。不写：员工身份是 Authorization: Bearer <值>；shared 模式由管理员安装时选（默认 Authorization: Bearer）。", "examples": ["X-User-Token", "X-API-Key"] },
         "audience": { "type": "string", "description": "只用于 ee_jwt：令牌的 aud，对方验签时核对。不写就用连接名。", "examples": ["oa"] },
@@ -185,7 +185,39 @@
         }
       }
     },
-    "fields": { "description": "扩展要加的扩展字段和建议的访问规则（docs/access-control.md §6.0）。这个版本的 dsh-ee 还不处理。" },
+    "fields": {
+      "type": "array",
+      "description": "扩展要加的扩展字段（docs/access-control.md §6.0）。安装时由管理员确认后建好；字段名会带上扩展的前缀，不会和别的字段冲突。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "object", "type", "label"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$", "examples": ["project"] },
+          "object": { "enum": ["document", "kbase", "user"], "description": "字段加在哪类对象上" },
+          "type": { "enum": ["text", "number", "date", "select", "tags", "level"], "description": "level 是有顺序的等级" },
+          "label": { "$ref": "#/$defs/text" },
+          "options": { "type": "array", "items": { "type": "string" }, "description": "select / tags 的选项；level 从低到高的等级" },
+          "access": { "type": "boolean", "description": "用于访问控制：只有 select / tags / level 可以" }
+        }
+      }
+    },
+    "protocol": {
+      "type": "string",
+      "description": "服务扩展实现的协议版本（docs/extension-protocol.md），用 SDK 时自动填。不写当作 1。",
+      "examples": ["1"]
+    },
+    "oauth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorizeUrl", "tokenUrl"],
+      "description": "凭据模式是 oauth 时：标准 OAuth 2.0 授权码流程的参数，dsh-ee 自己完成跳转、换令牌和刷新；client_id / client_secret 由管理员安装时填。流程不标准的系统改用服务扩展并实现 oauth 约定接口，不写这一项。",
+      "properties": {
+        "authorizeUrl": { "type": "string", "examples": ["https://sso.acme.com/oauth/authorize"] },
+        "tokenUrl": { "type": "string", "examples": ["https://sso.acme.com/oauth/token"] },
+        "scopes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "apps": {
       "type": "array",
       "items": { "type": "string" },
