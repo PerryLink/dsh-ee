@@ -31,6 +31,9 @@ type Config struct {
 	// 对外访问地址（如 https://dsh.acme.internal），用于生成 tarball 下载地址；
 	// 为空时按请求的 Host / X-Forwarded-* 推断。
 	PublicURL string
+	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单（DSH_EE_CORS_ORIGINS，逗号分隔）。
+	// 只接受完整 origin：https://host[:port]，http 只放行 localhost；为空时关闭 CORS。
+	CORSOrigins []string
 	// 启动时等待数据库就绪的最长时间（docker compose 里数据库常比服务晚起来）。
 	DBWait time.Duration
 	// 管理模式「1 小时 / 8 小时」里「小时」的长度，默认 1h；只给自动化测试缩短用，生产不要设
@@ -140,6 +143,13 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("DSH_EE_DB_WAIT: %w", err)
 		}
 		c.DBWait = d
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_CORS_ORIGINS")); v != "" {
+		origins, err := parseCORSOrigins(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_CORS_ORIGINS: %w", err)
+		}
+		c.CORSOrigins = origins
 	}
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)

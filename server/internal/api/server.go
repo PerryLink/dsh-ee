@@ -37,6 +37,9 @@ type Options struct {
 	DataDir string
 	// 对外地址，用于生成 tarball 下载地址；为空时按请求推断。
 	PublicURL string
+	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单，逗号分隔的完整 origin
+	// 已由 config 解析、校验；为空时关闭 CORS，见 cors.go。
+	CORSOrigins []string
 	// 监听地址；示例里的演示差旅系统连接从这里访问 dsh-ee 自己。为空时用请求的 Host。
 	Addr string
 	// 管理模式里「小时」的长度，默认 1 小时；只给自动化测试缩短用。
@@ -204,7 +207,9 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/", s.opts.Web)
 	}
 
-	return s.logRequests(mux)
+	// 浏览器内第三方 Harness 的跨域白名单（DSH_EE_CORS_ORIGINS，默认关闭），只作用于
+	// /v1/* 与 /mcp，见 cors.go。
+	return s.logRequests(s.cors(mux))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
