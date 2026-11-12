@@ -43,6 +43,9 @@ type Principal struct {
 	// 管理模式到期时间；AdminLive 为 false 时无意义
 	AdminUntil *time.Time
 	Client     string
+	// 令牌签发给哪类客户端：dsh / third_party（store.ClientKind*）。
+	// 网页会话不是令牌，为空。写确认只认这个属性，不认可伪造的 X-DshEE-Client 头。
+	ClientKind string
 	Prefix     string
 	ExpiresAt  *time.Time
 }
@@ -108,7 +111,7 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 		}
 		return &Principal{
 			User: u, Access: rbac.ScopeFilter(account, effective), Scopes: scopes, TokenID: t.ID,
-			Limit: t.MonthlyTokenLimit, Models: t.AllowedModels, Client: t.ClientName,
+			Limit: t.MonthlyTokenLimit, Models: t.AllowedModels, Client: t.ClientName, ClientKind: store.NormalizeClientKind(t.ClientKind),
 			Prefix: t.Prefix, ExpiresAt: t.ExpiresAt, AdminLive: live, AdminUntil: t.AdminUntil, CanAdmin: rbac.HasAdminPerms(account), Account: account,
 		}, nil
 	case strings.HasPrefix(token, npmTokenPrefix):
@@ -132,7 +135,8 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 		for _, scope := range scopes {
 			set[scope] = true
 		}
-		return &Principal{User: u, Access: rbac.ScopeFilter(account, scopes), Scopes: set, Legacy: "npm", Prefix: t.Prefix}, nil
+		// 旧版 npm 令牌没有客户端类型；按旧行为当 DSH 处理，避免老接入方式突然都要人工确认
+		return &Principal{User: u, Access: rbac.ScopeFilter(account, scopes), Scopes: set, Legacy: "npm", ClientKind: store.ClientKindDSH, Prefix: t.Prefix}, nil
 	case strings.HasPrefix(token, keyPrefix):
 		k, _, err := s.store.ActiveKeyByHash(ctx, hash)
 		if errors.Is(err, store.ErrNotFound) {
@@ -155,7 +159,7 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 			set[scope] = true
 		}
 		return &Principal{
-			User: u, Access: rbac.ScopeFilter(account, scopes), Scopes: set, Legacy: "key", LegacyID: k.ID,
+			User: u, Access: rbac.ScopeFilter(account, scopes), Scopes: set, Legacy: "key", LegacyID: k.ID, ClientKind: store.ClientKindDSH,
 			Models: k.AllowedModels, Prefix: k.Prefix, ExpiresAt: k.ExpiresAt,
 		}, nil
 	default:
