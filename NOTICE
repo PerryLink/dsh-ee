@@ -1,0 +1,26 @@
+dsh-ee
+======
+
+dsh-ee is licensed under Apache-2.0 (see LICENSE).
+
+Documentation under docs/plugin-dev/ adapted from PerryLink community
+projects is identified by source in docs/plugin-dev/SOURCES.md. Licenses
+and attribution differ by material type:
+
+- Text adapted from dsh-primer and dsh-plugin-guide is used under
+  Apache-2.0. Copyright in that text remains with the respective upstream
+  contributors (© 2026 dsh-primer contributors, © 2026 dsh-plugin-guide
+  contributors), as stated in the upstream README/NOTICE files.
+- Text adapted from dsh-standards is used under CC BY 4.0.
+  Copyright (c) 2026 PerryLink. Each adapted file carries the required
+  Change Notice (source commit, changes, date); the CC BY 4.0 license text
+  is included at docs/plugin-dev/standards/LICENSE-CC-BY.
+
+PerryLink is credited only for material it owns; this NOTICE does not
+state or imply a copyright holder for dsh-ee itself.
+
+Other third-party materials remain under their own licenses, and nothing
+in this file changes those licenses.
+
+See docs/plugin-dev/SOURCES.md for sources, pinned versions and commits,
+licenses, and a description of changes.

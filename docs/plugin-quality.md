@@ -1,6 +1,6 @@
 # 插件质量三层：ENTRY / FLOW / BOOST 与 dsh-ee 的关系
 
-> 来源：本文的三层模型、术语与清单结构来自 PerryLink 维护的 [dsh-standards](https://github.com/PerryLink/dsh-standards) 与 [dsh-plugin-guide](https://github.com/PerryLink/dsh-plugin-guide)（Apache-2.0）。本文只做 dsh-ee 企业侧映射，不代表 dsh-ee 对三层做认证。
+> 来源：本文的三层模型、术语与清单结构来自 PerryLink 维护的 [dsh-standards](https://github.com/PerryLink/dsh-standards)（规范正文 **CC BY 4.0**、代码/检查器 **Apache-2.0**）与 [dsh-plugin-guide](https://github.com/PerryLink/dsh-plugin-guide)（Apache-2.0）。本文只做 dsh-ee 企业侧映射，**不复制上游条款正文**；仓库内按上游许可改编的参考文档（dsh-standards 正文按 CC BY 4.0、dsh-primer/dsh-plugin-guide 按 Apache-2.0）见 [plugin-dev/SOURCES.md](./plugin-dev/SOURCES.md) 的「已改编内容清单」，本文也不代表 dsh-ee 对三层做认证。
 
 > 本文说明作者的三层质量指南（ENTRY / FLOW / BOOST）在 dsh-ee 里**放在哪、起什么作用、不起什么作用**。三层标准本身由 PerryLink 的 [`dsh-standards`](https://github.com/PerryLink/dsh-standards) 维护；本文只写 dsh-ee 这一侧的边界，避免把企业市场写成认证机构。
 
@@ -22,7 +22,7 @@
 
 ## 3. 作者怎么用
 
-1. **发布前**：先按 [`dsh-standards`](https://github.com/PerryLink/dsh-standards) 跑 ENTRY，再按 [`dsh-plugin-guide/docs/levels.md`](https://github.com/PerryLink/dsh-plugin-guide/blob/main/docs/levels.md) 的 ENTRY/FLOW/BOOST 清单自查。
+1. **发布前**：先按 [`dsh-standards`](https://github.com/PerryLink/dsh-standards) 跑 ENTRY，再按 [`dsh-plugin-guide@9f0a8a1 docs/levels.md`](https://github.com/PerryLink/dsh-plugin-guide/blob/9f0a8a10b76a872f1a82570734a6b166661fa38b/docs/levels.md) 的 ENTRY/FLOW/BOOST 清单自查。
 2. **在 dsh-ee 提交时**：预检页出现 fail 先修；warn 要在审核说明里解释（例如安装脚本、体积、没有 `engines.dsh`）。
 3. **审核时**：把 FLOW 的 J1–J8 当成**审核问题**，不是自动化门禁。作者可以在 PR/审核备注里附证据链接（录屏、命令输出、证据文件），dsh-ee 目前没有字段存这些证据，管理员按企业需要人工看。
 4. **不要**在 dsh-ee 页面上宣称「ENTRY 通过」「BOOST 达标」；当前没有这个数据，也不应该用 dsh-ee 的审核状态暗示三层结论。
@@ -37,17 +37,21 @@
 
 ## 5. 为什么不把三层全文搬进 dsh-ee
 
-- 三层标准的正文、条款号、检查器和版本矩阵在 `dsh-standards` / `dsh-plugin-spec` / `dsh-plugin-guide` 维护；dsh-ee 复制一份必然过期。
+- 三层标准的正文、条款号、检查器在 `dsh-standards` / `dsh-plugin-spec` 维护；**DSH 版本适配矩阵在 `dsh-primer` 的 `guide/version-matrix.md`**；`dsh-plugin-guide` 维护 ENTRY/FLOW/BOOST 指南与发布检查单。本文只链接固定版本；仓库内对版本矩阵等材料的改编与署名登记见 [plugin-dev/SOURCES.md](./plugin-dev/SOURCES.md)，不在这里复制全文。
 - dsh-ee 的文档面向「企业管理员 + 内部作者」，需要的是**映射和边界**，不是完整规范。
 - 一旦 dsh-ee 内置等级，用户会自然读成「企业认证/排序」，这与三层模型「不是三个等级、不是证书」的定位冲突。
 
 ## 6. 相关链接
 
-- 三层模型说明：[dsh-plugin-guide/docs/levels.md](https://github.com/PerryLink/dsh-plugin-guide/blob/main/docs/levels.md)
-- 检查器与条款：`dsh-standards`（npm / GitHub）
-- 规则文本：`dsh-plugin-spec`
+以下链接都 pin 到核对时的版本 + commit；来源、许可与同步日期见 [plugin-dev/SOURCES.md](./plugin-dev/SOURCES.md)。
+
+- 三层模型说明：[dsh-plugin-guide@9f0a8a1 docs/levels.md](https://github.com/PerryLink/dsh-plugin-guide/blob/9f0a8a10b76a872f1a82570734a6b166661fa38b/docs/levels.md)（0.5.5，Apache-2.0）
+- DSH 版本适配矩阵：[dsh-primer@8750d31 guide/version-matrix.md](https://github.com/PerryLink/dsh-primer/blob/8750d31718c16601514e59fe1831de73cfed3d20/guide/version-matrix.md)（0.4.3，Apache-2.0）
+- 检查器与许可：[dsh-standards@19c410b](https://github.com/PerryLink/dsh-standards/tree/19c410bd261d942c360386334d4841543a646579)（1.6.9；正文 [CC BY 4.0](https://github.com/PerryLink/dsh-standards/blob/19c410bd261d942c360386334d4841543a646579/LICENSE-CC-BY)，代码 [Apache-2.0](https://github.com/PerryLink/dsh-standards/blob/19c410bd261d942c360386334d4841543a646579/LICENSE-APACHE)，修改需 [Change Notice](https://github.com/PerryLink/dsh-standards/blob/19c410bd261d942c360386334d4841543a646579/MODIFICATION-POLICY.md)）
+- 规则文本：[dsh-plugin-spec@3387628](https://github.com/PerryLink/dsh-plugin-spec/tree/3387628dc8aee6a2c4dd7458a5a9f9e92199ed68)（0.1.3，正文 CC BY 4.0 / 代码 Apache-2.0）
 - dsh-ee 作者指南：[plugin-authors.md](./plugin-authors.md)
 - dsh-ee 预检实现：`server/internal/registry/tarball.go`、`server/internal/registry/patch_check.go`
+- 来源与许可：[plugin-dev/SOURCES.md](./plugin-dev/SOURCES.md)、仓库根 [NOTICE](../NOTICE)
 
 ## 7. 如果以后要在 dsh-ee 展示三层
 

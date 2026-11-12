@@ -45,6 +45,16 @@ jobs:
           path: web/dist
           retention-days: 3
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # 相对链接/锚点、上游 pin 表、docs/dev front matter；只读，不需要安装依赖
+      - run: node scripts/check-docs.mjs
+
   server:
     runs-on: ubuntu-latest
     services:
