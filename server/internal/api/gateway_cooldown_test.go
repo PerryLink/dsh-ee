@@ -1,143 +1,315 @@
 package api_test
 
 import (
-	"context"
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/api"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 )
 
-// cdUpstream 模拟一条上游线路：hit 计数，status 非 0 时固定回该状态码（可带 Retry-After），
-// 否则回一个最小的 OpenAI 兼容成功响应。
-func cdUpstream(t *testing.T, key string, status int, retryAfter string, hits *atomic.Int32) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		if r.Header.Get("Authorization") != "Bearer "+key {
-			w.WriteHeader(401)
-			return
-		}
-		if status != 0 {
-			if retryAfter != "" {
-				w.Header().Set("Retry-After", retryAfter)
-			}
-			w.WriteHeader(status)
-			_, _ = io.WriteString(w, `{"error":{"message":"stub"}}`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"x","choices":[{"message":{"role":"assistant","content":"好"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`)
-	}))
+type cooldownTransport func(*http.Request) (*http.Response, error)
+
+func (f cooldownTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
 
-// TestGatewayProviderCooldown 同名模型挂多条线路时，一条失败后进入冷却：
-// 后续请求直接走下一条，不再先撞一次墙；全部冷却时最后一条仍会兜底尝试。
-func TestGatewayProviderCooldown(t *testing.T) {
+type cooldownGateway struct {
+	t      *testing.T
+	admin  *client
+	router http.Handler
+	key    string
+}
+
+func newCooldownGateway(t *testing.T, upstream func(host, model, message string) (*http.Response, error)) *cooldownGateway {
+	t.Helper()
 	st := openTestStore(t)
-	ctx := context.Background()
-	if ok, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil || !ok {
+	if ok, err := api.Bootstrap(t.Context(), st, "admin", "admin-password-123"); err != nil || !ok {
 		t.Fatalf("bootstrap: %v %v", ok, err)
 	}
 
-	var p1Hits, p2Hits, p3Hits atomic.Int32
-	overloaded := cdUpstream(t, "sk-cd-1", 429, "60", &p1Hits) // 主线路：一直 429，带 Retry-After
-	healthy := cdUpstream(t, "sk-cd-2", 0, "", &p2Hits)        // 备线路：正常
-	solo := cdUpstream(t, "sk-cd-3", 429, "", &p3Hits)         // 单线路模型：一直 429
-	defer overloaded.Close()
-	defer healthy.Close()
-	defer solo.Close()
-
 	key := make([]byte, 32)
-	_, _ = rand.Read(key)
-	box, _ := secret.NewBox(key)
-	srv := api.New(st, box, api.Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	box, err := secret.NewBox(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := cooldownTransport(func(r *http.Request) (*http.Response, error) {
+		defer r.Body.Close()
+		if r.Header.Get("Authorization") != "Bearer sk-cooldown-test" {
+			return cooldownResponse(http.StatusUnauthorized), nil
+		}
+		var body struct {
+			Model    string
+			Messages []struct{ Content string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Messages) != 1 {
+			t.Errorf("上游收到错误的请求体：%+v，%v", body, err)
+			return cooldownResponse(http.StatusBadRequest), nil
+		}
+		return upstream(r.URL.Hostname(), body.Model, body.Messages[0].Content)
+	})
+	opts := api.Options{DataDir: t.TempDir(), Upstream: &http.Client{Transport: transport}}
+	router := api.New(st, box, opts, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler()
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
 
-	admin := newClient(t, ts.URL)
+	admin := newClient(t, server.URL)
 	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
 	expect(t, "管理员登录", code, 200, body)
 
-	// cd-chat 挂两条线路（同优先级，按创建顺序：overloaded 在前）；cd-solo 只挂 overloaded 和 solo
-	for _, p := range []map[string]any{
-		{"name": "overloaded", "base_url": overloaded.URL, "api_key": "sk-cd-1", "models": []string{"cd-chat", "cd-solo"}},
-		{"name": "healthy", "base_url": healthy.URL, "api_key": "sk-cd-2", "models": []string{"cd-chat"}},
-		{"name": "solo", "base_url": solo.URL, "api_key": "sk-cd-3", "models": []string{"cd-solo"}},
-	} {
-		code, body = admin.do("POST", "/api/admin/providers", p, nil)
-		expect(t, "创建上游 "+p["name"].(string), code, 201, body)
-	}
-
-	// 员工与额度：走自助 key 调网关
-	code, body = admin.do("POST", "/api/admin/users", map[string]any{
+	code, body = admin.do("POST", "/api/admin/users", map[string]string{
 		"username": "cd-user", "password": "cd-password-1", "display_name": "冷却测试",
 	}, nil)
 	expect(t, "创建员工", code, 201, body)
-	var user struct {
-		ID int64 `json:"id"`
+	var user struct{ ID int64 }
+	if err := json.Unmarshal(body, &user); err != nil {
+		t.Fatal(err)
 	}
-	_ = json.Unmarshal(body, &user)
-	code, body = admin.do("PATCH", "/api/admin/users/"+itoa(user.ID)+"/quota", map[string]any{
+	code, body = admin.do("PATCH", "/api/admin/users/"+itoa(user.ID)+"/quota", map[string]int{
 		"monthly_token_limit": 10000,
 	}, nil)
 	expect(t, "分配额度", code, 200, body)
 
-	uc := newClient(t, ts.URL)
-	code, body = uc.do("POST", "/api/auth/login", map[string]string{"username": "cd-user", "password": "cd-password-1"}, nil)
+	employee := newClient(t, server.URL)
+	code, body = employee.do("POST", "/api/auth/login", map[string]string{"username": "cd-user", "password": "cd-password-1"}, nil)
 	expect(t, "员工登录", code, 200, body)
-	code, body = uc.do("POST", "/api/me/keys", map[string]any{"name": "cd"}, nil)
+	code, body = employee.do("POST", "/api/me/keys", map[string]string{"name": "cooldown"}, nil)
 	expect(t, "自助创建 key", code, 201, body)
-	var issued struct {
-		Key string `json:"key"`
+	var issued struct{ Key string }
+	if err := json.Unmarshal(body, &issued); err != nil {
+		t.Fatal(err)
 	}
-	_ = json.Unmarshal(body, &issued)
-	bearer := map[string]string{"Authorization": "Bearer " + issued.Key}
+	return &cooldownGateway{t: t, admin: admin, router: router, key: issued.Key}
+}
 
-	chat := func(model string) (int, []byte) {
-		return uc.do("POST", "/v1/chat/completions", map[string]any{
-			"model": model, "messages": []map[string]string{{"role": "user", "content": "你好"}},
-		}, bearer)
+func (g *cooldownGateway) addProvider(host string, models map[string]string) {
+	g.t.Helper()
+	code, body := g.admin.do("POST", "/api/admin/providers", map[string]string{
+		"name": host, "base_url": "https://" + host, "api_key": "sk-cooldown-test",
+	}, nil)
+	expect(g.t, "创建上游 "+host, code, 201, body)
+	var provider struct{ ID int64 }
+	if err := json.Unmarshal(body, &provider); err != nil {
+		g.t.Fatal(err)
+	}
+	items := make([]map[string]string, 0, len(models))
+	for name, upstreamModel := range models {
+		items = append(items, map[string]string{"name": name, "upstream_model": upstreamModel})
+	}
+	code, body = g.admin.do("POST", "/api/admin/models", map[string]any{"provider_id": provider.ID, "items": items}, nil)
+	expect(g.t, "创建模型 "+host, code, 201, body)
+}
+
+func (g *cooldownGateway) chat(model, message string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]any{
+		"model": model, "messages": []map[string]string{{"role": "user", "content": message}},
+	})
+	req := httptest.NewRequestWithContext(g.t.Context(), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+g.key)
+	rec := httptest.NewRecorder()
+	g.router.ServeHTTP(rec, req)
+	return rec
+}
+
+func cooldownResponse(status int) *http.Response {
+	header := http.Header{"Content-Type": {"application/json"}}
+	body := `{"error":{"message":"stub"}}`
+	if status == http.StatusTooManyRequests {
+		header.Set("Retry-After", "60")
+	}
+	if status == http.StatusOK {
+		body = `{"choices":[{"message":{"role":"assistant","content":"好"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`
+	}
+	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body))}
+}
+
+func TestGatewayProviderCooldown(t *testing.T) {
+	var limitedHits, healthyHits, backupHits int
+	g := newCooldownGateway(t, func(host, model, message string) (*http.Response, error) {
+		if host == "primary.invalid" {
+			if model == "vendor-limited" {
+				limitedHits++
+				return cooldownResponse(http.StatusTooManyRequests), nil
+			}
+			healthyHits++
+			return cooldownResponse(http.StatusOK), nil
+		}
+		backupHits++
+		if model == "vendor-healthy" {
+			return cooldownResponse(http.StatusServiceUnavailable), nil
+		}
+		if message == "限流" {
+			return cooldownResponse(http.StatusTooManyRequests), nil
+		}
+		return cooldownResponse(http.StatusOK), nil
+	})
+	g.addProvider("primary.invalid", map[string]string{
+		"limited": "vendor-limited", "limited-alias": "vendor-limited", "healthy": "vendor-healthy",
+	})
+	g.addProvider("backup.invalid", map[string]string{
+		"limited": "backup-chat", "limited-alias": "backup-chat", "backup-only": "backup-chat", "healthy": "vendor-healthy",
+	})
+
+	res := g.chat("limited", "第一次")
+	expect(t, "经备线成功", res.Code, 200, res.Body.Bytes())
+	res = g.chat("limited", "第二次")
+	expect(t, "直接走备线", res.Code, 200, res.Body.Bytes())
+	res = g.chat("limited-alias", "同一个上游模型")
+	expect(t, "别名共享同一个上游模型的冷却", res.Code, 200, res.Body.Bytes())
+	res = g.chat("healthy", "独立模型")
+	expect(t, "同一上游的健康模型保持可用", res.Code, 200, res.Body.Bytes())
+	if limitedHits != 1 || healthyHits != 1 || backupHits != 3 {
+		t.Fatalf("上游调用次数：限流模型 %d，健康模型 %d，备线 %d", limitedHits, healthyHits, backupHits)
 	}
 
-	// 第一次：主线路 429 一次后换到备线路成功
-	code, body = chat("cd-chat")
-	expect(t, "第一次经备线路成功", code, 200, body)
-	if p1Hits.Load() != 1 || p2Hits.Load() != 1 {
-		t.Fatalf("第一次应各打一次：主 %d 备 %d", p1Hits.Load(), p2Hits.Load())
+	res = g.chat("backup-only", "限流")
+	expect(t, "备线也进入冷却", res.Code, 429, res.Body.Bytes())
+	res = g.chat("limited", "两条线路均在冷却")
+	expect(t, "冷却中的最后一条线路继续兜底", res.Code, 200, res.Body.Bytes())
+	if limitedHits != 1 || backupHits != 5 {
+		t.Fatalf("主线应保持冷却，备线应兜底：主线 %d，备线 %d", limitedHits, backupHits)
 	}
+}
 
-	// 第二次：主线路在冷却期内被直接跳过，不再撞 429
-	code, body = chat("cd-chat")
-	expect(t, "第二次直接走备线路", code, 200, body)
-	if p1Hits.Load() != 1 || p2Hits.Load() != 2 {
-		t.Fatalf("主线路应被冷却跳过：主 %d 备 %d", p1Hits.Load(), p2Hits.Load())
+func TestGatewayProviderCooldownRecordsLastFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"429", http.StatusTooManyRequests},
+		{"5xx", http.StatusServiceUnavailable},
+		{"connection", http.StatusBadGateway},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var primaryHits int
+			g := newCooldownGateway(t, func(host, _, _ string) (*http.Response, error) {
+				if host == "backup.invalid" {
+					return cooldownResponse(http.StatusOK), nil
+				}
+				primaryHits++
+				if tc.status == http.StatusBadGateway {
+					return nil, errors.New("上游连接失败")
+				}
+				return cooldownResponse(tc.status), nil
+			})
+			pairedModel := "vendor-chat"
+			if tc.status == http.StatusBadGateway {
+				pairedModel = "vendor-other" // 连接故障影响整条线路。
+			}
+			g.addProvider("primary.invalid", map[string]string{"solo": "vendor-chat", "paired": pairedModel})
+			g.addProvider("backup.invalid", map[string]string{"paired": "backup-chat"})
+
+			for range 2 {
+				res := g.chat("solo", "只有一个候选")
+				expect(t, "保留兜底请求的错误响应", res.Code, tc.status, res.Body.Bytes())
+				if !strings.Contains(res.Body.String(), `"error"`) {
+					t.Fatalf("错误响应应为 OpenAI 格式：%s", res.Body.String())
+				}
+			}
+			res := g.chat("paired", "有备线")
+			expect(t, "跳过此前失败的线路", res.Code, 200, res.Body.Bytes())
+			if primaryHits != 2 {
+				t.Fatalf("冷却中仅有两次兜底请求应访问主线，实际 %d 次", primaryHits)
+			}
+		})
 	}
+}
 
-	// 冷却跳过也作用于其他模型共用同一线路的候选：cd-solo 的第一条候选是冷却中的 overloaded
-	code, body = chat("cd-solo")
-	expect(t, "单线路兜底透传 429", code, 429, body)
-	if p1Hits.Load() != 1 || p3Hits.Load() != 1 {
-		t.Fatalf("冷却中的主线路不应被打：主 %d，兜底 %d", p1Hits.Load(), p3Hits.Load())
-	}
+type blockedCooldownBody struct {
+	io.ReadCloser
+	block func()
+}
 
-	// 最后一条不受冷却影响：每个请求仍会尝试它，客户端照常拿到 429
-	code, body = chat("cd-solo")
-	expect(t, "兜底线路仍被尝试", code, 429, body)
-	if p3Hits.Load() != 2 {
-		t.Fatalf("最后一条线路不应被冷却拦住：%d", p3Hits.Load())
-	}
+func (b blockedCooldownBody) Read(p []byte) (int, error) {
+	b.block()
+	return b.ReadCloser.Read(p)
+}
 
-	// 冷却期内 429 的客户端错误应仍是 OpenAI 形状
-	if !strings.Contains(string(body), `"error"`) {
-		t.Fatalf("错误响应应为 OpenAI 格式：%s", body)
+func TestGatewayProviderCooldownConcurrent(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		firstOK  bool
+		wantHits int32
+	}{
+		{"older_success_keeps_newer_failure", true, 2},
+		{"cooldown_starts_before_reading_error_body", false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			started, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			block := sync.OnceFunc(func() {
+				close(started)
+				<-release
+			})
+			var primaryHits atomic.Int32
+			g := newCooldownGateway(t, func(host, _, message string) (*http.Response, error) {
+				if host == "backup.invalid" {
+					return cooldownResponse(http.StatusOK), nil
+				}
+				primaryHits.Add(1)
+				res := cooldownResponse(http.StatusTooManyRequests)
+				if message != "first" {
+					return res, nil
+				}
+				if tc.firstOK {
+					block()
+					return cooldownResponse(http.StatusOK), nil
+				}
+				res.Body = blockedCooldownBody{ReadCloser: res.Body, block: block}
+				return res, nil
+			})
+			g.addProvider("primary.invalid", map[string]string{"paired": "vendor-chat"})
+			g.addProvider("backup.invalid", map[string]string{"paired": "backup-chat"})
+
+			first := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				defer close(first)
+				first <- g.chat("paired", "first")
+			}()
+			defer func() {
+				unblock()
+				select {
+				case <-first:
+				case <-time.After(10 * time.Second):
+					t.Error("等待中的请求未退出")
+				}
+			}()
+			select {
+			case <-started:
+			case <-time.After(10 * time.Second):
+				t.Fatal("第一个请求未进入预期的等待点")
+			}
+			second := g.chat("paired", "second")
+			expect(t, "第二个请求经备线成功", second.Code, 200, second.Body.Bytes())
+			hitsWhileBlocked := primaryHits.Load()
+
+			unblock()
+			select {
+			case res := <-first:
+				expect(t, "第一个请求成功", res.Code, 200, res.Body.Bytes())
+			case <-time.After(10 * time.Second):
+				t.Fatal("第一个请求未完成")
+			}
+			third := g.chat("paired", "third")
+			expect(t, "第三个请求经备线成功", third.Code, 200, third.Body.Bytes())
+			if hits := primaryHits.Load(); hitsWhileBlocked != tc.wantHits || hits != tc.wantHits {
+				t.Fatalf("等待中的主线请求数 %d，第三个请求后 %d，均期望 %d", hitsWhileBlocked, hits, tc.wantHits)
+			}
+		})
 	}
 }

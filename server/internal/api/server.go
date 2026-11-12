@@ -76,7 +76,7 @@ type Server struct {
 	streamsOnce sync.Once
 	// 上游 MCP 连接的缓存，按资产 id
 	conns connClients
-	// 网关同名模型多线路时的失败冷却记忆，按上游 id
+	// 网关的上游连接与模型冷却状态
 	providerCD providerCooldowns
 	// ee_jwt 的签名密钥（内存里的一份，定期重读库，见 user_identity.go）
 	eeKeyring eeKeyring

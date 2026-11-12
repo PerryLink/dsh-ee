@@ -8,29 +8,40 @@ import (
 func TestProviderCooldowns(t *testing.T) {
 	var c providerCooldowns
 	now := time.Now()
-	if c.skip(1, now) {
+	key := providerCooldownKey{providerID: 1, model: "chat"}
+	if c.snapshot(key, now).cooling() {
 		t.Fatal("没标记过的线路不应被跳过")
 	}
-	c.mark(1, 30*time.Second, now)
-	if !c.skip(1, now.Add(time.Second)) {
+	c.mark(key, 30*time.Second, now)
+	if !c.snapshot(key, now.Add(time.Second)).cooling() {
 		t.Fatal("冷却期内应跳过")
 	}
-	if c.skip(1, now.Add(31*time.Second)) {
+	if c.snapshot(key, now.Add(31*time.Second)).cooling() {
 		t.Fatal("冷却期满应恢复")
 	}
-	if c.skip(1, now.Add(32*time.Second)) {
+	if c.snapshot(key, now.Add(32*time.Second)).cooling() {
 		t.Fatal("期满清除后应保持不跳过")
 	}
-	// 重复标记取更晚的截止时间，不会把冷却缩短
-	c.mark(2, 30*time.Second, now)
-	c.mark(2, 5*time.Second, now)
-	if !c.skip(2, now.Add(20*time.Second)) {
-		t.Fatal("重复标记应保留更长的冷却")
+}
+
+func TestProviderCooldownClearObserved(t *testing.T) {
+	var c providerCooldowns
+	now := time.Now()
+	key := providerCooldownKey{providerID: 1, model: "chat"}
+	connectionKey := providerCooldownKey{providerID: key.providerID}
+	c.mark(connectionKey, 30*time.Second, now)
+	c.mark(key, 30*time.Second, now)
+	seen := c.snapshot(key, now.Add(time.Second))
+	// 更新的失败即使没有延长截止时间，也应该保留。
+	c.mark(key, 5*time.Second, now.Add(2*time.Second))
+	c.clear(key, seen)
+	seen = c.snapshot(key, now.Add(20*time.Second))
+	if seen.connection != nil || seen.model == nil {
+		t.Fatal("成功应清除已观察到的连接冷却，并保留较新的模型冷却和原截止时间")
 	}
-	// clear 立即恢复
-	c.clear(2)
-	if c.skip(2, now.Add(time.Second)) {
-		t.Fatal("clear 后应立即可用")
+	c.clear(key, seen)
+	if c.snapshot(key, now.Add(21*time.Second)).cooling() {
+		t.Fatal("成功应解除已观察到的模型冷却")
 	}
 }
 
