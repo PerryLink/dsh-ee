@@ -64,6 +64,7 @@ func Bootstrap(ctx context.Context, st *store.Store, username, password string) 
 			return false, fmt.Errorf("写入默认菜单: %w", err)
 		}
 	}
+	st.SetSuperDisabled(loadAdminPolicy(ctx, st).SuperDisabled)
 	n, err := st.CountUsers(ctx)
 	if err != nil || n > 0 {
 		return false, err

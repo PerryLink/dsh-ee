@@ -30,6 +30,17 @@ type connExtension struct {
 	Manifest string `json:"manifest"`
 	// 管理员统一设置的参数值（fill: admin），键是参数名（请求体字段去掉 body.）
 	Admin map[string]json.RawMessage `json:"admin,omitempty"`
+
+	// 空是声明式；service 是服务扩展（service_ext.go）
+	Kind string `json:"kind,omitempty"`
+	// 服务扩展：管理员安装时填的服务地址（不带末尾的 /），工具走它的 /mcp，约定接口走 /ee/…
+	ServiceURL string `json:"service_url,omitempty"`
+	// 服务扩展：管理员填的配置（清单的 config）。secret 类型的值是 {"$enc": 密文}
+	Config map[string]json.RawMessage `json:"config,omitempty"`
+	// 服务扩展：回调地址里的随机串（清单申请了 endpoint 权限才有），第三方打到 /x/<它>/…
+	Endpoint string `json:"endpoint,omitempty"`
+	// oauth 模式：管理员填的 OAuth 客户端
+	OAuthClient *extOAuthClient `json:"oauth_client,omitempty"`
 }
 
 // label 是记进调用记录和审计的版本：作者/名字@版本#摘要前 12 位。
@@ -54,6 +65,9 @@ func validateExtension(sp *assetSpec) string {
 	e := sp.Extension
 	if e == nil {
 		return ""
+	}
+	if e.service() {
+		return validateServiceExtension(sp)
 	}
 	if sp.Type != "openapi" {
 		return "只有 OpenAPI 连接能来自声明式扩展"
@@ -216,6 +230,25 @@ func (s *Server) checkExtensionChange(ctx context.Context, a *store.Asset, sp *a
 type extPackage struct {
 	Zip   string            `json:"zip"`
 	Files map[string]string `json:"files"`
+	// 服务扩展：服务地址，清单从它的 /.well-known/dsh-ee-extension.json 取
+	ServiceURL string `json:"service_url"`
+}
+
+// readExtPackage 读上传的扩展，或从服务地址取清单。返回文件和（服务扩展的）服务地址。
+func (s *Server) readExtPackage(ctx context.Context, p *extPackage) (map[string][]byte, string, error) {
+	if strings.TrimSpace(p.ServiceURL) == "" {
+		files, err := p.read()
+		return files, "", err
+	}
+	svc, msg := cleanServiceURL(p.ServiceURL)
+	if msg != "" {
+		return nil, "", errors.New(msg)
+	}
+	raw, err := s.fetchExtManifest(ctx, svc)
+	if err != nil {
+		return nil, "", err
+	}
+	return map[string][]byte{extension.ManifestFile: raw}, svc, nil
 }
 
 func (p *extPackage) read() (map[string][]byte, error) {
@@ -251,6 +284,23 @@ type extPlan struct {
 	Sensitive []string `json:"sensitive"`
 	// 原来就在用的参数值，升级时预先填上
 	Admin map[string]json.RawMessage `json:"admin,omitempty"`
+
+	// 以下是服务扩展和 oauth 才有的
+	Kind       string `json:"kind"`
+	ServiceURL string `json:"service_url,omitempty"`
+	// 管理员要填的配置项，和原来填的值（secret 只说填没填）
+	Config       []extension.ConfigField `json:"config"`
+	ConfigValues map[string]any          `json:"config_values,omitempty"`
+	// 扩展实现了哪些约定接口、申请了哪些反过来调 dsh-ee 的权限
+	Capabilities []string        `json:"capabilities"`
+	Permissions  json.RawMessage `json:"permissions,omitempty"`
+	// 会交给扩展什么凭据（docs/plugins.md §7.4），给管理员看清楚
+	Handover []string `json:"handover"`
+	// 要管理员填 OAuth 客户端（client_id / client_secret）；redirect 是要登记到对方系统的回调地址
+	OAuthClient   bool   `json:"oauth_client"`
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
+	// 扩展带的扩展字段，安装时建好
+	Fields []extension.Field `json:"fields"`
 }
 
 type extExisting struct {
@@ -286,19 +336,56 @@ func (s *Server) findExtension(ctx context.Context, id string) (*store.Asset, *a
 }
 
 // plan 检查扩展并算出安装计划。检查不通过时 plan.Check.OK 为 false，其余字段尽量给全。
-func (s *Server) planExtension(ctx context.Context, files map[string][]byte) (*extPlan, error) {
+func (s *Server) planExtension(ctx context.Context, files map[string][]byte, serviceURL string) (*extPlan, error) {
 	res := extension.CheckFiles(files)
-	p := &extPlan{Check: res, AdminParams: []extension.AdminParam{}, Changes: []string{}, Sensitive: []string{}}
+	p := &extPlan{Check: res, AdminParams: []extension.AdminParam{}, Changes: []string{}, Sensitive: []string{},
+		Config: []extension.ConfigField{}, Capabilities: []string{}, Handover: []string{}, Fields: []extension.Field{}, ServiceURL: serviceURL}
 	m := res.Manifest
 	if m == nil {
 		return p, nil
 	}
-	if m.Kind != extension.KindDeclarative && res.OK {
-		res.OK = false
-		res.Errors++
-		res.Results = append([]extension.Diagnostic{{Code: "kind.unsupported", Severity: extension.SevError, Where: extension.ManifestFile + "#/kind",
-			Message: "这个版本的 dsh-ee 只能安装声明式扩展", Fix: "服务扩展、端侧扩展在后面的版本支持；现有的 MCP 服务可以直接在企业连接里接入"}}, res.Results...)
+	p.Kind = m.Kind
+	reject := func(code, msg, fix string) {
+		if res.OK {
+			res.OK = false
+			res.Errors++
+			res.Results = append([]extension.Diagnostic{{Code: code, Severity: extension.SevError, Where: extension.ManifestFile + "#/kind", Message: msg, Fix: fix}}, res.Results...)
+		}
 	}
+	switch {
+	case m.Kind == extension.KindLocal:
+		reject("kind.unsupported", "端侧扩展是一个 npm 包，不在这里安装", "把包发布到企业 npm 源，在能力中心里按插件下发；见 docs/extension-local.md")
+	case m.Kind == extension.KindService && serviceURL == "":
+		reject("kind.unsupported", "服务扩展要填它的服务地址来安装，不是上传文件", "先把扩展部署好，再在「安装扩展 → 服务地址」里填它的地址")
+	case m.Kind == extension.KindDeclarative && serviceURL != "":
+		reject("kind.unsupported", "这个地址上的清单是声明式扩展，请用上传的方式安装", "")
+	}
+	if m.Kind == extension.KindService {
+		p.Config = append(p.Config, m.Config...)
+		p.Capabilities = append(p.Capabilities, m.Capabilities...)
+		p.Permissions = m.Permissions
+		p.Handover = append(p.Handover, "每次调用带一个 5 分钟有效的身份令牌（ee_jwt），扩展据此知道是哪位员工")
+		if c := m.Credential; c != nil {
+			switch c.Mode {
+			case extension.CredShared:
+				p.Handover = append(p.Handover, "管理员配的共享凭据会原样交给扩展（这类凭据没有短期形式）")
+			case extension.CredUserSecret:
+				p.Handover = append(p.Handover, "员工自己填的凭据会原样交给扩展（这类凭据没有短期形式）；能换成 ee_jwt 或 oauth 就换")
+			case extension.CredOAuth:
+				p.Handover = append(p.Handover, "员工授权后的 access token 会交给扩展；refresh token 和 client secret 留在 dsh-ee")
+			}
+			if c.Shared != nil && c.Mode != extension.CredShared {
+				p.Handover = append(p.Handover, "另有一份管理员配的共享凭据会原样交给扩展")
+			}
+		}
+		if len(m.Config) > 0 {
+			p.Handover = append(p.Handover, "管理员填的配置（含密钥类型的配置项）每次调用都带给扩展")
+		}
+	}
+	if m.Credential != nil && m.Credential.Mode == extension.CredOAuth && m.OAuth != nil {
+		p.OAuthClient = true
+	}
+	p.Fields = append(p.Fields, m.Fields...)
 	if msg := extensionCompat(m, s.opts.Version); msg != "" && res.OK {
 		res.OK = false
 		res.Errors++
@@ -319,9 +406,32 @@ func (s *Server) planExtension(ctx context.Context, files map[string][]byte) (*e
 	p.Existing = &extExisting{ID: old.ID, Slug: old.Slug, Title: old.Title, Version: osp.Extension.Version, URL: osp.URL}
 	p.Slug = old.Slug
 	p.Admin = osp.Extension.Admin
+	p.ConfigValues = osp.Extension.configView()
+	if osp.Extension.OAuthClient != nil {
+		p.OAuthClientID = osp.Extension.OAuthClient.ID
+	}
 	om, err := osp.Extension.manifest()
 	if err != nil {
 		return p, nil
+	}
+	if om.Kind != m.Kind {
+		reject("kind.unsupported", fmt.Sprintf("已经装着的 %s 是 %s 扩展，不能直接换成 %s 扩展", m.ID, om.Kind, m.Kind), "先删掉原来的连接再装，或者换一个 id")
+		return p, nil
+	}
+	if m.Kind == extension.KindService {
+		if osp.Extension.ServiceURL != serviceURL {
+			p.Sensitive = append(p.Sensitive, "服务地址从 "+osp.Extension.ServiceURL+" 换成了 "+serviceURL)
+		}
+		if string(om.Permissions) != string(m.Permissions) && len(m.Permissions) > 0 {
+			var was, now map[string]any
+			_ = json.Unmarshal(om.Permissions, &was)
+			_ = json.Unmarshal(m.Permissions, &now)
+			for k := range now {
+				if _, had := was[k]; !had {
+					p.Sensitive = append(p.Sensitive, "扩展新申请了反过来调 dsh-ee 的权限 "+k)
+				}
+			}
+		}
 	}
 	if om.Version == m.Version && osp.Extension.Digest == res.Digest {
 		p.Changes = append(p.Changes, "和已装的版本完全一样")
@@ -330,7 +440,11 @@ func (s *Server) planExtension(ctx context.Context, files map[string][]byte) (*e
 	if om.Version == m.Version {
 		p.Sensitive = append(p.Sensitive, "版本号没变（"+m.Version+"），但清单或接口文档的内容变了")
 	}
-	oldRes := extension.CheckFiles(map[string][]byte{extension.ManifestFile: []byte(osp.Extension.Manifest), om.OpenAPI: []byte(osp.OpenAPI)})
+	oldFiles := map[string][]byte{extension.ManifestFile: []byte(osp.Extension.Manifest)}
+	if om.OpenAPI != "" {
+		oldFiles[om.OpenAPI] = []byte(osp.OpenAPI)
+	}
+	oldRes := extension.CheckFiles(oldFiles)
 	oldRO := map[string]bool{}
 	for _, t := range oldRes.Tools {
 		oldRO[t.Name] = t.ReadOnly
@@ -375,12 +489,12 @@ func (s *Server) handleExtCheck(w http.ResponseWriter, r *http.Request) {
 	if !readJSONLimit(w, r, &req, 12<<20) {
 		return
 	}
-	files, err := req.read()
+	files, svc, err := s.readExtPackage(r.Context(), &req)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	p, err := s.planExtension(r.Context(), files)
+	p, err := s.planExtension(r.Context(), files, svc)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -401,6 +515,11 @@ type extInstallReq struct {
 	Scope  *store.Scope               `json:"scope"`
 	// 升级时有要确认的变化（凭据模式、新地址），要传 true
 	Confirm bool `json:"confirm"`
+	// 服务扩展：清单 config 里各项的值；secret 留空表示沿用原来的
+	Config map[string]json.RawMessage `json:"config"`
+	// oauth：管理员在对方系统开放平台上建的应用；secret 留空表示沿用原来的
+	OAuthClientID     string `json:"oauth_client_id"`
+	OAuthClientSecret string `json:"oauth_client_secret"`
 }
 
 // POST /api/admin/extensions/install：检查通过后装成连接；装过的就升级成新版本。
@@ -409,13 +528,13 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 	if !readJSONLimit(w, r, &req, 12<<20) {
 		return
 	}
-	files, err := req.read()
+	ctx := r.Context()
+	files, svc, err := s.readExtPackage(ctx, &req.extPackage)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ctx := r.Context()
-	p, err := s.planExtension(ctx, files)
+	p, err := s.planExtension(ctx, files, svc)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -440,26 +559,65 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 			Manifest: string(files[extension.ManifestFile]), Admin: req.Admin,
 		},
 	}
+	var osp *assetSpec
+	if p.Existing != nil {
+		if _, osp, err = s.findExtension(ctx, m.ID); err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+	}
+	if p.OAuthClient {
+		var old *extOAuthClient
+		if osp != nil {
+			old = osp.Extension.OAuthClient
+		}
+		client, msg := s.sealOAuthClient(req.OAuthClientID, req.OAuthClientSecret, old)
+		if msg != "" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
+		sp.Extension.OAuthClient = client
+	}
+	if m.Kind == extension.KindService {
+		if msg := s.prepareServiceInstall(r, m, sp, osp, svc, &req); msg != "" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
+	}
 	if sp.URL == "" && p.Existing != nil {
 		sp.URL = p.Existing.URL
 	}
 	if sp.URL == "" && len(m.Servers) == 1 {
 		sp.URL = m.Servers[0]
 	}
-	sp.Auth, sp.UserAuth = extCredential(m.Credential, req.Auth)
+	if m.Kind == extension.KindService {
+		sp.Auth, sp.UserAuth = serviceCredential(m)
+	} else {
+		sp.Auth, sp.UserAuth = extCredential(m.Credential, req.Auth)
+	}
 	if p.Existing != nil {
 		// 升级：沿用原来的共享凭据放法（清单没规定时）、超时和使用说明
-		if _, osp, err := s.findExtension(ctx, m.ID); err == nil && osp != nil {
-			if m.Credential == nil || (m.Credential.Mode == extension.CredShared && m.Credential.Header == "" && req.Auth == nil) {
-				sp.Auth = osp.Auth
-			}
-			// 升级不改变管理员选的那一份命名共享凭据
-			if sp.Auth != nil && sp.Auth.Type != "none" {
-				sp.Auth.SharedName = sharedNameOf(osp)
-			}
-			sp.TimeoutSec, sp.Instructions = osp.TimeoutSec, osp.Instructions
-			if req.Admin == nil {
-				sp.Extension.Admin = osp.Extension.Admin
+		if osp != nil {
+			if m.Kind == extension.KindService {
+				if sp.Auth.Type != "none" {
+					sp.Auth.SharedName = sharedNameOf(osp)
+				}
+				sp.TimeoutSec, sp.Instructions = osp.TimeoutSec, osp.Instructions
+				if req.Admin == nil {
+					sp.Extension.Admin = osp.Extension.Admin
+				}
+			} else {
+				if m.Credential == nil || (m.Credential.Mode == extension.CredShared && m.Credential.Header == "" && req.Auth == nil) {
+					sp.Auth = osp.Auth
+				}
+				// 升级不改变管理员选的那一份命名共享凭据
+				if sp.Auth != nil && sp.Auth.Type != "none" {
+					sp.Auth.SharedName = sharedNameOf(osp)
+				}
+				sp.TimeoutSec, sp.Instructions = osp.TimeoutSec, osp.Instructions
+				if req.Admin == nil {
+					sp.Extension.Admin = osp.Extension.Admin
+				}
 			}
 		}
 	}
@@ -528,6 +686,20 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		resp["sync_error"] = err.Error()
 	} else {
 		resp["tools"] = n
+	}
+	if sp.Extension.service() {
+		resp["warnings"] = s.serviceToolDiff(ctx, a, sp, s.callerBase(r))
+		if sp.Extension.Endpoint != "" {
+			resp["endpoint_url"] = s.callerBase(r) + "/x/" + sp.Extension.Endpoint + "/"
+		}
+	}
+	if sp.Extension.OAuthClient != nil {
+		resp["oauth_redirect_uri"] = s.callerBase(r) + oauthCallbackPath
+	}
+	if created, err := s.installExtFields(ctx, m, v.user.ID); err != nil {
+		resp["fields_error"] = err.Error()
+	} else if len(created) > 0 {
+		resp["fields"] = created
 	}
 	resp["asset"] = a
 	s.audit(r, auditExtInstall, "connection:"+a.Slug, map[string]any{

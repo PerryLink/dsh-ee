@@ -309,7 +309,7 @@ func (s *Server) demoUpgradeApp(ctx context.Context, it demoItem, a *store.Asset
 
 // POST /api/admin/demo：导入示例内容。要超级管理员：会建账号、连接，并把微应用推到全员的 DSH。
 func (s *Server) handleDemoImport(w http.ResponseWriter, r *http.Request) {
-	if !currentAccess(r).Super {
+	if !s.topAdmin(currentAccess(r)) {
 		writeErr(w, http.StatusForbidden, "导入示例内容需要超级管理员")
 		return
 	}

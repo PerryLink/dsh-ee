@@ -127,6 +127,26 @@ func (s *Server) handleSetUserRoles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, msg)
 		return
 	}
+	// 管理约束：不能给自己授权、互斥角色、双人批准（admin_policy.go）
+	policy := s.adminPolicy(r.Context())
+	msg, grantsAdmin, err := s.roleChangeProblem(r.Context(), policy, currentUser(r).ID, id, target, ids)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	if msg != "" {
+		writeErr(w, http.StatusForbidden, msg)
+		return
+	}
+	if grantsAdmin && policy.dual(DualRolesAssign) {
+		c, err := s.submitRolesChange(r, id, ids)
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"change_request": c, "message": "开了双人批准：授管理角色要另一位管理员在「变更请求」里批准后才生效"})
+		return
+	}
 	// 拿掉超级管理员时，确认还剩至少一个启用中的超级管理员
 	if target.Super {
 		stillSuper := false
@@ -275,6 +295,9 @@ type createRoleReq struct {
 }
 
 func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
+	if !s.guardDual(w, r) {
+		return
+	}
 	var req createRoleReq
 	if !readJSON(w, r, &req) {
 		return
@@ -312,6 +335,9 @@ type updateRoleReq struct {
 }
 
 func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
+	if !s.guardDual(w, r) {
+		return
+	}
 	id, ok := pathID(w, r)
 	if !ok {
 		return
@@ -378,6 +404,9 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
+	if !s.guardDual(w, r) {
+		return
+	}
 	id, ok := pathID(w, r)
 	if !ok {
 		return

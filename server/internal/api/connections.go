@@ -226,6 +226,13 @@ func (s *Server) discoverTools(ctx context.Context, sp *assetSpec, client *mcp.C
 			// MCP 工具默认启用；管理员可以逐个关掉或限定角色
 			out = append(out, &store.ConnectionTool{Name: name, Description: desc, InputSchema: schema, ReadOnly: t.ReadOnly(), Enabled: true})
 		}
+		if sp.Extension.service() {
+			m, err := sp.Extension.manifest()
+			if err != nil {
+				return nil, "", err
+			}
+			out, _ = applyServiceExtension(m, out)
+		}
 		return out, client.Instructions, nil
 	case "openapi":
 		spec, err := openapi.Parse([]byte(sp.OpenAPI))
@@ -275,7 +282,12 @@ func (s *Server) syncConnectionTools(ctx context.Context, id int64, v viewer, ba
 	}
 	sp := parseSpec(lv.Spec)
 	var client *mcp.Client
-	if sp.Type == "mcp" {
+	if sp.Extension.service() {
+		// 服务扩展的工具清单用系统身份取：不该要求点同步的管理员先有自己的凭据
+		if client, err = s.serviceClient(ctx, a, sp, base); err != nil {
+			return 0, err
+		}
+	} else if sp.Type == "mcp" {
 		if client, err = s.connClient(ctx, a, lv.Version, sp, v, base); err != nil {
 			if errors.Is(err, errNeedCredential) {
 				return 0, errors.New("这个连接按员工本人的凭据调用：请先在连接页面填上你自己的凭据，再同步工具")
@@ -310,7 +322,10 @@ func (s *Server) callConnectionTool(ctx context.Context, a *store.Asset, t *stor
 	if err != nil {
 		call.Error = err.Error()
 		result = mcp.TextResult("调用 "+a.Title+" 失败："+err.Error(), true)
-		if errors.Is(err, errNeedCredential) {
+		if errors.Is(err, errNeedAuthorize) {
+			call.Error = "员工还没授权"
+			result = mcp.TextResult(extErrorText(a, base, "authorize", ""), true)
+		} else if errors.Is(err, errNeedCredential) {
 			// 还没发请求：告诉模型该让员工去哪里填，别当成对方系统的故障去重试
 			call.Error = "员工还没填自己的凭据"
 			result = mcp.TextResult("调用 "+a.Title+" 需要你本人的凭据，你还没有填。请先打开 "+base+"/assets/"+strconv.FormatInt(a.ID, 10)+
@@ -368,11 +383,27 @@ func (s *Server) doConnectionCall(ctx context.Context, a *store.Asset, t *store.
 	ext := sp.Extension.label()
 	switch sp.Type {
 	case "mcp":
+		service := sp.Extension.service()
+		if service {
+			if p := sp.UserAuth.personal(); p != "" {
+				mode = p
+			}
+			if !s.extBreak.allow(a.ID) {
+				return nil, mode, ext, errExtBroken
+			}
+			if args, err = sp.Extension.prepareService(t.Name, args); err != nil {
+				return nil, mode, ext, err
+			}
+		}
 		client, err := s.connClient(ctx, a, lv.Version, sp, v, base)
 		if err != nil {
 			return nil, mode, ext, err
 		}
 		res, err := client.CallTool(withCaller(ctx, v, base), t.Name, args)
+		if service {
+			// 凭据没填、还没授权这类问题不是扩展的故障，不计入熔断
+			s.extBreak.report(a.ID, err != nil && !errors.Is(err, errNeedCredential) && !errors.Is(err, errNeedAuthorize))
+		}
 		if err != nil {
 			if sp.UserAuth != nil {
 				s.dropUserConnClient(a.ID, v.user.ID)
@@ -380,6 +411,11 @@ func (s *Server) doConnectionCall(ctx context.Context, a *store.Asset, t *store.
 				s.dropConnClient(a.ID)
 			}
 			return nil, mode, ext, err
+		}
+		if service {
+			if mapped, code := extToolResult(a, base, res); code != "" {
+				return mapped, mode, ext, nil
+			}
 		}
 		return limitMCPResult(res, connResultLimit), mode, ext, nil
 	case "openapi":

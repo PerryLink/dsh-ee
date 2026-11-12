@@ -410,7 +410,7 @@ func (s *Store) UserAccess(ctx context.Context, userID int64) (*rbac.Access, err
 		}
 		a.RoleIDs = append(a.RoleIDs, id)
 		a.RoleCodes = append(a.RoleCodes, code)
-		a.Super = a.Super || super
+		a.Super = a.Super || (super && !s.superOff.Load())
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -467,6 +467,28 @@ func (s *Store) SetUserRoles(ctx context.Context, userID int64, roleIDs []int64)
 		}
 	}
 	return tx.Commit()
+}
+
+// PermissionHolders 统计每个权限点有几个启用中的人（经由不是超级管理员的角色）持有。
+func (s *Store) PermissionHolders(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT rp.permission_code, COUNT(DISTINCT u.id) FROM role_permissions rp
+		 JOIN user_roles ur ON ur.role_id = rp.role_id JOIN users u ON u.id = ur.user_id
+		 WHERE u.disabled = 0 GROUP BY rp.permission_code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var code string
+		var n int
+		if err := rows.Scan(&code, &n); err != nil {
+			return nil, err
+		}
+		out[code] = n
+	}
+	return out, rows.Err()
 }
 
 // CountSuperUsers 统计启用中的超级管理员人数，excludeUserID 不计入（用于「改完之后还剩几个」的判断）。

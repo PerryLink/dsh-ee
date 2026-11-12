@@ -152,7 +152,11 @@ func (s *Server) handleKBList(w http.ResponseWriter, r *http.Request) {
 		}
 		// 最近更新的几篇：员工最关心的是「什么制度改了」
 		if items[i].Readable {
-			if items[i].Recent, err = s.store.RecentKDocs(r.Context(), b.ID, 3); err != nil {
+			if items[i].Recent, err = s.store.RecentKDocs(r.Context(), b.ID, 20); err == nil {
+				items[i].Recent, err = filterDocs(r.Context(), s, v, b, items[i].Recent, func(d *store.KDocBrief) int64 { return d.ID })
+				items[i].Recent = items[i].Recent[:min(3, len(items[i].Recent))]
+			}
+			if err != nil {
 				s.internalErr(w, r, err)
 				return
 			}
@@ -250,6 +254,9 @@ func (s *Server) handleKBDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	docs, err := s.store.ListKDocs(r.Context(), b.ID)
+	if err == nil {
+		docs, err = filterDocs(r.Context(), s, v, b, docs, func(d *store.KDoc) int64 { return d.ID })
+	}
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -618,6 +625,14 @@ func (s *Server) loadKDoc(w http.ResponseWriter, r *http.Request) (*store.KDoc, 
 	if err == nil {
 		b, err = s.store.GetKBase(r.Context(), d.BaseID)
 	}
+	if err == nil && v.kbReads(b) {
+		// 按字段规则看不到的文档当不存在
+		if seen, gerr := s.canSeeDoc(r.Context(), v, b, d.ID); gerr != nil {
+			err = gerr
+		} else if !seen {
+			err = store.ErrNotFound
+		}
+	}
 	if notFound(err) || (err == nil && !v.kbReads(b)) {
 		writeErr(w, http.StatusNotFound, "文档不存在，或你没有查看权限")
 		return nil, nil, v, false
@@ -965,7 +980,7 @@ func (s *Server) handleKBSearch(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
-	res, err := s.kbSearch(r.Context(), bases, req.KBIDs, nil, req.Query, req.Mode, req.Folder, 20)
+	res, err := s.kbSearch(r.Context(), v, bases, req.KBIDs, nil, req.Query, req.Mode, req.Folder, 20)
 	var qe *kb.QueryError
 	if errors.As(err, &qe) {
 		writeErr(w, http.StatusBadRequest, qe.Msg)
@@ -979,7 +994,7 @@ func (s *Server) handleKBSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // kbSearch 在 bases 里（ids 不为空时只搜其中这几个）检索。
-func (s *Server) kbSearch(ctx context.Context, bases []*store.KBase, ids, docs []int64, query, mode, folder string, limit int) (*kb.Result, error) {
+func (s *Server) kbSearch(ctx context.Context, v viewer, bases []*store.KBase, ids, docs []int64, query, mode, folder string, limit int) (*kb.Result, error) {
 	if !slices.Contains([]string{"", "any", "all", "phrase", "regex"}, mode) {
 		return nil, &kb.QueryError{Msg: "mode 只能是 any、all、phrase 或 regex"}
 	}
@@ -998,7 +1013,11 @@ func (s *Server) kbSearch(ctx context.Context, bases []*store.KBase, ids, docs [
 	if err := s.kbSync(ctx, pick); err != nil {
 		return nil, err
 	}
-	q := kb.Query{Text: query, Mode: mode, Folder: folder, Docs: docs, Limit: limit}
+	gates, err := s.kbGates(ctx, v, pick)
+	if err != nil {
+		return nil, err
+	}
+	q := kb.Query{Text: query, Mode: mode, Folder: folder, Docs: docs, Limit: limit, Allow: allowFunc(gates)}
 	for _, b := range pick {
 		q.Bases = append(q.Bases, b.ID)
 	}

@@ -8,6 +8,8 @@ const (
 	ScopeConnections     = "connections"
 	ScopeAgent           = "agent"
 	ScopeAdmin           = "admin"
+	// 配置令牌（docs/agent-dev.md §7）：导出权限配置、plan / test / explain / simulate、提交变更请求；批准不行
+	ScopeConfig = "config"
 )
 
 var scopePermissions = map[string][]string{
@@ -17,6 +19,7 @@ var scopePermissions = map[string][]string{
 	ScopeHub:             {PortalView},
 	ScopeConnections:     {PortalView},
 	ScopeAgent:           {PortalView, LLMUse, KeysSelf, RegistryUse, RegistryPublish},
+	ScopeConfig:          {FieldsManage, RolesManage, UsersView},
 }
 
 func scopeAllows(scope, permission string) bool {
@@ -71,3 +74,6 @@ func HasAdminPerms(access *Access) bool {
 	}
 	return false
 }
+
+// IsAdminPerm 报告一个权限点是不是管理类的（员工自己用的那几个不算）。
+func IsAdminPerm(code string) bool { return scopeAllows(ScopeAdmin, code) }

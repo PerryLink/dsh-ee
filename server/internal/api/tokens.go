@@ -140,6 +140,10 @@ func validTokenScopes(a *rbac.Access, scopes []string) ([]string, bool) {
 			if !a.Has(rbac.PortalView) {
 				return nil, false
 			}
+		case rbac.ScopeConfig:
+			if !a.Has(rbac.FieldsManage, rbac.RolesManage) {
+				return nil, false
+			}
 		default:
 			return nil, false
 		}

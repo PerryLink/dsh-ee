@@ -427,6 +427,10 @@ func (s *Server) hubItems(r *http.Request, withBody bool) ([]*hubItem, error) {
 		if !withBody {
 			it.Spec.Body, it.Spec.Persona, it.Spec.OpenAPI = "", "", ""
 		}
+		if e := it.Spec.Extension; e != nil && !v.manages(a.Kind) {
+			// 扩展的配置、回调地址、OAuth 客户端只给管连接的人看；别人只需要知道是哪个扩展、哪个版本
+			it.Spec.Extension = &connExtension{ID: e.ID, Version: e.Version, Digest: e.Digest, Kind: e.Kind}
+		}
 		if u := users[derefID(a.OwnerID)]; u != nil {
 			it.Owner, it.OwnerName, it.Department = u.Username, u.DisplayName, u.Department
 		}

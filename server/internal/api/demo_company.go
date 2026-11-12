@@ -586,7 +586,7 @@ type demoClearResult struct {
 // DELETE /api/admin/demo：把示例的知识库、连接、应用、员工和模拟统计全部删掉，用户自己建的内容不动。
 // 只删导入时记下的那些；更早版本导入的（没有记录）按标识认出来：能力要是「示例」分类，库和账号要带「（示例）」字样。
 func (s *Server) handleDemoClear(w http.ResponseWriter, r *http.Request) {
-	if !currentAccess(r).Super {
+	if !s.topAdmin(currentAccess(r)) {
 		writeErr(w, http.StatusForbidden, "清除示例数据需要超级管理员")
 		return
 	}

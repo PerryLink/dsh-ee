@@ -30,6 +30,7 @@ import (
 const (
 	userAuthEEJWT  = "ee_jwt"
 	userAuthSecret = "user_secret"
+	userAuthOAuth  = "oauth"
 )
 
 // connUserAuth 是连接上的员工身份设置。
@@ -44,6 +45,19 @@ type connUserAuth struct {
 	Claims []string `json:"claims,omitempty"`
 	// user_secret：告诉员工这个凭据去哪里拿
 	Hint string `json:"hint,omitempty"`
+	// 服务扩展：ee_jwt 之外，还要把这位员工在源系统的凭据（user_secret / oauth）放在 X-DSH-EE-Credential 里带给扩展
+	Extra string `json:"extra,omitempty"`
+}
+
+// personal 是这个连接要员工自己存的那种凭据：user_secret / oauth；不需要就是空。
+func (u *connUserAuth) personal() string {
+	switch {
+	case u == nil:
+		return ""
+	case u.Mode == userAuthSecret || u.Mode == userAuthOAuth:
+		return u.Mode
+	}
+	return u.Extra
 }
 
 // eeClaimChoices 是管理员可以按连接打开的员工信息。
@@ -74,8 +88,14 @@ func validateUserAuth(sp *assetSpec) string {
 		sp.UserAuth = nil
 		return ""
 	}
-	if u.Mode != userAuthEEJWT && u.Mode != userAuthSecret {
-		return "员工身份只能是 ee_jwt 或 user_secret"
+	if u.Mode != userAuthEEJWT && u.Mode != userAuthSecret && u.Mode != userAuthOAuth {
+		return "员工身份只能是 ee_jwt、user_secret 或 oauth"
+	}
+	if u.Mode == userAuthOAuth && (sp.Extension == nil || sp.Extension.OAuthClient == nil) {
+		return "oauth 只能用在扩展装的连接上，而且要填 OAuth 客户端"
+	}
+	if u.Extra != "" && (!sp.Extension.service() || u.Mode != userAuthEEJWT || (u.Extra != userAuthSecret && u.Extra != userAuthOAuth)) {
+		return "只有服务扩展能在 ee_jwt 之外再带一份员工凭据"
 	}
 	u.Header = strings.TrimSpace(u.Header)
 	if u.Header != "" && !headerNameRe.MatchString(u.Header) {
@@ -99,8 +119,11 @@ func validateUserAuth(sp *assetSpec) string {
 		if len(u.Claims) == 0 {
 			u.Claims = nil
 		}
-	} else {
+	}
+	if u.Mode != userAuthEEJWT {
 		u.Audience, u.Claims = "", nil
+	}
+	if u.personal() == userAuthSecret {
 		u.Hint = strings.TrimSpace(u.Hint)
 		if !limitRunes(u.Hint, 300) {
 			return "给员工的说明最多 300 个字符"
@@ -150,11 +173,44 @@ func (s *Server) userAuthHeader(ctx context.Context, a *store.Asset, sp *assetSp
 			return nil, fmt.Errorf("解密员工凭据（主密钥是否换过？）：%w", err)
 		}
 		value = string(plain)
+	case userAuthOAuth:
+		tok, err := s.oauthAccessToken(ctx, a, sp, v, base)
+		if err != nil {
+			return nil, err
+		}
+		value = tok
 	}
 	if u.Header == "" {
 		h.Set("Authorization", "Bearer "+value)
 	} else {
 		h.Set(u.Header, value)
+	}
+	// 服务扩展：员工在源系统的凭据和管理员的配置另放请求头
+	switch u.Extra {
+	case userAuthSecret:
+		enc, err := s.store.UserCredential(ctx, v.user.ID, a.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(enc) == 0 {
+			return nil, errNeedCredential
+		}
+		plain, err := s.box.Open(enc)
+		if err != nil {
+			return nil, fmt.Errorf("解密员工凭据（主密钥是否换过？）：%w", err)
+		}
+		h.Set(extHeaderCredential, string(plain))
+	case userAuthOAuth:
+		tok, err := s.oauthAccessToken(ctx, a, sp, v, base)
+		if err != nil {
+			return nil, err
+		}
+		h.Set(extHeaderCredential, tok)
+	}
+	if sp.Extension.service() {
+		if err := s.extConfigHeader(sp.Extension, h); err != nil {
+			return nil, err
+		}
 	}
 	return h, nil
 }
@@ -461,7 +517,10 @@ func credentialView(u *connUserAuth, info map[int64]store.UserCredentialInfo, as
 		return nil
 	}
 	c := &myCredential{Mode: u.Mode, Hint: u.Hint}
-	if u.Mode == userAuthEEJWT {
+	if p := u.personal(); p != "" {
+		c.Mode = p
+	}
+	if u.personal() == "" {
 		// 身份令牌由 dsh-ee 现签，员工什么都不用填
 		c.Filled = true
 		return c
@@ -490,7 +549,7 @@ func (s *Server) loadSecretConnection(w http.ResponseWriter, r *http.Request) (*
 		s.internalErr(w, r, err)
 		return nil, false
 	}
-	if u := parseSpec(lv.Spec).UserAuth; u == nil || u.Mode != userAuthSecret {
+	if u := parseSpec(lv.Spec).UserAuth; u.personal() != userAuthSecret {
 		writeErr(w, http.StatusBadRequest, "这个连接不需要你填自己的凭据")
 		return nil, false
 	}
@@ -536,6 +595,10 @@ func (s *Server) handleDeleteMyCredential(w http.ResponseWriter, r *http.Request
 		return
 	}
 	u := currentUser(r)
+	if lv, err := s.store.LiveAssetVersion(r.Context(), a.ID); err == nil {
+		// oauth：先通知对方撤销，再删本地存的令牌
+		s.oauthRevoke(r.Context(), a, parseSpec(lv.Spec), u, s.callerBase(r))
+	}
 	gone, err := s.store.DeleteUserCredential(r.Context(), u.ID, a.ID)
 	if err != nil {
 		s.internalErr(w, r, err)
@@ -589,6 +652,21 @@ func (s *Server) handleRevokeConnCredential(w http.ResponseWriter, r *http.Reque
 
 // purgeUserCredentials 在员工被停用时删掉他按人存的凭据（docs/plugins.md §7.6）。
 func (s *Server) purgeUserCredentials(ctx context.Context, userID int64) {
+	// oauth 的授权先通知对方撤销（尽力而为），再删本地的
+	if infos, err := s.store.UserCredentialInfos(ctx, userID); err == nil && len(infos) > 0 {
+		if u, err := s.store.GetUser(ctx, userID); err == nil {
+			base := s.systemBase(ctx)
+			for assetID := range infos {
+				a, err := s.store.GetAsset(ctx, assetID)
+				if err != nil {
+					continue
+				}
+				if lv, err := s.store.LiveAssetVersion(ctx, assetID); err == nil {
+					s.oauthRevoke(ctx, a, parseSpec(lv.Spec), u, base)
+				}
+			}
+		}
+	}
 	n, err := s.store.DeleteUserCredentials(ctx, userID)
 	if err != nil {
 		s.log.Warn("删除停用员工的连接凭据失败", "user", userID, "err", err)

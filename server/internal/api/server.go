@@ -78,6 +78,9 @@ type Server struct {
 	conns connClients
 	// ee_jwt 的签名密钥（内存里的一份，定期重读库，见 user_identity.go）
 	eeKeyring eeKeyring
+	// 服务扩展：连续出错时的熔断、回调地址的限流（service_ext.go）
+	extBreak        extBreaker
+	extEndpointRate keyRate
 	// 示例内容里演示差旅系统的内存数据
 	demo demoTravel
 	crm  demoCRM
@@ -130,6 +133,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 	}
 	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
 	s.kb.ix = kb.NewIndex()
+	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()
 	s.registry = s.newRegistry()
 	s.routeTable = s.routes()
@@ -324,7 +328,10 @@ func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
 func (s *Server) RunBackground(ctx context.Context) {
 	go s.runLDAPSync(ctx)
 	go s.runFeishuSync(ctx)
+	go s.runExtHealth(ctx)
+	go s.runKBSourceSync(ctx)
 	go s.runElevationExpiry(ctx)
+	go s.runRecoveryExpiry(ctx)
 	go s.runAppRowPurge(ctx)
 	go s.runDshReleases(ctx)
 	if s.registry == nil {

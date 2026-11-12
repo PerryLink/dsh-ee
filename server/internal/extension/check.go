@@ -414,7 +414,9 @@ func (c *checker) credential(m *Manifest) *CredentialInfo {
 		info.Audience, info.Claims = cr.Audience, cr.Claims
 	}
 	if cr.Mode == CredOAuth {
-		c.add("credential.unsupported", at("credential", "mode"), "这个版本的 dsh-ee 还不支持 oauth", "先用 user_secret（员工自己填 token）或 ee_jwt")
+		c.oauth(m)
+	} else if m.OAuth != nil {
+		c.add("credential.field_unused", at("oauth"), "oauth 只在凭据模式是 oauth 时有用", "删掉 oauth，或把 credential.mode 改成 oauth")
 	}
 	if cr.Header != "" && !headerRe.MatchString(cr.Header) {
 		c.add("credential.header_invalid", at("credential", "header"), fmt.Sprintf("请求头名字 %q 不对", cr.Header), "例如 \"X-User-Token\"；留空就是 Authorization: Bearer")
@@ -465,6 +467,68 @@ func (c *checker) credential(m *Manifest) *CredentialInfo {
 		}
 	}
 	return info
+}
+
+// oauth 检查 oauth 模式要的东西：标准流程写授权地址和令牌地址；服务扩展也可以改为实现 oauth 约定接口。
+func (c *checker) oauth(m *Manifest) {
+	hooks := m.Kind == KindService && slices.Contains(m.Capabilities, "oauth")
+	if m.OAuth == nil {
+		if !hooks {
+			c.add("oauth.config_missing", at("oauth"), "凭据模式是 oauth，但没有写授权地址和令牌地址",
+				"加上 \"oauth\": { \"authorizeUrl\": \"https://…/authorize\", \"tokenUrl\": \"https://…/token\", \"scopes\": [\"…\"] }；流程不标准的话改用服务扩展并实现 oauth 约定接口")
+		}
+		return
+	}
+	okURL := func(raw string) bool {
+		u, err := url.Parse(raw)
+		return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.User == nil && u.Fragment == ""
+	}
+	if !okURL(m.OAuth.AuthorizeURL) {
+		c.add("oauth.url_invalid", at("oauth", "authorizeUrl"), "授权地址要是完整的 http(s) 地址", "例如 \"https://sso.acme.com/oauth/authorize\"")
+	}
+	if !okURL(m.OAuth.TokenURL) {
+		c.add("oauth.url_invalid", at("oauth", "tokenUrl"), "令牌地址要是完整的 http(s) 地址", "例如 \"https://sso.acme.com/oauth/token\"")
+	}
+}
+
+var (
+	fieldObjects = []string{"document", "kbase", "user"}
+	fieldTypes   = []string{"text", "number", "date", "select", "tags", "level"}
+	fieldKeyRe   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+)
+
+// fields 检查扩展带的扩展字段。
+func (c *checker) fields(m *Manifest) {
+	seen := map[string]bool{}
+	for i, f := range m.Fields {
+		where := at("fields", i)
+		switch {
+		case !fieldKeyRe.MatchString(f.Key):
+			c.add("fields.invalid", where+"/key", fmt.Sprintf("字段的 key %q 不对：小写字母开头，只能用小写字母、数字、下划线，最多 32 个字符", f.Key), "例如 \"project\"")
+		case seen[f.Object+"."+f.Key]:
+			c.add("fields.invalid", where+"/key", fmt.Sprintf("字段 %s 在同一类对象上出现了两次", f.Key), "合并成一项")
+		}
+		seen[f.Object+"."+f.Key] = true
+		if !slices.Contains(fieldObjects, f.Object) {
+			c.add("fields.invalid", where+"/object", fmt.Sprintf("字段加在哪类对象上写得不对：%q", f.Object), "只能是 "+strings.Join(fieldObjects, " / "))
+		}
+		if !slices.Contains(fieldTypes, f.Type) {
+			c.add("fields.invalid", where+"/type", fmt.Sprintf("字段类型 %q 不对", f.Type), "只能是 "+strings.Join(fieldTypes, " / "))
+		}
+		if f.Label.Empty() {
+			c.add("fields.invalid", where+"/label", "字段没有 label", "加上给管理员看的名字，例如 \"label\": \"项目\"")
+		}
+		needs := f.Type == "select" || f.Type == "tags" || f.Type == "level"
+		if f.Type == "level" && len(f.Options) < 2 {
+			c.add("fields.invalid", where+"/options", "level 字段要从低到高列出至少两个等级", "例如 \"options\": [\"普通\", \"重要\", \"核心\"]")
+		}
+		if !needs && len(f.Options) > 0 {
+			c.add("fields.invalid", where+"/options", "只有 select / tags / level 字段有 options", "删掉 options")
+		}
+		if f.Access && (f.Type == "text" || f.Type == "number" || f.Type == "date") {
+			c.add("fields.invalid", where+"/access", "用于访问控制的字段只能是 select / tags / level", "把 access 去掉，或换成这三种类型")
+		}
+	}
 }
 
 func canonical(h string) string {
@@ -778,8 +842,9 @@ func (c *checker) misc(m *Manifest) {
 			c.add("icon.missing", at("icon"), "找不到图标文件 "+m.Icon, "把图标放进扩展目录，或删掉 icon")
 		}
 	}
-	if len(m.Fields) > 0 && string(m.Fields) != "null" {
-		c.add("fields.not_yet", at("fields"), "扩展字段（fields）这个版本的 dsh-ee 还不处理，安装时会忽略", "")
+	c.fields(m)
+	if m.Protocol != "" && m.Protocol != "1" {
+		c.add("protocol.unsupported", at("protocol"), fmt.Sprintf("这个版本的 dsh-ee 只认协议 1，清单写的是 %q", m.Protocol), "升级 dsh-ee，或把扩展换成用协议 1 的 SDK 版本")
 	}
 }
 

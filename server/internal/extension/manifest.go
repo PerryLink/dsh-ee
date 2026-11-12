@@ -113,8 +113,12 @@ type Manifest struct {
 	Config       []ConfigField   `json:"config,omitempty"`
 	Credential   *Credential     `json:"credential,omitempty"`
 	Tools        []Tool          `json:"tools,omitempty"`
-	// 扩展带的扩展字段（docs/access-control.md §6.0），第 3 批才生效；这里先原样留着
-	Fields json.RawMessage `json:"fields,omitempty"`
+	// 扩展带的扩展字段（docs/access-control.md §6.0）：安装时由管理员确认后建好，字段名带扩展前缀
+	Fields []Field `json:"fields,omitempty"`
+	// 服务扩展实现的协议版本（docs/extension-protocol.md），不写当作 1
+	Protocol string `json:"protocol,omitempty"`
+	// oauth 模式：标准 OAuth 2.0 授权码流程的参数；流程不标准的服务扩展不写它，改为实现 oauth 约定接口
+	OAuth *OAuthConfig `json:"oauth,omitempty"`
 	// 附带的应用（文件路径）
 	Apps []string `json:"apps,omitempty"`
 	// 作者确认过、不需要再报的检查项
@@ -123,6 +127,27 @@ type Manifest struct {
 
 type Service struct {
 	URL string `json:"url"`
+}
+
+// OAuthConfig 是标准 OAuth 2.0 授权码流程的参数。client_id / client_secret 由管理员安装时填。
+type OAuthConfig struct {
+	AuthorizeURL string   `json:"authorizeUrl"`
+	TokenURL     string   `json:"tokenUrl"`
+	Scopes       []string `json:"scopes,omitempty"`
+}
+
+// Field 是扩展带的一个扩展字段。
+type Field struct {
+	Key string `json:"key"`
+	// document / kbase / user
+	Object string `json:"object"`
+	// text / number / date / select / tags / level
+	Type  string `json:"type"`
+	Label Text   `json:"label"`
+	// select / tags 的选项；level 从低到高的等级
+	Options []string `json:"options,omitempty"`
+	// 用于访问控制
+	Access bool `json:"access,omitempty"`
 }
 
 // ConfigField 是管理员安装时填的一项配置。

@@ -736,7 +736,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 				s.internalErr(w, r, err)
 				return
 			}
-			writeRPC(w, msg.ID, s.kbCall(r.Context(), v, bases, p.Name, p.Arguments), nil)
+			writeRPC(w, msg.ID, s.kbCall(withCaller(r.Context(), v, s.callerBase(r)), v, bases, p.Name, p.Arguments), nil)
 			return
 		}
 		c, err := s.userCatalog(r.Context(), v)
@@ -752,6 +752,11 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			for _, t := range cn.tools {
 				if t.Name == tool {
 					ctx := r.Context()
+					// 写操作：调用方不是 DSH 时先由员工在网页上确认（write_confirm.go）
+					if ask := s.confirmWrite(r, v, cn.asset, t, p.Arguments); ask != nil {
+						writeRPC(w, msg.ID, ask, nil)
+						return
+					}
 					writeRPC(w, msg.ID, s.callConnectionTool(ctx, cn.asset, t, v, s.callerBase(r), p.Arguments), nil)
 					return
 				}
