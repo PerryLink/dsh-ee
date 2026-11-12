@@ -209,6 +209,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	for i, c := range cands {
 		last := i == len(cands)-1
 		p = c.Provider
+		// 冷却中的线路直接跳过，免得冷却期内每个请求都先撞一次 429/超时；
+		// 全部冷却时仍会尝试最后一条兜底，不会因为冷却而直接失败。
+		if !last && s.providerCD.skip(p.ID, time.Now()) {
+			continue
+		}
 		upstreamKey, err := s.box.Open(p.APIKeyEnc)
 		if err != nil {
 			s.log.Error("decrypt provider key", "provider", p.Name, "err", err)
@@ -246,6 +251,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				writeOpenAIErr(w, http.StatusBadGateway, "server_error", "upstream_unreachable", "上游服务不可达")
 				return
 			}
+			s.providerCD.mark(p.ID, providerCooldownDefault, time.Now())
 			continue
 		}
 		if !last && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) {
@@ -253,11 +259,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
 			s.recordUsage(r.Context(), k, p, model, tokenUsage{}, resp.StatusCode, start)
+			s.providerCD.mark(p.ID, cooldownFor(resp.Header.Get("Retry-After")), time.Now())
 			continue
 		}
 		break
 	}
 	defer resp.Body.Close()
+	// 走通了就解除这条线路的冷却（冷却期满后重试成功、或最后一条兜底成功）。
+	if resp.StatusCode < http.StatusBadRequest {
+		s.providerCD.clear(p.ID)
+	}
 
 	var usage tokenUsage
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
