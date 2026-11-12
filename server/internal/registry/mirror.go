@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,141 @@ type SyncParams struct {
 
 // 依赖闭包下载的并发数。
 const mirrorWorkers = 6
+
+// 同步任务（预载/申请引入/检查更新/离线导入）会并发拉上游、写 tarball、解包扫描。
+// 没有上限时重复点击或脚本刷接口就能同时堆起任意多个任务，把上游带宽、磁盘 IO 和
+// 数据库连接一起占满。这里做两件事：
+//  1. 限制同时运行的任务数（全局 + 每用户）；
+//  2. 同一个包的同一个版本同一时间只在一个任务里同步，重复请求直接拒绝。
+const (
+	// 全局同时运行的同步/导入任务上限。
+	defaultMaxSyncJobs = 3
+	// 每个用户同时运行的任务上限；系统任务（by=0）不计。
+	defaultMaxSyncJobsPerUser = 2
+)
+
+// syncGate 是同步任务的准入控制，进程内生效（与 README 里「预载任务在单个进程里」一致）。
+// 由 NewService 初始化，不要直接使用零值。
+type syncGate struct {
+	mu      sync.Mutex
+	running int
+	byUser  map[int64]int
+	active  map[string]int
+}
+
+func newSyncGate() syncGate {
+	return syncGate{byUser: map[int64]int{}, active: map[string]int{}}
+}
+
+// syncRootKey 是同步去重键：版本为空表示「上游 latest」，按 name@* 记。
+func syncRootKey(r SyncRoot) string {
+	if r.Version == "" {
+		return r.Name + "@*"
+	}
+	return r.Name + "@" + r.Version
+}
+
+// conflictLocked 判断一个根包是否与正在同步的任务重叠：版本为空（latest）与同名的任何
+// 任务都冲突；指定版本只与同名同版本、或同名的 latest 任务冲突。
+func (g *syncGate) conflictLocked(r SyncRoot) string {
+	for key := range g.active {
+		i := strings.LastIndexByte(key, '@')
+		name, version := key[:i], key[i+1:]
+		if name != r.Name {
+			continue
+		}
+		if version == "*" {
+			return name + "@latest"
+		}
+		if r.Version == "" || version == r.Version {
+			return name + "@" + version
+		}
+	}
+	return ""
+}
+
+// reserve 申请一次任务名额并登记要同步的根包。成功返回的 release 必须调用一次。
+// by 为 0 表示系统任务，不计每用户额度；maxJobs/maxPerUser <= 0 时用默认值。
+func (g *syncGate) reserve(by int64, roots []SyncRoot, maxJobs, maxPerUser int) (func(), error) {
+	if maxJobs <= 0 {
+		maxJobs = defaultMaxSyncJobs
+	}
+	if maxPerUser <= 0 {
+		maxPerUser = defaultMaxSyncJobsPerUser
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.running >= maxJobs {
+		return nil, errf(429, "正在同步的任务太多（最多 %d 个同时运行），请等当前任务结束后再试", maxJobs)
+	}
+	if by != 0 && g.byUser[by] >= maxPerUser {
+		return nil, errf(429, "你正在同步的任务太多（最多 %d 个），请等当前任务结束后再试", maxPerUser)
+	}
+	conflicts := map[string]bool{}
+	for _, r := range roots {
+		if key := g.conflictLocked(r); key != "" {
+			conflicts[key] = true
+		}
+	}
+	if len(conflicts) > 0 {
+		names := make([]string, 0, len(conflicts))
+		for key := range conflicts {
+			names = append(names, key)
+		}
+		slices.Sort(names)
+		if len(names) > 5 {
+			names = append(names[:5:5], "…")
+		}
+		return nil, errf(409, "%s 正在同步中，请等当前任务结束后再试", strings.Join(names, "、"))
+	}
+	g.running++
+	if by != 0 {
+		g.byUser[by]++
+	}
+	keys := make([]string, 0, len(roots))
+	for _, r := range roots {
+		key := syncRootKey(r)
+		g.active[key]++
+		keys = append(keys, key)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() { g.release(by, keys) })
+	}, nil
+}
+
+func (g *syncGate) release(by int64, keys []string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.running--
+	if by != 0 {
+		g.byUser[by]--
+		if g.byUser[by] <= 0 {
+			delete(g.byUser, by)
+		}
+	}
+	for _, key := range keys {
+		g.active[key]--
+		if g.active[key] <= 0 {
+			delete(g.active, key)
+		}
+	}
+}
+
+// dedupeSyncRoots 按 (name, version) 去掉请求里重复的根包，保留第一次出现的顺序。
+func dedupeSyncRoots(roots []SyncRoot) []SyncRoot {
+	seen := make(map[string]bool, len(roots))
+	out := make([]SyncRoot, 0, len(roots))
+	for _, r := range roots {
+		key := syncRootKey(r)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, r)
+	}
+	return out
+}
 
 // job 包装一个同步任务的进度与日志，定期写回数据库。
 type job struct {
@@ -102,19 +238,27 @@ func (s *Service) StartSync(ctx context.Context, kind string, params SyncParams,
 	if params.RootStatus != store.StatusPublished {
 		params.RootStatus = store.StatusPending
 	}
+	// 同一个请求里重复的包只同步一次。
+	params.Roots = dedupeSyncRoots(params.Roots)
+	release, err := s.gate.reserve(by, params.Roots, s.MaxSyncJobs, s.MaxSyncJobsPerUser)
+	if err != nil {
+		return nil, err
+	}
 	raw, _ := json.Marshal(params)
 	j := &store.SyncJob{Kind: kind, Params: raw, Total: len(params.Roots)}
 	if by != 0 {
 		j.CreatedBy = &by
 	}
 	if err := s.store.CreateJob(ctx, j); err != nil {
+		release()
 		return nil, err
 	}
-	go s.runSync(j, params, by)
+	go s.runSync(j, params, by, release)
 	return j, nil
 }
 
-func (s *Service) runSync(j *store.SyncJob, params SyncParams, by int64) {
+func (s *Service) runSync(j *store.SyncJob, params SyncParams, by int64, release func()) {
+	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	jb := &job{st: s.store, j: j}
