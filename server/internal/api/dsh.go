@@ -699,7 +699,17 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		for _, def := range s.agentToolList(r.Context(), pr) {
 			tools = append(tools, def)
 		}
-		writeRPC(w, msg.ID, map[string]any{"tools": tools}, nil)
+		// 第三方 Harness 跟 cursor 翻页；DSH 接入插件一次要全量（mcp_tools_page.go）。
+		page, next, err := mcpToolsListPage(tools, msg.Params, dshConnect(r))
+		if err != nil {
+			writeRPC(w, msg.ID, nil, &mcp.Error{Code: -32602, Message: err.Error()})
+			return
+		}
+		result := map[string]any{"tools": page}
+		if next != "" {
+			result["nextCursor"] = next
+		}
+		writeRPC(w, msg.ID, result, nil)
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`

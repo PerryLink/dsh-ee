@@ -101,6 +101,48 @@ export default async function (t) {
     const names = (tools.result?.tools ?? []).map((x) => x.name);
     assert(names.includes("ee_me"), "/mcp 应暴露员工侧工具：" + JSON.stringify(names));
     step("同一个令牌完成 /mcp initialize + tools/list（无需 DSH）");
+
+    // ---- tools/list 分页：第三方 Harness 用 limit 显式开启，nextCursor 不透明；DSH 插件仍一次拿全量 ----
+    const all = await mcp(token, "tools/list", { limit: 0 });
+    const allNames = (all.result?.tools ?? []).map((x) => x.name).sort();
+    assert(!all.result?.nextCursor, "limit=0 应一次返回全量：" + JSON.stringify(all.result?.nextCursor));
+    const first = await mcp(token, "tools/list", { limit: 2 });
+    assertEq(first.result?.tools?.length, 2, "limit=2 应只回一页");
+    let cursor = first.result.nextCursor;
+    assert(typeof cursor === "string" && cursor.length > 0, "分页第一页应返回不透明的 nextCursor：" + JSON.stringify(first));
+    const paged = [...first.result.tools];
+    for (let page = 0; cursor && page < 100; page++) {
+      const next = await mcp(token, "tools/list", { cursor, limit: 2 });
+      paged.push(...(next.result?.tools ?? []));
+      cursor = next.result?.nextCursor;
+      assert(cursor === undefined || typeof cursor === "string", "nextCursor 应是字符串");
+    }
+    assert(!cursor, "翻完所有页应不再有 nextCursor");
+    const pagedNames = paged.map((x) => x.name);
+    assertEq(pagedNames.length, allNames.length, "分页拼起来应等于全量，不重不漏");
+    assertEq(pagedNames.join(","), allNames.join(","), "分页应稳定按工具名排序");
+    const again = await mcp(token, "tools/list", { limit: 2 });
+    assertEq(again.result.nextCursor, first.result.nextCursor, "同样的参数应得到同样的 cursor");
+    const badCursor = await mcp(token, "tools/list", { cursor: "not-a-cursor" });
+    assertEq(badCursor.error?.code, -32602, "未知 cursor 应返回 -32602：" + JSON.stringify(badCursor));
+    step("第三方用 cursor 分页翻完 tools/list，未知 cursor 被拒绝");
+
+    // DSH 接入插件（dsh-plugin/src/bridge.ts）一次 tools/list 拿全量、不跟 nextCursor：兼容回归
+    const dshList = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "X-DshEE-Client": "dsh-connect/1.0.1",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/list", params: {} }),
+    });
+    assertEq(dshList.status, 200, "/mcp tools/list（DSH）");
+    const dshResult = (await dshList.json()).result ?? {};
+    assert(!dshResult.nextCursor, "DSH 不带 cursor 时应拿到全量、无 nextCursor");
+    assertEq(dshResult.tools?.length, allNames.length, "DSH 应一次拿到全部工具");
+    step("DSH 接入插件仍一次拿全量工具，分页不破坏现有客户端");
   } finally {
     if (providerId) await api(admin, "DELETE", `/api/admin/providers/${providerId}`);
     if (tokenInfo?.id) await api(admin, "POST", "/api/admin/tokens/revoke", { ids: [tokenInfo.id] });

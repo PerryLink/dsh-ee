@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/api"
 	"github.com/hikariming/dsh-ee/server/internal/eejwt"
@@ -278,6 +279,40 @@ func toolCall(t *testing.T, d dshClient, header map[string]string, tool string, 
 	return text, isErr
 }
 
+// toolCallResult 同 toolCall，但返回原始 result：确认结果的结构化 _meta 用它来断言。
+func toolCallResult(t *testing.T, d dshClient, header map[string]string, tool string, args map[string]any) map[string]any {
+	t.Helper()
+	h := map[string]string{"Accept": "application/json, text/event-stream", "X-DshEE-Client": ""}
+	for k, v := range header {
+		h[k] = v
+	}
+	code, body, _ := d.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}}, h)
+	if code != 200 {
+		t.Fatalf("调 %s：HTTP %d %s", tool, code, body)
+	}
+	var res map[string]any
+	_ = json.Unmarshal(body, &res)
+	r, _ := res["result"].(map[string]any)
+	if r == nil {
+		t.Fatalf("调 %s：%s", tool, body)
+	}
+	return r
+}
+
+// resultText / resultIsError 取工具结果的文本与错误标记。
+func resultText(r map[string]any) string {
+	text := ""
+	for _, c := range r["content"].([]any) {
+		text += fmt.Sprint(c.(map[string]any)["text"])
+	}
+	return text
+}
+
+func resultIsError(r map[string]any) bool {
+	isErr, _ := r["isError"].(bool)
+	return isErr
+}
+
 var asDSH = map[string]string{"X-DshEE-Client": "dsh-connect/test"}
 
 // 服务扩展：从服务地址安装 → 工具以清单为准 → 调用时带员工身份、配置和凭据 → 错误码 → 回调地址 → 健康检查与熔断。
@@ -422,9 +457,27 @@ func TestServiceExtension(t *testing.T) {
 	// 9. 调用方不是 DSH：写操作先停下，员工在网页上同意后，同样的参数再调一次才执行，且只执行一次
 	args := map[string]any{"title": "年度总结"}
 	before = ext.hits
-	text, isErr = toolCall(t, aliceDSH, nil, "wiki__create_page", args)
+	first := toolCallResult(t, aliceDSH, nil, "wiki__create_page", args)
+	text, isErr = resultText(first), resultIsError(first)
 	if !isErr || !strings.Contains(text, "/confirm/") || ext.hits != before {
 		t.Fatalf("应要求确认且不执行：%v %s", isErr, text)
+	}
+	// 需要确认时结构化给出确认页；旧客户端只读 content/isError，会忽略 _meta。
+	meta, _ := first["_meta"].(map[string]any)
+	confirmation, _ := meta["dsh-ee/confirmation"].(map[string]any)
+	if confirmation == nil || len(confirmation) != 3 {
+		t.Fatalf("确认结果应带 _meta['dsh-ee/confirmation']{id,url,expires_at}：%v", first)
+	}
+	rawFirst, _ := json.Marshal(first)
+	for _, leak := range []string{"年度总结", "args", "sha256", "token"} {
+		if strings.Contains(string(rawFirst), leak) {
+			t.Fatalf("确认结果不该带回参数/摘要/凭据（%q）：%s", leak, rawFirst)
+		}
+	}
+	if expiresAt, _ := confirmation["expires_at"].(string); expiresAt == "" {
+		t.Fatalf("expires_at 不能为空：%v", confirmation)
+	} else if ts, err := time.Parse(time.RFC3339, expiresAt); err != nil || !ts.After(time.Now()) {
+		t.Fatalf("expires_at 应是未来的 RFC3339 时间：%q %v", expiresAt, err)
 	}
 	code, body = alice.do("GET", "/api/me/confirmations", nil, nil)
 	expect(t, "待确认列表", code, 200, body)
@@ -439,6 +492,17 @@ func TestServiceExtension(t *testing.T) {
 		t.Fatalf("待确认列表不对：%s", body)
 	}
 	cid := pending.Items[0].ID
+	// 结构化字段指向同一条待确认记录；文本保持旧格式（旧客户端照旧展示）。
+	confirmURL, _ := confirmation["url"].(string)
+	if id, _ := confirmation["id"].(float64); id != float64(cid) || !strings.HasSuffix(confirmURL, fmt.Sprintf("/confirm/%d", cid)) {
+		t.Fatalf("确认 _meta 与待确认记录不一致：%v，cid=%d", confirmation, cid)
+	}
+	wantText := "这个操作会修改「" + pending.Items[0].System + "」里的数据，要先由你本人在网页上确认，现在还没有执行。\n" +
+		"请打开 " + confirmURL + " 核对参数并点「同意」，然后让我用完全相同的参数再调用一次。\n" +
+		"同意后 10 分钟内有效，只能执行一次；参数变了要重新确认。不要改用别的工具绕过。"
+	if text != wantText {
+		t.Fatalf("确认文本应保持旧格式：\n got %q\nwant %q", text, wantText)
+	}
 	// 别人看不到、也替他点不了
 	_, bobDSH := f.user("bob")
 	bob := newClient(t, f.ts.URL)
