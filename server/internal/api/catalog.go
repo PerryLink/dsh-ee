@@ -441,6 +441,9 @@ type reviewItem struct {
 
 // GET /api/admin/review：待审核的版本。
 func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	pending, err := s.store.PendingVersions(r.Context())
 	if err != nil {
 		s.internalErr(w, r, err)
@@ -490,6 +493,9 @@ type reviewReq struct {
 
 // POST /api/admin/review：通过 / 驳回 / 下架 / 恢复。version 为空时作用于整个包（下架、恢复）。
 func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	var req reviewReq
 	if !readJSON(w, r, &req) {
 		return
@@ -526,6 +532,9 @@ func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/admin/tarball?name=&version=：下载任意状态的 tarball（审核时查看内容）。
 func (s *Server) handleAdminTarball(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	name, version := r.URL.Query().Get("name"), r.URL.Query().Get("version")
 	v, err := s.store.GetVersion(r.Context(), name, version)
 	if notFound(err) {
@@ -553,6 +562,9 @@ func (s *Server) handleAdminTarball(w http.ResponseWriter, r *http.Request) {
 // POST /api/me/packages：网页上传 .tgz 发布。请求体是 tarball 本身（Content-Type: application/octet-stream，
 // 浏览器跨站表单发不出这种请求，配合 SameSite cookie 防 CSRF）。
 func (s *Server) handleUploadPackage(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	raw, info, m, ok := s.readPackageTarball(w, r)
 	if !ok {
 		return
@@ -618,6 +630,9 @@ type importRequestReq struct {
 
 // POST /api/me/import-requests：员工申请引入社区插件。插件连同依赖镜像进来，插件本身进入待审核。
 func (s *Server) handleImportRequest(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	var req importRequestReq
 	if !readJSON(w, r, &req) {
 		return
@@ -844,6 +859,9 @@ type feedItem struct {
 
 // GET /api/admin/upstream/feed：dshfind 插件目录 + 本地镜像状态。
 func (s *Server) handleUpstreamFeed(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	set, err := s.appSettings(r.Context())
 	if err != nil {
 		s.internalErr(w, r, err)
@@ -912,6 +930,9 @@ type syncReq struct {
 
 // POST /api/admin/upstream/sync：预载选中的插件（连同依赖闭包）。
 func (s *Server) handleUpstreamSync(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	var req syncReq
 	if !readJSON(w, r, &req) {
 		return
@@ -975,6 +996,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/admin/upstream/check-updates：立即检查已预载插件的新版本。
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	j, err := s.registry.CheckUpdates(r.Context(), currentUser(r).ID)
 	if err != nil {
 		s.registryErr(w, r, err)
@@ -985,6 +1009,9 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/admin/upstream/export?since=…：导出离线包。
 func (s *Server) handleExportBundle(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	var since *time.Time
 	if v := r.URL.Query().Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
@@ -1012,6 +1039,9 @@ func (s *Server) handleExportBundle(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/admin/upstream/import：导入离线包（请求体是 tar）。
 func (s *Server) handleImportBundle(w http.ResponseWriter, r *http.Request) {
+	if !s.registryReady(w) {
+		return
+	}
 	mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mt != "application/x-tar" && mt != "application/octet-stream" {
 		writeErr(w, http.StatusUnsupportedMediaType, "请求体必须是离线包（application/x-tar）")
