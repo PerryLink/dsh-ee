@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"github.com/hikariming/dsh-ee/server/internal/datahub"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hikariming/dsh-ee/server/internal/api"
 	"github.com/hikariming/dsh-ee/server/internal/config"
+	"github.com/hikariming/dsh-ee/server/internal/extension"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 	"github.com/hikariming/dsh-ee/server/internal/webui"
@@ -86,18 +88,28 @@ func run(log *slog.Logger) error {
 			log.Warn("数据中台的只读账号不可用，数据集暂时不能查", "reason", dataHub.ReadErr)
 		}
 	}
+	// 扩展签名：受信任的公钥只在启动时读一次（换公钥要重启）；强制签名却没给公钥是配置错误，直接不启动
+	extKeys, err := extensionTrustedKeys(cfg)
+	if err != nil {
+		return err
+	}
+	if cfg.ExtensionRequireSignature || len(extKeys) > 0 {
+		log.Info("扩展签名策略", "require_signature", cfg.ExtensionRequireSignature, "trusted_keys", len(extKeys))
+	}
 	srv := api.New(st, box, api.Options{
-		CookieSecure:  cfg.CookieSecure,
-		SessionTTL:    cfg.SessionTTL,
-		Version:       version,
-		Web:           webui.Handler(),
-		DataDir:       cfg.DataDir,
-		PublicURL:     cfg.PublicURL,
-		Addr:          cfg.Addr,
-		AdminModeUnit: cfg.AdminModeUnit,
-		DataHub:       dataHub,
-		DataHubErr:    dataErr,
-		DemoSite:      demoSite(cfg),
+		CookieSecure:              cfg.CookieSecure,
+		SessionTTL:                cfg.SessionTTL,
+		Version:                   version,
+		Web:                       webui.Handler(),
+		DataDir:                   cfg.DataDir,
+		PublicURL:                 cfg.PublicURL,
+		Addr:                      cfg.Addr,
+		AdminModeUnit:             cfg.AdminModeUnit,
+		DataHub:                   dataHub,
+		DataHubErr:                dataErr,
+		DemoSite:                  demoSite(cfg),
+		ExtensionTrustedKeys:      extKeys,
+		ExtensionRequireSignature: cfg.ExtensionRequireSignature,
 	}, log)
 
 	go sweepSessions(ctx, st, log)
@@ -183,4 +195,19 @@ func demoSite(cfg *config.Config) *api.DemoSite {
 		return nil
 	}
 	return &api.DemoSite{Username: cfg.BootstrapAdmin, Password: cfg.BootstrapAdminPassword, Reset: cfg.DemoReset, ResetEvery: cfg.DemoResetEvery, VideoDir: cfg.DemoVideoDir, StatsFile: cfg.DemoStatsFile}
+}
+
+// extensionTrustedKeys 读受信任的签名公钥。强制验证签名时必须给公钥，否则一个扩展都装不了，启动时就报错。
+func extensionTrustedKeys(cfg *config.Config) ([]ed25519.PublicKey, error) {
+	if cfg.ExtensionTrustedKeys == "" {
+		if cfg.ExtensionRequireSignature {
+			return nil, errors.New("DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1 时要同时设置 DSH_EE_EXTENSION_TRUSTED_KEYS：给出受信任的签名公钥（PEM 文件，可以有多把）")
+		}
+		return nil, nil
+	}
+	keys, err := extension.LoadPublicKeys(cfg.ExtensionTrustedKeys)
+	if err != nil {
+		return nil, fmt.Errorf("DSH_EE_EXTENSION_TRUSTED_KEYS: %w", err)
+	}
+	return keys, nil
 }

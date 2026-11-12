@@ -158,6 +158,7 @@ export function InstallExtensionButton() {
 
   const check = plan?.check;
   const cred = check?.credential;
+  const signature = plan?.signature;
   const needsSecret = cred?.mode === "shared" || !!cred?.sharedHeader;
   const writes = (check?.tools ?? []).filter((x) => !x.readOnly).length;
   const problems = (check?.results ?? []).filter((d) => d.severity !== "info");
@@ -284,6 +285,15 @@ export function InstallExtensionButton() {
                       <dd>{cred ? t(`extensions.mode.${cred.mode}`) : t("extensions.mode.none")}</dd>
                       <dt className="text-neutral-500">{t("extensions.tools")}</dt>
                       <dd>{t("extensions.toolCount", { count: check.tools?.length ?? 0, writes })}</dd>
+                      <dt className="text-neutral-500">{t("extensions.signature")}</dt>
+                      <dd className="flex flex-wrap items-center gap-2">
+                        <Badge tone={signature?.status === "valid" ? "green" : signature?.status === "invalid" ? "red" : "amber"}>
+                          {t(`extensions.signatureStatus.${signature?.status ?? "unsigned"}`)}
+                        </Badge>
+                        {signature?.key_id && <span className="font-mono text-xs text-neutral-500">{signature.key_id}</span>}
+                        {signature?.message && <span className="text-xs text-neutral-500">{signature.message}</span>}
+                        {signature?.status === "unsigned" && <span className="text-xs text-neutral-500">{t("extensions.signatureUnsignedHint")}</span>}
+                      </dd>
                     </dl>
 
                     <ul className="divide-y divide-neutral-100 rounded-md border border-neutral-200">

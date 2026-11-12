@@ -133,6 +133,8 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、上游缓存），默认 `./data`；容器里是 `/data` |
 | `DSH_EE_PUBLIC_URL` | 对外地址，如 `https://dsh.acme.internal`；npm 的 tarball 地址按它生成，不填时按请求的 Host / `X-Forwarded-*` 推断 |
 | `DSH_EE_DB_WAIT` | 启动时等数据库就绪的最长时间，默认 `2m`（compose 里是 `15m`） |
+| `DSH_EE_EXTENSION_TRUSTED_KEYS` | 受信任的扩展签名公钥（PEM 文件，可以放多把；公钥、证书、私钥文件都认）。安装计划里据此核对扩展签名，不配时签了名的扩展也显示「不受信任」。换公钥要重启 |
+| `DSH_EE_EXTENSION_REQUIRE_SIGNATURE` | 设为 `1` 时，没签名或签名无效的扩展不让安装；必须同时配 `DSH_EE_EXTENSION_TRUSTED_KEYS`。默认只在安装计划里提示，不阻断。见 [docs/plugins.md](../docs/plugins.md) §9.3 |
 
 ## 接口
 

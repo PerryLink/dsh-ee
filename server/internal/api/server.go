@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"github.com/hikariming/dsh-ee/server/internal/datahub"
@@ -56,6 +57,10 @@ type Options struct {
 	DemoSite *DemoSite
 	// 轮换 ee_jwt 密钥时，新钥匙过多久开始签名；0 用默认的 10 分钟（测试里调短）
 	EEKeyDelay time.Duration
+	// 扩展签名（docs/plugins.md §9.3）：受信任的签名公钥，安装计划里据此核对签名。
+	ExtensionTrustedKeys []ed25519.PublicKey
+	// 强制验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1）：没签名或验不过的扩展不让装。
+	ExtensionRequireSignature bool
 }
 
 type Server struct {

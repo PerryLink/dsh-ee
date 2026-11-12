@@ -35,6 +35,12 @@ type Config struct {
 	DBWait time.Duration
 	// 管理模式「1 小时 / 8 小时」里「小时」的长度，默认 1h；只给自动化测试缩短用，生产不要设
 	AdminModeUnit time.Duration
+	// 扩展签名（docs/plugins.md §9.3）：受信任的签名公钥（PEM 文件，可以有多把）。
+	// 安装计划里用它们核对扩展的签名；为空时签了名的扩展也只会显示「不受信任」。
+	ExtensionTrustedKeys string
+	// 强制验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1）：没签名或签名验不过的扩展不让安装。
+	// 默认只在安装计划里提示，不阻断。
+	ExtensionRequireSignature bool
 	// 数据中台的库（DSH_EE_DATA_DSN）。默认和主库同一个服务器、库名加 _data；设成 off 关闭。
 	DataDSN string
 	// 数据中台的只读账号（DSH_EE_DATA_READ_DSN）；不填时用 DataDSN 的账号自动建一个只有 SELECT 权限的账号。
@@ -90,6 +96,14 @@ func Load() (*Config, error) {
 		return nil, errors.New("DSH_EE_SECRET_KEY 必须是 32 字节的 base64")
 	}
 	c.SecretKey = key
+	c.ExtensionTrustedKeys = strings.TrimSpace(os.Getenv("DSH_EE_EXTENSION_TRUSTED_KEYS"))
+	if v := os.Getenv("DSH_EE_EXTENSION_REQUIRE_SIGNATURE"); v != "" {
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return nil, errors.New("DSH_EE_EXTENSION_REQUIRE_SIGNATURE 要写成 true / false（或 1 / 0）")
+		}
+		c.ExtensionRequireSignature = b
+	}
 	if v := os.Getenv("DSH_EE_COOKIE_SECURE"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
