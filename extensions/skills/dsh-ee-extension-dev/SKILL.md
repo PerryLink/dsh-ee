@@ -1,13 +1,13 @@
 ---
 name: dsh-ee-extension-dev
-description: 给 dsh-ee 写扩展，把企业的内部系统接进来，让员工的 Agent 能以本人的身份调用。当用户要「把某个系统接进 dsh-ee」「写一个 dsh-ee 扩展」「给内部接口包一层让 Agent 能用」时使用。目前覆盖声明式扩展（有 OpenAPI 文档、不写代码）。
+description: 给 dsh-ee 写扩展，把企业的内部系统接进来，让员工的 Agent 能以本人的身份调用。当用户要「把某个系统接进 dsh-ee」「写一个 dsh-ee 扩展」「给内部接口包一层让 Agent 能用」时使用。覆盖声明式扩展（有 OpenAPI 文档、不写代码）、Go 服务扩展（要写逻辑、做知识源、接回调、OAuth）和 TypeScript 端侧扩展（只能用员工本机登录态的老系统）。
 ---
 
 # 写 dsh-ee 扩展
 
 dsh-ee 的扩展把企业自己的系统接进来，变成员工的 Agent 能调用的工具。这份技能带你把一个扩展从头做到通过检查。
 
-**做完的唯一标准：`dsh-ee extension check <目录> --json` 的 `ok` 为 `true`，而且结果里没有你解释不了的条目。** 不要自己宣布做完。
+**做完的唯一标准：`dsh-ee extension check <目录> --json` 的 `ok` 为 `true`，而且结果里没有你解释不了的条目；服务扩展还要 `dsh-ee extension test` 全部通过。** 不要自己宣布做完。
 
 `dsh-ee` 不在 PATH 里时，命令里写它的完整路径。
 
@@ -17,11 +17,11 @@ dsh-ee 的扩展把企业自己的系统接进来，变成员工的 Agent 能调
 
 | 情况 | 用 |
 |---|---|
-| 有 REST 接口，有或者能导出 OpenAPI 3.x 文档 | **声明式**（本技能） |
-| 要多步调用、加工返回结果、做知识源、接回调 | 服务扩展（还没开放，先告诉用户做不了） |
-| 只能在员工电脑上访问、要员工的登录态、要模拟浏览器 | 端侧扩展（还没开放，先告诉用户做不了） |
+| 有 REST 接口，有或者能导出 OpenAPI 3.x 文档 | **声明式**（§2） |
+| 要多步调用、加工返回结果、做知识源、接回调、OAuth 流程不标准 | **服务扩展**，用 Go SDK（§2a） |
+| 只能在员工电脑上访问、要员工的登录态、要模拟浏览器 | **端侧扩展**，用 TypeScript SDK（§2b） |
 
-声明式扩展做不了的事不要硬做：告诉用户哪一部分做不了、为什么。
+能用声明式就用声明式：不写代码、不用部署。声明式做不了的事不要硬做，换服务扩展，或告诉用户哪一部分做不了、为什么。
 
 ## 2. 声明式扩展的流程
 
@@ -34,6 +34,34 @@ dsh-ee 的扩展把企业自己的系统接进来，变成员工的 Agent 能调
 3. **写清单**。字段的完整说明不要凭记忆写，查规格：`dsh-ee schema get manifest`。必须想清楚的四件事见 §3。
 4. **检查**：`dsh-ee extension check <目录> --json`。每条结果有 `where`（文件和位置）和 `fix`（具体改法），照着改，再跑一遍，直到 `ok` 为 `true`。检查项的含义：`dsh-ee schema get errors`。
 5. **写交付说明**（§5），连同扩展目录一起交给管理员。安装由管理员做，你不装。
+
+## 2a. 服务扩展的流程（Go）
+
+```
+init → 写场景测试 → 写代码 → test → dev 里按场景试 → report → 交付
+```
+
+1. `dsh-ee extension init <目录> --id 作者/名字 --kind service`，生成 `main.go`、`tests/basic.yaml` 和 `AGENTS.md`，照 `AGENTS.md` 做。每种能力的写法看 `extensions/examples/demo-extension`（假数据把所有能力做了一遍）。
+2. **先把需求写成场景测试**（`tests/*.yaml`：谁、调什么、应该得到什么），再写代码。格式见 `docs/extension-protocol.md` §8。
+3. 清单由 SDK 按注册的处理函数自动生成，不手写；`capabilities` 也是。凭据模式、只读标记、参数由谁填的规矩和声明式一样（§3）。
+4. `dsh-ee extension test --run "go run ." <目录> --json`：先按协议逐项测，再跑场景测试。每条失败都有 `code`、`message`、`fix`。**全部通过才算做完。**
+5. 手工试：`dsh-ee extension dev` 起模拟的 dsh-ee（不要数据库），`dsh-ee extension call <地址> <工具> --as 员工 --args JSON` 以某位员工的身份调。
+6. `dsh-ee extension report <地址> > DELIVERY.md` 生成交付说明的底稿，补上测试输出和「请补充」的地方。
+7. 交付的是代码仓库（或镜像）和交付说明。**部署和安装由人做**：管理员在「企业连接 → 安装扩展」里填服务地址。
+
+规矩：调用人是 `c.User`（验过签的令牌），不要让模型通过参数指定替谁操作；出错用 `sdk.Errorf(sdk.CodeXxx, …)`；不要把 `c.Credential`、`c.Shared`、`c.Config` 里的密钥打进日志或放进返回；知识源的 cursor 要单调往前，不要用页码。
+
+## 2b. 端侧扩展的流程（TypeScript）
+
+只在「对方系统没有接口、只能用员工自己的登录态、只在员工电脑上访问得到」时用。
+
+1. 复制 `extensions/official/legacy-local`（模板：员工在弹出的窗口里登录一次，之后带着他的 cookie 发 HTTP 请求）。改 `id`、`package`、系统地址和要的 cookie 名字。
+2. 工具写在 `src/extension.ts` 的 `defineExtension({ tools })` 里。**只读的才标 `readOnly: true`**：没标的，SDK 执行前会先经 dsh-ee 让员工在网页上确认，确认不了就不执行。
+3. 出错用 `throw new ExtError("authorize" | "forbidden" | "unavailable" | "invalid", "…")`；只把模型需要的字段返回出去。
+4. `npm test`（模板带了假 OA 和假 dsh-ee 的测试）全部通过；`npm run manifest` 生成清单，再 `dsh-ee extension check <目录> --json` 通过。
+5. 交付的是 npm 包和交付说明，包经企业的 npm 源下发。员工的 Agent 配置里写 `npx <包名>`，并设好 `DSH_EE_URL`、`DSH_EE_TOKEN`（Claude Code 用 `extensions/official/claude-code` 一条命令写好）。
+
+规矩：员工的 cookie 只存在他自己的电脑上，不要发给任何别的地方；不要绕过 SDK 自己起 MCP 服务（那样就没有确认和审计）。
 
 ## 3. 清单里必须想清楚的四件事
 

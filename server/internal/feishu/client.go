@@ -136,12 +136,52 @@ type User struct {
 	Email         string   `json:"email"`
 	EmployeeNo    string   `json:"employee_no"`
 	DepartmentIDs []string `json:"department_ids"`
+	JobTitle      string   `json:"job_title,omitempty"`
+	City          string   `json:"city,omitempty"`
+	EmployeeType  int      `json:"employee_type,omitempty"`
+	// 企业在飞书管理后台加的自定义字段（应用要有读取权限）
+	CustomAttrs []struct {
+		ID    string `json:"id"`
+		Value struct {
+			Text        string `json:"text"`
+			URL         string `json:"url"`
+			OptionValue string `json:"option_value"`
+			Name        string `json:"name"`
+		} `json:"value"`
+	} `json:"custom_attrs,omitempty"`
 	// 飞书通讯录里的员工状态：冻结、离职、主动退出
 	Status struct {
 		IsFrozen   bool `json:"is_frozen"`
 		IsResigned bool `json:"is_resigned"`
 		IsExited   bool `json:"is_exited"`
 	} `json:"status,omitempty"`
+}
+
+// Attrs 是同步字段时能用的属性：job_title、city、employee_no、employee_type，以及自定义字段的 id（C-…）。
+func (u User) Attrs() map[string][]string {
+	out := map[string][]string{}
+	add := func(k, v string) {
+		if strings.TrimSpace(v) != "" {
+			out[k] = append(out[k], strings.TrimSpace(v))
+		}
+	}
+	add("job_title", u.JobTitle)
+	add("city", u.City)
+	add("employee_no", u.EmployeeNo)
+	if u.EmployeeType > 0 {
+		add("employee_type", fmt.Sprint(u.EmployeeType))
+	}
+	for _, a := range u.CustomAttrs {
+		v := a.Value.Text
+		if v == "" {
+			v = a.Value.OptionValue
+		}
+		if v == "" {
+			v = a.Value.Name
+		}
+		add(a.ID, v)
+	}
+	return out
 }
 
 // Disabled 报告飞书是否明确说这个人不能再用了（冻结、离职或退出）。

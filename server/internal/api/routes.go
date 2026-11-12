@@ -236,6 +236,8 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/access-rules", s.handleCreateRule, rbac.FieldsManage),
 		prm("PUT /api/admin/access-rules/{id}", s.handleUpdateRule, rbac.FieldsManage),
 		prm("DELETE /api/admin/access-rules/{id}", s.handleDeleteRule, rbac.FieldsManage),
+		prm("GET /api/admin/field-sync", s.handleGetFieldSync, rbac.FieldsManage),
+		prm("PUT /api/admin/field-sync", s.handlePutFieldSync, rbac.FieldsManage),
 		prm("GET /api/fields/{object}/{oid}", s.handleObjectFields, rbac.PortalView),
 		prm("PUT /api/fields/{object}/{oid}", s.handleSetObjectFields, rbac.PortalView),
 		prm("GET /api/admin/policy", s.handleGetPolicy, rbac.RolesManage),

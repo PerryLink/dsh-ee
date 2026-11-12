@@ -38,6 +38,8 @@ type Principal struct {
 	AdminLive bool
 	// 账号本身有管理权限（与令牌当前有没有开管理模式无关）
 	CanAdmin bool
+	// 账号本身的权限（不按令牌范围收窄）；只用来决定给哪些说明性的东西（系统技能），不用来放行操作
+	Account *rbac.Access
 	// 管理模式到期时间；AdminLive 为 false 时无意义
 	AdminUntil *time.Time
 	Client     string
@@ -107,7 +109,7 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 		return &Principal{
 			User: u, Access: rbac.ScopeFilter(account, effective), Scopes: scopes, TokenID: t.ID,
 			Limit: t.MonthlyTokenLimit, Models: t.AllowedModels, Client: t.ClientName,
-			Prefix: t.Prefix, ExpiresAt: t.ExpiresAt, AdminLive: live, AdminUntil: t.AdminUntil, CanAdmin: rbac.HasAdminPerms(account),
+			Prefix: t.Prefix, ExpiresAt: t.ExpiresAt, AdminLive: live, AdminUntil: t.AdminUntil, CanAdmin: rbac.HasAdminPerms(account), Account: account,
 		}, nil
 	case strings.HasPrefix(token, npmTokenPrefix):
 		t, u, err := s.store.ActiveNpmToken(ctx, hash)

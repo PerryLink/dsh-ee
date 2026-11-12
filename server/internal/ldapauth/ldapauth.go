@@ -22,6 +22,8 @@ import (
 // Config 是目录连接与属性映射。BindPassword 不参与 JSON，由调用方加密保存。
 type Config struct {
 	Enabled bool `json:"enabled"`
+	// 组织同步带字段（docs/access-control.md §6.1）要额外读的属性；由字段同步设置决定，不单独保存
+	ExtraAttrs []string `json:"-"`
 	// ldap://host:389 或 ldaps://host:636
 	URL                string `json:"url"`
 	StartTLS           bool   `json:"startTls"`
@@ -168,6 +170,8 @@ type Entry struct {
 	Groups      []string `json:"groups"`
 	// AD 的 userAccountControl 带「账号已禁用」位
 	Disabled bool `json:"disabled"`
+	// 组织同步要带的额外属性（Config.ExtraAttrs），属性名 → 值
+	Attrs map[string][]string `json:"attrs,omitempty"`
 }
 
 var (
@@ -253,6 +257,7 @@ func (cn *Conn) bindService() error {
 
 func (c *Config) attrs() []string {
 	out := []string{"dn", c.UsernameAttr, "userAccountControl"}
+	out = append(out, c.ExtraAttrs...)
 	for _, a := range []string{c.DisplayNameAttr, c.DepartmentAttr, c.EmailAttr} {
 		if a != "" {
 			out = append(out, a)
@@ -291,6 +296,14 @@ func (cn *Conn) Lookup(username string) (*Entry, error) {
 		Department:  attr(e, c.DepartmentAttr),
 		Email:       attr(e, c.EmailAttr),
 		Groups:      []string{},
+	}
+	for _, a := range c.ExtraAttrs {
+		if vs := e.GetEqualFoldAttributeValues(a); len(vs) > 0 {
+			if out.Attrs == nil {
+				out.Attrs = map[string][]string{}
+			}
+			out.Attrs[a] = vs
+		}
 	}
 	if uac := e.GetEqualFoldAttributeValue("userAccountControl"); uac != "" {
 		var n int64

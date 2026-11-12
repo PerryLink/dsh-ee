@@ -68,6 +68,13 @@ export interface ObjectFieldView extends AccessField {
   editable: boolean;
 }
 
+export interface FieldSyncMapping {
+  source: "ldap" | "feishu";
+  attr: string;
+  field: string;
+  override: boolean;
+}
+
 export interface ExplainStep {
   stage: string;
   result: string;
@@ -211,6 +218,8 @@ export const extApi = {
     request<{ fields: ObjectFieldView[] }>("GET", `/api/fields/${object}/${id}`).then((r) => r.fields ?? []),
   setObjectFields: (object: FieldObject, id: number, values: Record<string, unknown>) =>
     request<{ fields: ObjectFieldView[] }>("PUT", `/api/fields/${object}/${id}`, { values }),
+  fieldSync: () => request<{ mappings: FieldSyncMapping[] }>("GET", "/api/admin/field-sync").then((r) => r.mappings ?? []),
+  setFieldSync: (mappings: FieldSyncMapping[]) => request<{ mappings: FieldSyncMapping[] }>("PUT", "/api/admin/field-sync", { mappings }),
   explain: (user: string, doc: number) =>
     request<{ allowed: boolean; user: string; doc: number; title: string; steps: ExplainStep[] }>("POST", "/api/admin/access/explain", { user, doc }),
 

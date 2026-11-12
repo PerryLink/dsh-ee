@@ -1,6 +1,6 @@
 # 接入与扩展方案（草案，2026-11-11 第四稿）
 
-> 状态：第 1 批进行中（进度见 §12.1）。§13 记了已定的事和还没定的问题，§14 是对照代码做的一次评审（可行性、取舍、风险）。这是对 [roadmap.md](./roadmap.md) 阶段 D / E 的细化，v0.1 的范围冻结不受影响。
+> 状态：第 1 批进行中（进度见 §12.1），第 2～5 批的基本部分已经做出来（§12.2）。§13 记了已定的事和还没定的问题，§14 是对照代码做的一次评审（可行性、取舍、风险）。这是对 [roadmap.md](./roadmap.md) 阶段 D / E 的细化，v0.1 的范围冻结不受影响。
 >
 > 配套文档：[access-control.md](./access-control.md)（可配置的管理角色、扩展字段和访问规则）、[agent-dev.md](./agent-dev.md)（让 Agent 完成扩展和权限配置的开发）。三份文档的先后顺序统一写在本文 §12。
 >
@@ -525,6 +525,34 @@ extensions/
 | 从 Git 仓库安装（§9.2） | ⏳ | |
 | 多份共享凭据（§7.1） | ✅ 连接级选择（按应用指定哪一份还没做） | [named-shared-credentials.md](./named-shared-credentials.md)、`server/internal/api/shared_credentials.go` |
 | 现有连接自动转换成扩展（§11） | ⏳ | |
+
+### 12.2 第 2～5 批的进度（2026-11-12）
+
+| 批 | 项 | 状态 | 在哪 |
+|---|---|---|---|
+| 2 | 服务扩展协议 | ✅ | [extension-protocol.md](./extension-protocol.md) |
+| 2 | Go SDK、示例服务扩展 | ✅ | `extensions/sdk-go`、`extensions/examples/demo-extension` |
+| 2 | `extension test`（协议一致性 + 场景测试）、模拟环境 `extension dev`、`extension call / pack / report / init` | ✅ | `server/cmd/dsh-ee/cli_ext.go`、`server/internal/extension/exttest` |
+| 2 | 从服务地址安装、健康检查、清单变了先不启用、熔断 | ✅ | `server/internal/api/service_ext.go`，网页「企业连接 → 安装扩展 → 填服务地址」，连接详情页的「扩展」 |
+| 2 | 知识源：文档库同步（勾选范围、增量）、联邦检索 | ✅ | `server/internal/api/kb_sources.go`，知识库页面「知识源」 |
+| 2 | 飞书文档内置知识源 | ✅ 只做同步；源系统里删掉的文档不会自动删，只同步新版文档（docx） | `server/internal/api/kb_feishu_docs.go` |
+| 2 | `oauth`：标准流程 + 钩子，员工授权、刷新、撤销 | ✅ | `server/internal/api/ext_oauth.go`，连接详情页「我的凭据」 |
+| 2 | 回调地址 `/x/<随机串>/…` | ✅ | `service_ext.go` |
+| 2 | 写操作的服务端确认（off / non_dsh / always）和确认页 | ✅ 网页确认；飞书卡片确认没做 | `server/internal/api/write_confirm.go`、`/confirm/<id>`、系统设置 |
+| 2 | 应用依赖检查（导出记 `requires`，导入时提示缺扩展、版本不够） | ✅ 只提示，不给安装按钮 | `server/internal/api/app_requires.go` |
+| 3 | 扩展字段（文档、知识库、用户）、三种规则、各出口过滤、索引带字段、`explain`、`simulate` | ✅ | `server/internal/access`、`server/internal/api/fields.go`，网页「字段与访问规则」 |
+| 3 | 扩展带字段（清单 `fields`），知识源给字段值 | ✅ | 同上 |
+| 3 | 组织同步带字段（LDAP 登录时、飞书组织同步时） | ✅ | `server/internal/api/field_sync.go`，「字段与访问规则 → 组织同步」 |
+| 4 | 可关闭的超级管理员、互斥角色、不能给自己授权、双人批准、预设 | ✅ | `server/internal/api/admin_policy.go`，「字段与访问规则 → 管理约束」 |
+| 4 | 配置导出 / `plan` / `test` / `apply`、变更请求、批准、回滚 | ✅ | `dsh-ee config …`（`server/cmd/dsh-ee/cli_config.go`），「字段与访问规则 → 变更请求」 |
+| 4 | `dsh-ee admin recover` | ✅ | 同上 |
+| 4 | 配置令牌（`config` 范围）、`extensions.develop` 权限点 | ✅ | `rbac/scopes.go` |
+| 4 | `dsh-ee-access-config` 技能；两个技能作为系统技能下发给有对应权限的人 | ✅ | `extensions/skills/`，`server/internal/api/agent_skills.go` |
+| 4 | `ee_dev__*` 工具、开发令牌 | ⏳ 按 [agent-dev.md](./agent-dev.md) §10.3「先只做命令行」没做 | |
+| 5 | 端侧 TS SDK（本机 MCP、写操作确认、审计回报） | ✅ | `extensions/sdk-local`，服务端 `server/internal/api/local_ext.go` |
+| 5 | `webSignIn` | ✅ 用 Playwright 起的浏览器窗口；DSH 插件里开独立窗口读 cookie 没验证（§13 待定 3） | `extensions/sdk-local/src/web-signin.ts` |
+| 5 | 端侧老系统模板、Claude Code 适配器 | ✅ | `extensions/official/legacy-local`、`extensions/official/claude-code` |
+| 5 | §13 待定 2、3 的真机验证 | ⏳ | |
 
 **有人要才做**（设计留着，不排期）：签名和签名策略、自动升级策略、企业目录、`/extensions` 列表页和安装按钮、反向连接和远程调试、网盘类知识源、事件、通知渠道、权限策略扩展、字段填充、审计投递、更多内置扩展、Python SDK、服务端无头浏览器、token exchange。
 

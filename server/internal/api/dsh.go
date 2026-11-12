@@ -65,7 +65,7 @@ func (s *Server) dshViewer(w http.ResponseWriter, r *http.Request) (viewer, *Pri
 	if !ok {
 		return viewer{}, nil, false
 	}
-	return viewer{user: p.User, access: p.Access, agent: s.agentOn(r.Context(), p), canAdmin: p.CanAdmin, adminLive: p.AdminLive}, p, true
+	return viewer{user: p.User, access: p.Access, agent: s.agentOn(r.Context(), p), canAdmin: p.CanAdmin, adminLive: p.AdminLive, account: p.Account}, p, true
 }
 
 var serverNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)

@@ -1,0 +1,24 @@
+{
+  "name": "@acme/legacy-oa-local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "端侧扩展模板：没有接口的老 OA，员工在登录窗口里登录一次，之后用他自己的 cookie 发 HTTP 请求取数和提交",
+  "type": "module",
+  "bin": { "legacy-oa-local": "dist/index.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "manifest": "npm run build && dsh-ee-local manifest dist/extension.js -o dsh-ee.extension.json",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@dsh-ee/extension-local": "file:../../sdk-local"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

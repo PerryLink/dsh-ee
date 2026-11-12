@@ -235,6 +235,8 @@ var agentExcluded = map[string]string{
 	"PUT /api/admin/access-rules/{id}":    "访问规则在管理页面改，或用 dsh-ee config 提交变更请求",
 	"DELETE /api/admin/access-rules/{id}": "访问规则在管理页面改",
 	"GET /api/fields/{object}/{oid}":      "字段值在文档、用户页面上看",
+	"GET /api/admin/field-sync":           "组织同步带的字段映射在管理页面看",
+	"PUT /api/admin/field-sync":           "组织同步带的字段映射决定用户的访问控制属性，只在网页上改",
 	"PUT /api/fields/{object}/{oid}":      "用于访问控制的字段值不交给模型改",
 	"POST /api/admin/access/explain":      "用 dsh-ee config explain（配置令牌）",
 	"POST /api/admin/access/simulate":     "用 dsh-ee config simulate（配置令牌）",

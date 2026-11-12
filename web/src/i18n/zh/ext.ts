@@ -44,7 +44,7 @@ export default {
   fieldsAdmin: {
     title: "字段与访问规则",
     desc: "给文档、知识库、用户加字段，再按字段决定谁能看哪些文档。规则只会在知识库原有权限之上再收紧。",
-    tabs: { fields: "字段", rules: "访问规则", policy: "管理约束", changes: "变更请求", explain: "为什么看不到" },
+    tabs: { fields: "字段", rules: "访问规则", sync: "组织同步", policy: "管理约束", changes: "变更请求", explain: "为什么看不到" },
     object: { document: "文档", kbase: "知识库", user: "用户" },
     type: { text: "文本", number: "数字", date: "日期", select: "单选", tags: "多选", level: "等级" },
     newField: "加字段",
@@ -80,6 +80,19 @@ export default {
     dualNotice: "开了双人批准：字段、规则和管理约束的修改要通过变更请求，由另一位管理员批准后才生效。",
     saved: "已保存",
     cliHint: "也可以把整份配置当文件改：dsh-ee config export / plan / test / apply（需要带 config 范围的令牌）。",
+  },
+  fieldSync: {
+    desc: "把 LDAP 或飞书通讯录里的属性同步成用户字段：LDAP 在员工登录时同步，飞书在组织同步时同步。人一调岗，能看的范围跟着变。手工改过的值不会被覆盖，除非勾「以同步为准」。",
+    source: "来源",
+    attr: "目录里的属性",
+    attrHint: "LDAP 写属性名（title、employeeType…）；飞书写 job_title、city、employee_no、employee_type，或自定义字段的 id（C-…）",
+    field: "用户字段",
+    override: "以同步为准",
+    add: "加一条映射",
+    save: "保存映射",
+    saved: "已保存",
+    empty: "还没有映射。",
+    noUserFields: "先在「字段」里给用户加字段。",
   },
   policyAdmin: {
     presets: "预设",

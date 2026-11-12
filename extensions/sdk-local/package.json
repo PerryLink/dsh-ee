@@ -1,0 +1,30 @@
+{
+  "name": "@dsh-ee/extension-local",
+  "version": "0.1.0",
+  "description": "dsh-ee 端侧扩展 SDK：在员工电脑上跑的扩展（本机 MCP 服务、写操作确认、审计回报、webSignIn）",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "bin": { "dsh-ee-local": "dist/cli.js" },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "playwright": ">=1.40"
+  },
+  "peerDependenciesMeta": {
+    "playwright": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

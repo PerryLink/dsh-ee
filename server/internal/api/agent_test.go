@@ -544,8 +544,24 @@ func TestAgentTools(t *testing.T) {
 		expect(t, "只给只读角色", code, 200, body)
 		f.token(t, ro.ID, "ee_at_ro", agentScopes, nil, nil)
 		r := agent{dshClient{t: t, base: f.ts.URL, token: "ee_at_ro"}}
-		if names := r.catalog().skillNames(); slices.Contains(names, "dsh-ee-share") || !slices.Contains(names, "dsh-ee-guide") {
+		if names := r.catalog().skillNames(); slices.Contains(names, "dsh-ee-share") || !slices.Contains(names, "dsh-ee-guide") ||
+			slices.Contains(names, "dsh-ee-extension-dev") || slices.Contains(names, "dsh-ee-access-config") {
 			t.Fatalf("只读角色的系统技能：%v", names)
+		}
+		// 写扩展、配权限的技能只给有对应权限的人（docs/agent-dev.md §2.2）
+		code, body = f.admin.do("POST", "/api/admin/roles", map[string]any{"code": "ext-dev", "name": "扩展开发", "permissions": []string{rbac.PortalView, rbac.LLMUse, rbac.ExtensionsDevelop, rbac.FieldsManage}}, nil)
+		expect(t, "建扩展开发角色", code, 201, body)
+		devRole := decodeAs[struct{ ID int64 }](t, body)
+		dev := f.user(t, "agent-dev", &limit)
+		code, body = f.admin.do("PUT", fmt.Sprintf("/api/admin/users/%d/roles", dev.ID), map[string]any{"role_ids": []int64{devRole.ID}}, nil)
+		expect(t, "给扩展开发角色", code, 200, body)
+		f.token(t, dev.ID, "ee_at_dev", agentScopes, nil, nil)
+		dv := agent{dshClient{t: t, base: f.ts.URL, token: "ee_at_dev"}}
+		if names := dv.catalog().skillNames(); !slices.Contains(names, "dsh-ee-extension-dev") || !slices.Contains(names, "dsh-ee-access-config") {
+			t.Fatalf("有 extensions.develop 和 fields.manage 的人应有两个技能：%v", names)
+		}
+		if code, body, _ := dv.do("GET", "/api/dsh/skills/dsh-ee-access-config", nil, nil); code != 200 || !strings.Contains(string(body), "dsh-ee config plan") {
+			t.Fatalf("配权限技能的正文：%d %s", code, body)
 		}
 		// 权限矩阵：只读角色的 action 被收窄
 		if got := r.actions("ee_hub"); !slices.Equal(got, []string{"detail", "disable", "enable", "search"}) {

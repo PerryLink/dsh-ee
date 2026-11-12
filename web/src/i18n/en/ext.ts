@@ -46,7 +46,7 @@ export default {
   fieldsAdmin: {
     title: "Fields and access rules",
     desc: "Add fields to documents, knowledge bases and users, then decide by field who can see which documents. Rules only narrow the existing knowledge base permissions.",
-    tabs: { fields: "Fields", rules: "Access rules", policy: "Admin constraints", changes: "Change requests", explain: "Why can't they see it" },
+    tabs: { fields: "Fields", rules: "Access rules", sync: "Directory sync", policy: "Admin constraints", changes: "Change requests", explain: "Why can't they see it" },
     object: { document: "Document", kbase: "Knowledge base", user: "User" },
     type: { text: "Text", number: "Number", date: "Date", select: "Single choice", tags: "Multiple choice", level: "Level" },
     newField: "Add field",
@@ -82,6 +82,19 @@ export default {
     dualNotice: "Two-person approval is on: changes to fields, rules and admin constraints go through a change request approved by another admin.",
     saved: "Saved",
     cliHint: "You can also edit the whole configuration as a file: dsh-ee config export / plan / test / apply (needs a token with the config scope).",
+  },
+  fieldSync: {
+    desc: "Sync attributes from LDAP or the Feishu directory into user fields: LDAP on each sign-in, Feishu on each directory sync. When someone changes role, what they can see follows. Values edited by hand are kept unless \"Directory wins\" is ticked.",
+    source: "Source",
+    attr: "Directory attribute",
+    attrHint: "LDAP: attribute name (title, employeeType…); Feishu: job_title, city, employee_no, employee_type or a custom field id (C-…)",
+    field: "User field",
+    override: "Directory wins",
+    add: "Add mapping",
+    save: "Save mappings",
+    saved: "Saved",
+    empty: "No mappings yet.",
+    noUserFields: "Add a user field under Fields first.",
   },
   policyAdmin: {
     presets: "Presets",

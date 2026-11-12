@@ -10,6 +10,7 @@ import {
   type AdminPolicy,
   type ChangeRequest,
   type FieldItem,
+  type FieldSyncMapping,
   type FieldObject,
   type FieldType,
   type PlanResult,
@@ -22,7 +23,7 @@ import { useConfirm } from "../../lib/confirm";
 import { LoadState } from "../../components/api-ui";
 import { Badge, Button, Card, CardHeader, cx, Field, inputCls, Notice, PageHeader, Segmented, tabCls, tabListCls, Toggle, ToggleRow, type Tone } from "../../components/ui";
 
-type Tab = "fields" | "rules" | "policy" | "changes" | "explain";
+type Tab = "fields" | "rules" | "sync" | "policy" | "changes" | "explain";
 
 const OBJECTS: FieldObject[] = ["document", "kbase", "user"];
 const TYPES: FieldType[] = ["text", "number", "date", "select", "tags", "level"];
@@ -43,7 +44,7 @@ export default function AdminFields() {
   const { t } = useTranslation();
   const { can } = useAuth();
   const [params, setParams] = useSearchParams();
-  const tabs: Tab[] = ["fields", "rules", ...(can("roles.manage") ? (["policy"] as const) : []), "changes", "explain"];
+  const tabs: Tab[] = ["fields", "rules", "sync", ...(can("roles.manage") ? (["policy"] as const) : []), "changes", "explain"];
   const tab = (tabs.includes(params.get("tab") as Tab) ? params.get("tab") : "fields") as Tab;
   const data = useApi(extApi.fields);
   const policy = useApi(() => (can("roles.manage") ? extApi.policy() : Promise.resolve(null)));
@@ -64,10 +65,11 @@ export default function AdminFields() {
           {t("fieldsAdmin.dualNotice")}
         </Notice>
       )}
-      {(tab === "fields" || tab === "rules") && (
+      {(tab === "fields" || tab === "rules" || tab === "sync") && (
       <LoadState loading={data.loading && !data.data} error={data.error} onRetry={data.reload}>
         {data.data && tab === "fields" && <FieldsTab fields={data.data.fields} reload={data.reload} />}
         {data.data && tab === "rules" && <RulesTab fields={data.data.fields} rules={data.data.rules} builtins={data.data.builtins} reload={data.reload} />}
+        {data.data && tab === "sync" && <SyncTab fields={data.data.fields} />}
       </LoadState>
       )}
       {tab === "policy" && policy.data && <PolicyTab policy={policy.data.policy} presets={policy.data.presets} reload={policy.reload} />}
@@ -419,6 +421,82 @@ function RuleForm({ rule, fields, builtins, onDone, onCancel }: { rule: AccessRu
           {t("common.save")}
         </Button>
       </div>
+    </Card>
+  );
+}
+
+// ---- 组织同步带字段 ----
+
+function SyncTab({ fields }: { fields: FieldItem[] }) {
+  const { t } = useTranslation();
+  const { notify } = useStore();
+  const { busy, run } = useAction();
+  const data = useApi(extApi.fieldSync);
+  const [rows, setRows] = useState<FieldSyncMapping[] | null>(null);
+  const userFields = fields.filter((f) => f.object === "user");
+  const list = rows ?? data.data ?? [];
+  const set = (i: number, p: Partial<FieldSyncMapping>) => setRows(list.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  if (!data.data) return null;
+  return (
+    <Card className="space-y-4 p-5" data-field-sync>
+      <p className="text-sm text-neutral-600">{t("fieldSync.desc")}</p>
+      {userFields.length === 0 ? (
+        <Notice>{t("fieldSync.noUserFields")}</Notice>
+      ) : (
+        <>
+          {list.length === 0 && <p className="text-sm text-neutral-500">{t("fieldSync.empty")}</p>}
+          {list.map((m, i) => (
+            <div key={i} className="grid items-end gap-3 sm:grid-cols-[7rem_1fr_1fr_auto_auto]">
+              <Field label={t("fieldSync.source")}>
+                <select className={inputCls} value={m.source} onChange={(e) => set(i, { source: e.target.value as FieldSyncMapping["source"] })}>
+                  <option value="ldap">LDAP</option>
+                  <option value="feishu">飞书 / Feishu</option>
+                </select>
+              </Field>
+              <Field label={t("fieldSync.attr")}>
+                <input className={cx(inputCls, "font-mono")} value={m.attr} onChange={(e) => set(i, { attr: e.target.value })} />
+              </Field>
+              <Field label={t("fieldSync.field")}>
+                <select className={inputCls} value={m.field} onChange={(e) => set(i, { field: e.target.value })}>
+                  <option value="">—</option>
+                  {userFields.map((f) => (
+                    <option key={f.key} value={f.key}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <label className="mb-2 flex items-center gap-1.5 text-sm text-neutral-700">
+                <input type="checkbox" className="size-4 accent-brand-600" checked={m.override} onChange={(e) => set(i, { override: e.target.checked })} />
+                {t("fieldSync.override")}
+              </label>
+              <Button variant="ghost" size="sm" className="mb-1" aria-label={t("common.delete")} onClick={() => setRows(list.filter((_, j) => j !== i))}>
+                <Trash2 size={14} />
+              </Button>
+            </div>
+          ))}
+          <p className="text-xs text-neutral-500">{t("fieldSync.attrHint")}</p>
+          <div className="flex justify-between gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setRows([...list, { source: "ldap", attr: "", field: "", override: false }])}>
+              <Plus size={14} /> {t("fieldSync.add")}
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || rows === null}
+              onClick={async () => {
+                const r = await run(() => extApi.setFieldSync(list.map((m) => ({ ...m, attr: m.attr.trim() }))));
+                notify(r.ok ? t("fieldSync.saved") : r.error);
+                if (r.ok) {
+                  setRows(null);
+                  data.reload();
+                }
+              }}
+            >
+              {t("fieldSync.save")}
+            </Button>
+          </div>
+        </>
+      )}
     </Card>
   );
 }

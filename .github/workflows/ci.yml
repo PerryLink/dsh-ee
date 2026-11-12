@@ -32,6 +32,13 @@ jobs:
       - run: npm run build
         working-directory: dsh-plugin
       - run: git diff --exit-code server/internal/api/connectpkg/index.js
+      # 端侧扩展 SDK、端侧模板和 Claude Code 适配器（docs/plugins.md §8、§10）
+      - run: npm ci --no-audit --no-fund && npm test && npm run build
+        working-directory: extensions/sdk-local
+      - run: npm ci --no-audit --no-fund --omit=optional && npm test
+        working-directory: extensions/official/legacy-local
+      - run: node --test test/*.test.mjs
+        working-directory: extensions/official/claude-code
       - uses: actions/upload-artifact@v4
         with:
           name: web-dist
@@ -67,6 +74,13 @@ jobs:
       - name: build ee_jwt adapter example
         working-directory: extensions/official/ee-jwt-adapter
         run: go build -o /tmp/ee-jwt-adapter .
+      # 服务扩展的 Go SDK 和示例也是独立 module
+      - name: test Go extension SDK
+        working-directory: extensions/sdk-go
+        run: go vet ./... && go test -count=1 ./...
+      - name: build demo service extension
+        working-directory: extensions/examples/demo-extension
+        run: go vet ./... && go build -o /tmp/demo-extension .
 
   e2e:
     needs: web

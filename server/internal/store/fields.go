@@ -173,6 +173,23 @@ func (s *Store) SetFieldValue(ctx context.Context, object string, id, fieldID in
 	return true, err
 }
 
+// SetSyncedFieldValue 写一个同步来的值（manual=false）。override 为 false 时不覆盖人手工改过的值；
+// 为 true 时（管理员选了「以同步为准」）照样覆盖，并把这个值标成同步来的。
+func (s *Store) SetSyncedFieldValue(ctx context.Context, object string, id, fieldID int64, value any, override bool) (bool, error) {
+	if override && value != nil {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return false, err
+		}
+		_, err = s.db.ExecContext(ctx,
+			`INSERT INTO field_values (object, object_id, field_id, value, manual, updated_by, updated_at) VALUES (?, ?, ?, ?, 0, NULL, ?)
+			 ON DUPLICATE KEY UPDATE value = VALUES(value), manual = 0, updated_by = NULL, updated_at = VALUES(updated_at)`,
+			object, id, fieldID, string(raw), now())
+		return err == nil, err
+	}
+	return s.SetFieldValue(ctx, object, id, fieldID, value, false, 0)
+}
+
 // DeleteObjectFieldValues 在对象被删掉时清掉它的字段值。
 func (s *Store) DeleteObjectFieldValues(ctx context.Context, object string, id int64) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM field_values WHERE object = ? AND object_id = ?", object, id)

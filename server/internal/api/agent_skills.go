@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hikariming/dsh-ee/server/internal/extension"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
@@ -76,10 +77,38 @@ func systemSkills(set *store.AppSettings, server string, v viewer) []systemSkill
 			body: setupBody(t),
 		})
 	}
+	// 写扩展、配权限的技能（docs/agent-dev.md §2.2）：只给有对应权限的人
+	addRepoSkill := func(name, title, whenToUse string) {
+		body, desc, ok := extension.Skill(name)
+		if !ok {
+			return
+		}
+		head := "> 本企业的 dsh-ee 地址：" + firstNonEmptyStr(set.BaseURL, "（问管理员）") + "。命令行 `dsh-ee` 和这台服务器版本一致；规格用 `dsh-ee schema list` 查。\n\n"
+		out = append(out, systemSkill{
+			skill: dshSkill{Name: name, Title: title, Kind: store.KindSkill, ModelInvocable: true, UserInvocable: true, Description: desc, WhenToUse: whenToUse},
+			body:  head + body,
+		})
+	}
+	// 看账号本身的权限：DSH 的令牌只有 agent 范围，收窄后看不到 fields.manage 这类管理权限点，但技能只是说明，真正操作仍按令牌校验
+	if v.accountHas(rbac.ExtensionsDevelop) {
+		addRepoSkill("dsh-ee-extension-dev", "写 dsh-ee 扩展", "用户要把一个内部系统接进 dsh-ee、写一个扩展（声明式、服务扩展或端侧扩展）、或检查一个扩展能不能装时")
+	}
+	if v.accountHas(rbac.FieldsManage) || v.accountHas(rbac.RolesManage) {
+		addRepoSkill("dsh-ee-access-config", "配置权限与访问规则", "用户要加字段、按字段控制谁能看文档、分管理员权限、或问某人为什么看不到某篇文档时")
+	}
 	for i := range out {
 		out[i].skill.Version = 1
 	}
 	return out
+}
+
+func firstNonEmptyStr(vs ...string) string {
+	for _, v := range vs {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func guideBody(set *store.AppSettings, org, server string, t func(string) string, v viewer) string {
