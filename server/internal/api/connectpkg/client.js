@@ -21110,13 +21110,11 @@ function registerApps(ctx, remote, useOverview, unwrapRemote2) {
       const apps = unwrapRemote2(await remote.apps());
       update({ apps: Array.isArray(apps) ? apps : [] });
     } catch {
-      update({ apps: [] });
     }
     try {
       const available = typeof remote.availableApps === "function" ? unwrapRemote2(await remote.availableApps()) : [];
       update({ available: Array.isArray(available) ? available : [] });
     } catch {
-      update({ available: [] });
     }
     try {
       if (typeof remote.appBindings === "function") {
@@ -21124,7 +21122,6 @@ function registerApps(ctx, remote, useOverview, unwrapRemote2) {
         if (bindings && typeof bindings === "object") update({ bindings });
       }
     } catch {
-      update({ bindings: {} });
     } finally {
       loaded = true;
       update({ busy: false });

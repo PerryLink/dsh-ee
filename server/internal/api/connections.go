@@ -456,11 +456,17 @@ func (s *Server) doConnectionCall(ctx context.Context, a *store.Asset, t *store.
 		for k, vs := range uh {
 			h[k] = vs
 		}
-		status, body, err := openapi.Call(ctx, s.connHTTP(sp), root, op, m, h, connResultLimit+1)
+		// 有 keep 时先多读一些，否则 >64KiB 的合法 JSON 会绕过字段筛选，
+		// 把清单要求隐藏的字段原样带回模型。读到的内容仍受 4MiB 上限约束。
+		readLimit := int64(connResultLimit + 1)
+		if len(keep) > 0 {
+			readLimit = 4<<20 + 1
+		}
+		status, body, err := openapi.Call(ctx, s.connHTTP(sp), root, op, m, h, readLimit)
 		if err != nil {
 			return nil, mode, ext, err
 		}
-		if status < 400 && len(keep) > 0 && len(body) <= connResultLimit {
+		if status < 400 && len(keep) > 0 {
 			body = extension.Keep(body, keep)
 		}
 		text := string(body)

@@ -15,12 +15,13 @@ function tmpFile(name: string, content = "tgz-bytes") {
 test("上传 .tgz：原样发给 dsh-ee，文件内容不进返回值", async () => {
   const file = tmpFile("pkg-1.0.0.tgz", "PACKAGE-BYTES");
   let seen: any;
-  const http = { async fetch(p: string, init: RequestInit) { seen = { p, init }; return new Response(JSON.stringify({ name: "@acme/x", version: "1.0.0", status: "pending" }), { status: 201 }); } };
+  const http = { async fetch(p: string, init: RequestInit, timeout: number) { seen = { p, init, timeout }; return new Response(JSON.stringify({ name: "@acme/x", version: "1.0.0", status: "pending" }), { status: 201 }); } };
   const result = await uploadPackage(http as any, { path: file });
   assert.equal(seen.p, "/api/agent/packages");
   assert.equal(seen.init.method, "POST");
   assert.equal(new Headers(seen.init.headers).get("content-type"), "application/octet-stream");
   assert.equal(Buffer.from(seen.init.body).toString(), "PACKAGE-BYTES");
+  assert.equal(seen.timeout, 0, "大包上传不应使用 30s 默认超时");
   assert.equal(result.isError, false);
   assert.ok(result.content[0].text.includes("@acme/x"));
   assert.ok(!result.content[0].text.includes("PACKAGE-BYTES"));
