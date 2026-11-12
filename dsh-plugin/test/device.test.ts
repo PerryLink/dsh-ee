@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { test } from "node:test";
 import { DeviceFlow } from "../src/device.js";
 import { normalizeConfig } from "../src/config.js";
@@ -60,4 +61,15 @@ test("/ee-login accepts a setup code with or without the dash", () => {
   assert.equal(parseSetupCode("ABCDEFGH"), "ABCDEFGH");
   assert.equal(parseSetupCode(""), "");
   assert.equal(parseSetupCode("hello world"), "");
+});
+
+
+test("wait 不会随轮询累积 abort 监听器", async () => {
+  const controller = new AbortController();
+  const flow = new DeviceFlow(config, async () => new Response(JSON.stringify({ error: "authorization_pending" })));
+  const pending = flow.wait("d", 0.01, 60_000, controller.signal);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  controller.abort();
+  await assert.rejects(pending, /取消/);
+  assert.ok(getEventListeners(controller.signal, "abort").length <= 1, `abort 监听器应被摘掉，实际 ${getEventListeners(controller.signal, "abort").length}`);
 });

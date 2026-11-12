@@ -45,10 +45,16 @@ export class DeviceFlow {
       } else if (body.error !== "authorization_pending") {
         throw new Error(body.error || `设备登录失败：HTTP ${response.status}`);
       }
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, interval);
-        signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("设备登录已取消")); }, { once: true });
-      });
+      let onAbort: (() => void) | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, interval);
+          onAbort = () => { clearTimeout(timer); reject(new Error("设备登录已取消")); };
+          signal?.addEventListener("abort", onAbort, { once: true });
+        });
+      } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+      }
     }
     throw new Error("设备登录超时");
   }

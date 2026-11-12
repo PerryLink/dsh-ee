@@ -34,14 +34,14 @@ export function registerApps(ctx: any, remote: any, useOverview: () => any, unwr
       const apps = unwrapRemote(await remote.apps());
       update({ apps: Array.isArray(apps) ? apps : [] });
     } catch {
-      update({ apps: [] });
+      // 一次 5xx/断网不清空上次列表；保留快照，等下一轮刷新
     }
     try {
       // 旧版接入插件后端没有这个方法
       const available = typeof remote.availableApps === "function" ? unwrapRemote(await remote.availableApps()) : [];
       update({ available: Array.isArray(available) ? available : [] });
     } catch {
-      update({ available: [] });
+      // 保留上次可用应用列表
     }
     try {
       if (typeof remote.appBindings === "function") {
@@ -49,7 +49,7 @@ export function registerApps(ctx: any, remote: any, useOverview: () => any, unwr
         if (bindings && typeof bindings === "object") update({ bindings });
       }
     } catch {
-      update({ bindings: {} });
+      // 保留上次绑定
     } finally {
       loaded = true;
       update({ busy: false });

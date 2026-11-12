@@ -56,7 +56,11 @@ export async function runLocalDoctor(ctx: DshContext, config: PluginConfig, toke
         : { id: "token", status: "ok", title: `已登录 ${me.username}（${me.department}）` });
     } else {
       const body = await response.json().catch(() => null) as { code?: string } | null;
-      add({ id: "token", status: "fail", title: "企业登录已失效", detail: body?.code ?? `HTTP ${response.status}`, fix: "在对话框输入 /ee-login 重新登录" });
+      if (response.status === 401) {
+        add({ id: "token", status: "fail", title: "企业登录已失效", detail: body?.code ?? "HTTP 401", fix: "在对话框输入 /ee-login 重新登录" });
+      } else {
+        add({ id: "token", status: "fail", title: `读取企业账号失败（HTTP ${response.status}）`, detail: "dsh-ee 可能正在重启或暂时不可用；不是登录失效，稍后再试", fix: "稍等片刻重新运行诊断；持续失败请检查服务端状态" });
+      }
     }
   } catch {
     reachable = false;
