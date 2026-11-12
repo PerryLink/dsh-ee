@@ -117,3 +117,15 @@ test("绑定文件损坏时 doctor 报 warn", async () => {
   const { checks } = await runLocalDoctor(f.ctx as any, config, f.tokens as any, f.http as any, f.bridge as any, bindings as any);
   assert.equal(byId(checks).app_bindings.status, "warn");
 });
+
+
+test("whoami 5xx 不报登录失效", async () => {
+  await withNpmrc("//ee.test/npm/:_authToken=T\n", async () => {
+    const f = fixture({ token: "T", whoami: 500 });
+    const { checks } = await runLocalDoctor(f.ctx as any, config, f.tokens as any, f.http as any, f.bridge as any);
+    const c = byId(checks).token;
+    assert.equal(c.status, "fail");
+    assert.match(c.title, /HTTP 500/);
+    assert.doesNotMatch(c.title, /登录已失效/);
+  });
+});

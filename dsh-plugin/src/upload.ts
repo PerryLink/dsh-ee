@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HttpClient } from "./http.js";
 
-const MAX_BYTES = 128 * 1024 * 1024;
+const MAX_BYTES = 100 * 1024 * 1024; // 与服务端 registry MaxTarball 一致
 
 function fail(text: string) {
   return { content: [{ type: "text", text }], isError: true };
@@ -29,8 +29,9 @@ export async function uploadPackage(http: HttpClient, args: { path?: string }) {
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
       body: fs.readFileSync(file),
-    });
-  } catch {
+    }, 0); // 大包上传不设 30s 超时；服务端自身限制 100MB
+  } catch (error) {
+    if ((error as { name?: string })?.name === "TimeoutError") return fail("上传超时，请重试；网络较慢时可改用网页上传");
     return fail("连不上 dsh-ee，请检查网络或 VPN");
   }
   const body = await response.json().catch(() => null) as { error?: string; name?: string; version?: string; status?: string } | null;

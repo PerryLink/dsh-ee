@@ -40,3 +40,24 @@ test("并发 /ee-login 只申请一个设备码", async () => {
     globalThis.fetch = original;
   }
 });
+
+
+test("/ee-status 5xx 不误报登录失效", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("{}", { status: 500 })) as typeof fetch;
+  try {
+    const handlers: Record<string, any> = {};
+    const ctx = {
+      effect: () => undefined,
+      get: (name: string) => name === "commands" ? { register: (def: any) => { handlers[def.name] = def; return () => undefined; } } : undefined,
+    } as any;
+    const tm = { resolve: async () => ({ value: "T", source: "store" }), npmrcMatches: async () => true } as any;
+    registerCommands(ctx, normalizeConfig({ base: "http://ee" }), tm);
+    const result = await handlers["ee-status"].handler({});
+    assert.equal(result.kind, "error");
+    assert.match(result.text, /HTTP 500/);
+    assert.doesNotMatch(result.text, /登录已失效/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

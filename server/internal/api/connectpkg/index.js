@@ -277,13 +277,19 @@ var DeviceFlow = class {
       } else if (body.error !== "authorization_pending") {
         throw new Error(body.error || `\u8BBE\u5907\u767B\u5F55\u5931\u8D25\uFF1AHTTP ${response.status}`);
       }
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, interval);
-        signal?.addEventListener("abort", () => {
-          clearTimeout(timer);
-          reject(new Error("\u8BBE\u5907\u767B\u5F55\u5DF2\u53D6\u6D88"));
-        }, { once: true });
-      });
+      let onAbort;
+      try {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, interval);
+          onAbort = () => {
+            clearTimeout(timer);
+            reject(new Error("\u8BBE\u5907\u767B\u5F55\u5DF2\u53D6\u6D88"));
+          };
+          signal?.addEventListener("abort", onAbort, { once: true });
+        });
+      } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+      }
     }
     throw new Error("\u8BBE\u5907\u767B\u5F55\u8D85\u65F6");
   }
@@ -352,8 +358,16 @@ function registerCommands(ctx, config, tokens, onLogin = async () => {
       handler: async () => {
         const current = await tokens.resolve();
         if (!current) return { kind: "success", text: "\u672A\u767B\u5F55\uFF0C\u5728\u5BF9\u8BDD\u6846\u8F93\u5165 /ee-login" };
-        const response = await fetch(`${config.base}/api/dsh/whoami`, { headers: { Authorization: `Bearer ${current.value}` }, signal: AbortSignal.timeout(3e4) });
-        if (!response.ok) return { kind: "success", text: "\u767B\u5F55\u5DF2\u5931\u6548\uFF0C\u5728\u5BF9\u8BDD\u6846\u8F93\u5165 /ee-login" };
+        let response;
+        try {
+          response = await fetch(`${config.base}/api/dsh/whoami`, { headers: { Authorization: `Bearer ${current.value}` }, signal: AbortSignal.timeout(3e4) });
+        } catch {
+          return { kind: "error", text: "\u8FDE\u4E0D\u4E0A dsh-ee\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u6216 VPN \u540E\u91CD\u8BD5" };
+        }
+        if (!response.ok) {
+          if (response.status === 401) return { kind: "success", text: "\u767B\u5F55\u5DF2\u5931\u6548\uFF0C\u5728\u5BF9\u8BDD\u6846\u8F93\u5165 /ee-login" };
+          return { kind: "error", text: `dsh-ee \u8FD4\u56DE HTTP ${response.status}\uFF0C\u7A0D\u540E\u518D\u8BD5\uFF08\u4E0D\u662F\u767B\u5F55\u5931\u6548\uFF09` };
+        }
         const me = await response.json();
         const matches = await tokens.npmrcMatches(current.value);
         const expiry = me.expires_at ? ` \xB7 ${new Date(me.expires_at).toLocaleDateString()} \u5230\u671F` : " \xB7 \u957F\u671F\u6709\u6548";
@@ -886,7 +900,11 @@ async function runLocalDoctor(ctx, config, tokens, http, bridge, bindings) {
       add(days < 7 ? { id: "token", status: "warn", title: `\u767B\u5F55\u5C06\u5728 ${Math.max(0, Math.ceil(days))} \u5929\u5185\u5230\u671F`, detail: me.username, fix: "\u5230\u671F\u524D\u8F93\u5165 /ee-login \u91CD\u65B0\u767B\u5F55" } : { id: "token", status: "ok", title: `\u5DF2\u767B\u5F55 ${me.username}\uFF08${me.department}\uFF09` });
     } else {
       const body = await response.json().catch(() => null);
-      add({ id: "token", status: "fail", title: "\u4F01\u4E1A\u767B\u5F55\u5DF2\u5931\u6548", detail: body?.code ?? `HTTP ${response.status}`, fix: "\u5728\u5BF9\u8BDD\u6846\u8F93\u5165 /ee-login \u91CD\u65B0\u767B\u5F55" });
+      if (response.status === 401) {
+        add({ id: "token", status: "fail", title: "\u4F01\u4E1A\u767B\u5F55\u5DF2\u5931\u6548", detail: body?.code ?? "HTTP 401", fix: "\u5728\u5BF9\u8BDD\u6846\u8F93\u5165 /ee-login \u91CD\u65B0\u767B\u5F55" });
+      } else {
+        add({ id: "token", status: "fail", title: `\u8BFB\u53D6\u4F01\u4E1A\u8D26\u53F7\u5931\u8D25\uFF08HTTP ${response.status}\uFF09`, detail: "dsh-ee \u53EF\u80FD\u6B63\u5728\u91CD\u542F\u6216\u6682\u65F6\u4E0D\u53EF\u7528\uFF1B\u4E0D\u662F\u767B\u5F55\u5931\u6548\uFF0C\u7A0D\u540E\u518D\u8BD5", fix: "\u7A0D\u7B49\u7247\u523B\u91CD\u65B0\u8FD0\u884C\u8BCA\u65AD\uFF1B\u6301\u7EED\u5931\u8D25\u8BF7\u68C0\u67E5\u670D\u52A1\u7AEF\u72B6\u6001" });
+      }
     }
   } catch {
     reachable = false;
@@ -3293,7 +3311,7 @@ async function updateConnect(ctx, config, http) {
 import fs4 from "node:fs";
 import os3 from "node:os";
 import path5 from "node:path";
-var MAX_BYTES = 128 * 1024 * 1024;
+var MAX_BYTES = 100 * 1024 * 1024;
 function fail(text) {
   return { content: [{ type: "text", text }], isError: true };
 }
@@ -3316,8 +3334,9 @@ async function uploadPackage(http, args) {
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
       body: fs4.readFileSync(file)
-    });
-  } catch {
+    }, 0);
+  } catch (error) {
+    if (error?.name === "TimeoutError") return fail("\u4E0A\u4F20\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5\uFF1B\u7F51\u7EDC\u8F83\u6162\u65F6\u53EF\u6539\u7528\u7F51\u9875\u4E0A\u4F20");
     return fail("\u8FDE\u4E0D\u4E0A dsh-ee\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u6216 VPN");
   }
   const body = await response.json().catch(() => null);

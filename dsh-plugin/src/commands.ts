@@ -72,8 +72,16 @@ export function registerCommands(ctx: DshContext, config: PluginConfig, tokens: 
       handler: async () => {
         const current = await tokens.resolve();
         if (!current) return { kind: "success", text: "未登录，在对话框输入 /ee-login" };
-        const response = await fetch(`${config.base}/api/dsh/whoami`, { headers: { Authorization: `Bearer ${current.value}` }, signal: AbortSignal.timeout(30_000) });
-        if (!response.ok) return { kind: "success", text: "登录已失效，在对话框输入 /ee-login" };
+        let response: Response;
+        try {
+          response = await fetch(`${config.base}/api/dsh/whoami`, { headers: { Authorization: `Bearer ${current.value}` }, signal: AbortSignal.timeout(30_000) });
+        } catch {
+          return { kind: "error", text: "连不上 dsh-ee，请检查网络或 VPN 后重试" };
+        }
+        if (!response.ok) {
+          if (response.status === 401) return { kind: "success", text: "登录已失效，在对话框输入 /ee-login" };
+          return { kind: "error", text: `dsh-ee 返回 HTTP ${response.status}，稍后再试（不是登录失效）` };
+        }
         const me = await response.json() as { username: string; department: string; token_prefix: string; expires_at?: string; client_name?: string };
         const matches = await tokens.npmrcMatches(current.value);
         const expiry = me.expires_at ? ` · ${new Date(me.expires_at).toLocaleDateString()} 到期` : " · 长期有效";
