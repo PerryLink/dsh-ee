@@ -3,15 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "description": "端侧扩展模板：没有接口的老 OA，员工在登录窗口里登录一次，之后用他自己的 cookie 发 HTTP 请求取数和提交",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": { "legacy-oa-local": "dist/index.js" },
+  "files": [
+    "dist",
+    "dsh-ee.extension.json",
+    "README.md"
+  ],
+  "engines": { "node": ">=20" },
+  "keywords": [
+    "dsh-ee",
+    "extension",
+    "local",
+    "mcp"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "manifest": "npm run build && dsh-ee-local manifest dist/extension.js -o dsh-ee.extension.json",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@dsh-ee/extension-local": "file:../../sdk-local"
+    "@dsh-ee/extension-local": "^0.1.0"
   },
   "optionalDependencies": {
     "playwright": "^1.48.0"
