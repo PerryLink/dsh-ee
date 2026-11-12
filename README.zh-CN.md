@@ -172,6 +172,8 @@ irm https://<dsh-ee>/setup.ps1 | iex          # Windows
 | `DSH_EE_COOKIE_SECURE` | 部署在 HTTPS 后面时设为 `true` |
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、缓存），默认 `./data` |
 | `DSH_EE_DATA_DSN` / `DSH_EE_DATA_READ_DSN` | 数据中台的库（可写 / 只读账号）；设为 `off` 关闭数据中台 |
+| `DSH_EE_LOGIN_IP_LIMIT` / `DSH_EE_LOGIN_IP_WINDOW` | 同一客户端 IP 在固定窗口内允许的登录失败次数，默认 `50` 次 / `15m`；设为 `0` / `off` 关闭 |
+| `DSH_EE_METRICS` | 设为 `true` 时开放 `GET /metrics`（Prometheus 文本格式，只允许本机 / 内网抓取）；默认关闭 |
 
 完整列表、权限模型与接口说明见 [server/README.md](./server/README.md)。
 

@@ -98,6 +98,9 @@ func run(log *slog.Logger) error {
 		DataHub:       dataHub,
 		DataHubErr:    dataErr,
 		DemoSite:      demoSite(cfg),
+		LoginIPLimit:  cfg.LoginIPLimit,
+		LoginIPWindow: cfg.LoginIPWindow,
+		Metrics:       cfg.Metrics,
 	}, log)
 
 	go sweepSessions(ctx, st, log)

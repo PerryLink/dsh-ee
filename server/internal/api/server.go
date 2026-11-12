@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/kb"
@@ -56,6 +57,13 @@ type Options struct {
 	DemoSite *DemoSite
 	// 轮换 ee_jwt 密钥时，新钥匙过多久开始签名；0 用默认的 10 分钟（测试里调短）
 	EEKeyDelay time.Duration
+	// 登录失败按客户端 IP 限流：窗口内失败多少次后返回 429。0 用默认值（15 分钟 50 次），
+	// 小于 0 关闭；配置里 DSH_EE_LOGIN_IP_LIMIT=0/off 会传 -1。
+	LoginIPLimit int
+	// 上面限流窗口的长度；0 用默认的 15 分钟。
+	LoginIPWindow time.Duration
+	// 是否开放 GET /metrics（给监控抓取）。默认关闭。见 metrics.go。
+	Metrics bool
 }
 
 type Server struct {
@@ -64,11 +72,17 @@ type Server struct {
 	opts            Options
 	log             *slog.Logger
 	limiter         *loginLimiter
+	loginIPLimiter  *loginIPLimiter
 	deviceCodeRate  *ipRate
 	deviceTokenRate *ipRate
-	upstream        *http.Client
-	registry        *registry.Service
-	settings        settingsCache
+	// 启动时间与登录计数，只给 /metrics 用
+	startedAt            time.Time
+	loginFailures        atomic.Uint64
+	loginIPLimited       atomic.Uint64
+	loginUsernameLimited atomic.Uint64
+	upstream             *http.Client
+	registry             *registry.Service
+	settings             settingsCache
 	// 能力目录变化的通知（DSH 的 MCP 长连接据此刷新工具）
 	hub hubBroker
 	// 停机时关闭，让 /mcp 事件流自己结束
@@ -132,6 +146,8 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 		})}
 	}
 	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s.loginIPLimiter = newLoginIPLimiter(opts.LoginIPLimit, opts.LoginIPWindow)
+	s.startedAt = time.Now()
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()

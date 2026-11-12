@@ -23,6 +23,12 @@ type Config struct {
 	// 部署在 HTTPS 后面时设为 true，会话 cookie 加 Secure。
 	CookieSecure bool
 	SessionTTL   time.Duration
+	// 同一客户端 IP 在窗口内允许的登录失败次数；达到后返回 429。默认 50；小于 0 表示关闭。
+	LoginIPLimit int
+	// 登录失败按 IP 限流的窗口，默认 15m。
+	LoginIPWindow time.Duration
+	// 是否开放 GET /metrics（Prometheus 文本格式，只允许本机 / 内网抓取）。默认关闭。
+	Metrics bool
 	// 首次启动、用户表为空时创建的管理员。
 	BootstrapAdmin         string
 	BootstrapAdminPassword string
@@ -59,6 +65,8 @@ func Load() (*Config, error) {
 		BootstrapAdmin:         getenv("DSH_EE_BOOTSTRAP_ADMIN", "admin"),
 		BootstrapAdminPassword: os.Getenv("DSH_EE_BOOTSTRAP_ADMIN_PASSWORD"),
 		SessionTTL:             7 * 24 * time.Hour,
+		LoginIPLimit:           50,
+		LoginIPWindow:          15 * time.Minute,
 		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
 		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
 		DBWait:                 2 * time.Minute,
@@ -146,6 +154,36 @@ func Load() (*Config, error) {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return nil, errors.New("DSH_EE_PUBLIC_URL 必须是 http(s)://host[:port][/path] 形式")
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_LOGIN_IP_LIMIT")); v != "" {
+		switch strings.ToLower(v) {
+		case "off", "false":
+			c.LoginIPLimit = -1
+		default:
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return nil, errors.New("DSH_EE_LOGIN_IP_LIMIT 必须是正整数，或 0/off 关闭")
+			}
+			if n == 0 {
+				c.LoginIPLimit = -1
+			} else {
+				c.LoginIPLimit = n
+			}
+		}
+	}
+	if v := os.Getenv("DSH_EE_LOGIN_IP_WINDOW"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute || d > 24*time.Hour {
+			return nil, errors.New("DSH_EE_LOGIN_IP_WINDOW 必须是 1m 到 24h 之间的时间长度")
+		}
+		c.LoginIPWindow = d
+	}
+	if v := os.Getenv("DSH_EE_METRICS"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_METRICS: %w", err)
+		}
+		c.Metrics = b
 	}
 	return c, nil
 }
