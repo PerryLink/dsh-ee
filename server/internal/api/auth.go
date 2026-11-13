@@ -248,6 +248,13 @@ type meResponse struct {
 	// Limited：从 DSH 直接打开的网页会话，只带员工权限；Reauth：账号本身有管理权限，输入密码登录后可用
 	Limited bool `json:"limited,omitempty"`
 	Reauth  bool `json:"reauth,omitempty"`
+	// Embed 非空表示这次请求用的是跨站嵌入的 ee_emb_ 会话（只能看被嵌入的那个应用）
+	Embed *meEmbed `json:"embed,omitempty"`
+}
+
+type meEmbed struct {
+	App  string `json:"app"`
+	Host string `json:"host"`
 }
 
 // mePayload 组装「当前用户 + 角色 + 有效权限」，登录与 /api/auth/me 共用。
@@ -289,6 +296,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		payload.Reauth = rbac.HasAdminPerms(full)
+	}
+	if info := sessionEmbed(r); info != nil {
+		payload.Embed = &meEmbed{App: info.appSlug, Host: info.hostOrigin}
 	}
 	writeJSON(w, http.StatusOK, payload)
 }
@@ -336,6 +346,11 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
 		if err != nil || c.Value == "" {
+			// 没有网页会话 cookie：跨站 iframe 里用 ee_emb_ 内存 Bearer（cookie 永远不会在三方上下文发送）。
+			if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && strings.HasPrefix(token, embedTokenPrefix) {
+				s.requireEmbedUser(w, r, next, token)
+				return
+			}
 			writeErr(w, http.StatusUnauthorized, "请先登录")
 			return
 		}
@@ -378,7 +393,7 @@ func (s *Server) tokenRequest(w http.ResponseWriter, r *http.Request) (rp *http.
 		}
 		return nil, nil, true, false
 	}
-	return r.WithContext(withUser(r.Context(), p.User, p.Access)), p, true, true
+	return r.WithContext(withTokenUser(r.Context(), p.User, p.Access, p.TokenID, p.ClientKind)), p, true, true
 }
 
 // requireUserOrToken 接受网页会话，或带任意范围的访问令牌。令牌的权限是账号权限与令牌范围

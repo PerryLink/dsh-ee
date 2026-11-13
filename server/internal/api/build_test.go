@@ -190,7 +190,7 @@ func TestBuildSelfUse(t *testing.T) {
 		t.Fatalf("员工不能设样板：%s", body)
 	}
 
-	// ---- 菜单：员工只看到「用 / 造 / 接入」，没有管理入口，也没有「插件」 ----
+	// ---- 菜单：员工只看到「用 / 造 / 接入 / 开发」，没有管理入口，也没有「插件」 ----
 	code, body = alice.do("GET", "/api/me/menus", nil, nil)
 	expect(t, "员工菜单", code, 200, body)
 	menus := decodeAs[struct{ Menus []store.Menu }](t, body).Menus
@@ -214,7 +214,7 @@ func TestBuildSelfUse(t *testing.T) {
 			t.Fatalf("员工侧边栏不应出现「插件」：%+v", m)
 		}
 	}
-	if !slices.Equal(groups, []string{"用", "造", "接入"}) {
+	if !slices.Equal(groups, []string{"用", "造", "接入", "开发"}) {
 		t.Fatalf("员工的分组：%v", groups)
 	}
 	if len(visible) == 0 || visible[0] != "企业应用" {

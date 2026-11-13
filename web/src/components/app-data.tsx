@@ -84,8 +84,8 @@ function inputFor(f: AppField, value: string, onChange: (v: string) => void) {
   return <input className={inputCls} type={type} step="any" value={value} required={f.required} onChange={(e) => onChange(e.target.value)} />;
 }
 
-/** 一张表：行列表、新增一行、删除能删的行；作者和管理员能导出 CSV。 */
-function TableData({ slug, table, admin, onChanged }: { slug: string; table: AppTableInfo; admin: boolean; onChanged: () => void }) {
+/** 一张表：行列表、新增一行、删除能删的行；作者和管理员能导出 CSV（嵌入模式不显示导出）。 */
+function TableData({ slug, table, admin, embed, onChanged }: { slug: string; table: AppTableInfo; admin: boolean; embed: boolean; onChanged: () => void }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
   const [q, setQ] = useState("");
@@ -141,7 +141,7 @@ function TableData({ slug, table, admin, onChanged }: { slug: string; table: App
     <Card>
       <CardHeader
         title={<span>{table.title} <span className="font-normal text-neutral-500">· {t(`appData.visibility.${table.visibility ?? "own"}`)}</span></span>}
-        aside={admin ? (
+        aside={admin && !embed ? (
           <a href={api.appExportUrl(slug, table.name)} className="inline-flex items-center gap-1 text-sm text-brand-600 dark:text-brand-300 hover:underline">
             <Download size={14} />{t("appData.export")}
           </a>
@@ -220,7 +220,7 @@ function TableData({ slug, table, admin, onChanged }: { slug: string; table: App
 }
 
 /** 应用详情里的「数据」：每张表一块。没有数据表的应用不显示。 */
-export function AppDataPanel({ slug }: { slug: string }) {
+export function AppDataPanel({ slug, embed = false }: { slug: string; embed?: boolean }) {
   const { t } = useTranslation();
   const info = useApi(() => api.appTables(slug));
   if (info.error || (info.data && info.data.tables.length === 0)) return null;
@@ -229,7 +229,7 @@ export function AppDataPanel({ slug }: { slug: string }) {
       <h2 className="text-neutral-900 text-[15px] leading-6 font-semibold">{t("appData.title")}</h2>
       <p className="text-sm text-neutral-600">{t("appData.desc")}</p>
       <LoadState loading={info.loading && !info.data} error={null} onRetry={info.reload}>
-        {info.data?.tables.map((tb) => <TableData key={tb.name} slug={slug} table={tb} admin={info.data!.admin} onChanged={info.reload} />)}
+        {info.data?.tables.map((tb) => <TableData key={tb.name} slug={slug} table={tb} admin={info.data!.admin} embed={embed} onChanged={info.reload} />)}
       </LoadState>
     </section>
   );

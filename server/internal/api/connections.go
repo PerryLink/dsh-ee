@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,6 +124,30 @@ func (s *Server) connHeader(ctx context.Context, assetID int64, sp *assetSpec, o
 	return h, nil
 }
 
+// sameOrigin 比较 scheme + host + 端口（默认端口按协议补齐）。
+func sameOrigin(a, b string) bool {
+	ua, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	ub, err := url.Parse(b)
+	if err != nil {
+		return false
+	}
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		switch u.Scheme {
+		case "https":
+			return "443"
+		default:
+			return "80"
+		}
+	}
+	return ua.Scheme == ub.Scheme && strings.EqualFold(ua.Hostname(), ub.Hostname()) && port(ua) == port(ub)
+}
+
 func (s *Server) connHTTP(sp *assetSpec) *http.Client {
 	t := defaultConnTimeout
 	if sp.TimeoutSec > 0 {
@@ -138,7 +163,7 @@ func sameHostRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return errors.New("重定向次数太多")
 	}
-	if req.URL.Host != via[0].URL.Host {
+	if !sameOrigin(via[0].URL.String(), req.URL.String()) {
 		return fmt.Errorf("上游把请求重定向到了另一个地址（%s），为了不把凭据带过去，已停止", req.URL.Host)
 	}
 	return nil
@@ -314,7 +339,7 @@ func (s *Server) syncConnectionTools(ctx context.Context, id int64, v viewer, ba
 func (s *Server) callConnectionTool(ctx context.Context, a *store.Asset, t *store.ConnectionTool, v viewer, base string, args json.RawMessage) json.RawMessage {
 	start := time.Now()
 	result, mode, ext, err := s.doConnectionCall(ctx, a, t, v, base, args)
-	call := store.ConnectionCall{AssetID: a.ID, Tool: t.Name, UserID: v.user.ID, OK: err == nil, LatencyMS: int(time.Since(start).Milliseconds()), AuthMode: mode, Extension: ext}
+	call := store.ConnectionCall{AssetID: a.ID, Tool: t.Name, UserID: v.user.ID, OK: err == nil, LatencyMS: int(time.Since(start).Milliseconds()), TokenID: v.tokenID, AuthMode: mode, Extension: ext}
 	// 记下这次用的是哪一份命名共享凭据（空是原连接默认的那一份）
 	if lv, metaErr := s.store.LiveAssetVersion(ctx, a.ID); metaErr == nil {
 		call.SharedName = sharedNameOf(parseSpec(lv.Spec))
@@ -616,6 +641,31 @@ func (s *Server) handleConnTest(w http.ResponseWriter, r *http.Request) {
 	if req.Slug != "" && (!slugRe.MatchString(req.Slug) || len(req.Slug) > maxSlug) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "连接的标识不合法，应是小写字母、数字和连字符"})
 		return
+	}
+	// 用已保存的凭据试连时，只允许测试这个连接自己：不读请求里的新 URL，
+	// 否则任何有 connections.manage 的人都能把已存的企业凭据发到自己的服务器。
+	if req.ID > 0 && req.Secret == nil {
+		a, err := s.store.GetAsset(r.Context(), req.ID)
+		if err != nil || a.Kind != store.KindConnection {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "连接不存在"})
+			return
+		}
+		v, err := s.store.LiveAssetVersion(r.Context(), req.ID)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "这个连接还没有已上架的版本，不能复用已保存的凭据；请重新填写凭据或在编辑页保存后再试"})
+			return
+		}
+		var saved assetSpec
+		if err := json.Unmarshal(v.Spec, &saved); err != nil || saved.URL == "" {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "已保存的连接配置无法读取，请重新填写凭据"})
+			return
+		}
+		if !sameOrigin(saved.URL, sp.URL) {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "已保存的凭据只能用于原来的地址；换地址请重新填写凭据"})
+			return
+		}
+		sp = &saved
+		s.audit(r, "connection.test", a.Slug, map[string]any{"url": sp.URL, "reused_secret": true})
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()

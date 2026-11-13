@@ -105,7 +105,13 @@ func (s *Server) routes() []route {
 		pub("GET /api/auth/oidc/callback", s.handleOIDCCallback),
 		pub("POST /api/auth/feishu/card", s.handleFeishuCard),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
+		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
+		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),
+		pub("POST /api/auth/embed/exchange", s.handleEmbedExchange),
+		usr("POST /api/auth/embed/logout", s.handleEmbedLogout),
 		pub("POST /api/auth/login", s.handleLogin),
+		// 令牌自省：Bearer 自身（第三方 Harness/SDK）或管理员网页会话查任意令牌
+		pub("POST /api/auth/introspect", s.handleIntrospect),
 		pub("POST /api/auth/demo-login", s.handleDemoLogin),
 		pub("GET /demo/intro/{lang}", s.handleDemoVideo),
 		pub("POST /api/auth/logout", s.handleLogout),
@@ -199,6 +205,7 @@ func (s *Server) routes() []route {
 
 		// 系统设置：登录即可读（前端要用组织名、作用域、评分开关），按段落校验写权限
 		usr("GET /api/settings", s.handleGetSettings),
+		prm("GET /api/admin/embed-settings", s.handleAdminEmbedSettings, rbac.SettingsManage),
 		prm("PUT /api/admin/settings", s.handlePutSettings, rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage),
 
 		// LDAP / AD 登录：配置里有服务账号，单独存、单独授权
@@ -238,6 +245,11 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/connections/test", s.handleConnTest, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/check", s.handleExtCheck, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/install", s.handleExtInstall, rbac.ConnectionsManage),
+		// 扩展签名的信任根（signing_keys.go）：换下 / 撤销都保留记录，历史签名还能核对
+		prm("GET /api/admin/signing-keys", s.handleListSigningKeys, rbac.ConnectionsManage, rbac.SettingsManage),
+		prm("POST /api/admin/signing-keys", s.handleAddSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
+		prm("POST /api/admin/signing-keys/{key_id}/retire", s.handleRetireSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
+		prm("POST /api/admin/signing-keys/{key_id}/revoke", s.handleRevokeSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("GET /api/admin/fields", s.handleListFields, rbac.FieldsManage, rbac.UsersView),
 		prm("POST /api/admin/fields", s.handleCreateField, rbac.FieldsManage),
 		prm("PATCH /api/admin/fields/{id}", s.handlePatchField, rbac.FieldsManage),
@@ -401,6 +413,13 @@ func (s *Server) routes() []route {
 		// OpenAI 兼容网关，用个人 key 鉴权
 		pub("GET /v1/models", s.handleModels),
 		pub("POST /v1/chat/completions", s.handleChatCompletions),
+
+		// 第三方 Harness 的中立 v1 契约（harness.go）：发现文档、能力摘要、只读微应用描述、机器可读契约
+		pub("GET /.well-known/dsh-ee", s.handleHarnessDiscovery),
+		pub("GET /v1/capabilities", s.handleHarnessCapabilities),
+		pub("GET /v1/apps", s.handleHarnessApps),
+		pub("GET /v1/apps/{name}", s.handleHarnessApp),
+		pub("GET /v1/openapi.json", s.handleHarnessOpenAPI),
 	}
 	for i := range rs {
 		rs[i].agent = agentSpecs[rs[i].pattern]

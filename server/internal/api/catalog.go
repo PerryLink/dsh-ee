@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -566,6 +565,12 @@ func (s *Server) handleUploadPackage(w http.ResponseWriter, r *http.Request) {
 	if !s.registryReady(w) {
 		return
 	}
+	release, ok := beginPackageUpload()
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "同时上传/预检的包太多，请稍后重试")
+		return
+	}
+	defer release()
 	raw, info, m, ok := s.readPackageTarball(w, r)
 	if !ok {
 		return
@@ -579,13 +584,10 @@ func (s *Server) handleUploadPackage(w http.ResponseWriter, r *http.Request) {
 		DistTags: map[string]string{tag: m.Version},
 		Versions: map[string]json.RawMessage{m.Version: info.PackageJSON},
 	}
-	doc.Attachments = map[string]struct {
-		ContentType string `json:"content_type"`
-		Data        string `json:"data"`
-		Length      int64  `json:"length"`
-	}{registry.TarballFile(m.Name, m.Version): {ContentType: "application/octet-stream", Data: base64.StdEncoding.EncodeToString(raw), Length: int64(len(raw))}}
 	u, a := currentUser(r), currentAccess(r)
-	res, err := s.registry.Publish(r.Context(), registry.Publisher{UserID: u.ID, Username: u.Username, Manager: a.Has(rbac.PluginsManage)}, doc)
+	// 请求体已经是 tarball，直接交给 PublishTarball：不再把 100 MB 的包做一遍
+	// base64 编码再解码（那是两份额外的大内存）。
+	res, err := s.registry.PublishTarball(r.Context(), registry.Publisher{UserID: u.ID, Username: u.Username, Manager: a.Has(rbac.PluginsManage)}, doc, raw)
 	if err != nil {
 		s.registryErr(w, r, err)
 		return
@@ -941,6 +943,12 @@ func (s *Server) handleUpstreamSync(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Names) == 0 || len(req.Names) > 500 {
 		writeErr(w, http.StatusBadRequest, "一次预载 1–500 个包")
+		return
+	}
+	// 预载本身只需要 upstream.manage；但 publish=true 会跳过审核直接上架，
+	// 等同于 plugins.manage（审核/上下架）的职责，不能靠 upstream.manage 绕过。
+	if req.Publish && !currentAccess(r).Has(rbac.PluginsManage) {
+		writeErr(w, http.StatusForbidden, "publish=true 会跳过审核直接上架，需要 plugins.manage 权限；没有该权限请用 publish=false 进入待审核")
 		return
 	}
 	feedByName := map[string]registry.FeedPlugin{}

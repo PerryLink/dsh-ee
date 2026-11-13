@@ -33,9 +33,16 @@ jobs:
         working-directory: dsh-plugin
       - run: git diff --exit-code server/internal/api/connectpkg/index.js
       # 端侧扩展 SDK、端侧模板和 Claude Code 适配器（docs/plugins.md §8、§10）
-      - run: npm ci --no-audit --no-fund && npm test && npm run build
+      # SDK 是可发布 npm 包：dry-run 检查打包内容（prepack 会先构建 dist/）
+      - run: npm ci --no-audit --no-fund && npm test && npm run build && npm pack --dry-run
         working-directory: extensions/sdk-local
-      - run: npm ci --no-audit --no-fund --omit=optional && npm test
+      # 模板的 package.json 依赖 @dsh-ee/extension-local 的包名 + 版本（和真实用户一样）；
+      # SDK 还没发布到 npm 时，CI 把依赖临时换成上一步构建出的本地目录再装。模板不提交 lockfile，
+      # 以免把仓库里的相对路径写进模板。
+      - run: |
+          npm pkg set 'dependencies.@dsh-ee/extension-local=file:../../sdk-local'
+          npm install --no-audit --no-fund --omit=optional
+          npm test
         working-directory: extensions/official/legacy-local
       - run: node --test test/*.test.mjs
         working-directory: extensions/official/claude-code
@@ -96,6 +103,9 @@ jobs:
       E2E_BIN: ${{ github.workspace }}/dist/dsh-ee
       E2E_DSN: root:@tcp(127.0.0.1:4000)/
       CHROME: /usr/bin/google-chrome
+      # 跨站嵌入 e2e（35-embed-v1）：宿主页起在 http://localhost:8099，与 127.0.0.1 不同站
+      DSH_EE_EMBED_CROSS_SITE: "1"
+      DSH_EE_EMBED_ORIGINS: http://localhost:8099
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -145,3 +155,31 @@ jobs:
         run: |
           out="$(docker run --rm dsh-ee:ci version)"
           echo "$out" && test "$out" = "${GITHUB_SHA::8}"
+
+  sdk:
+    # 第三方 Harness SDK（sdk/typescript + sdk/python）独立 job，不参与 server/e2e 主链。
+    # TS：构建 / 类型检查 / mock fetch 单测 / npm pack 内容；Python：unittest / 编译检查 / wheel 构建。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: TypeScript SDK（build / typecheck / test / pack）
+        working-directory: sdk/typescript
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm run typecheck
+          npm test
+          npm pack --dry-run
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python SDK（unittest / compileall / wheel）
+        working-directory: sdk/python
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 -m compileall -q dsh_ee_harness tests
+          python3 -m pip wheel --no-deps -w /tmp/sdk-python-wheel .
+          ls /tmp/sdk-python-wheel

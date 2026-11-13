@@ -24,6 +24,8 @@ const META = {
   "dsh-download": { title: "下载 DSH", defaultPath: "/dsh", description: "DSH 核心与桌面版下载" },
   setup: { title: "接入指南", defaultPath: "/setup", description: "一条命令接入企业源" },
   publish: { title: "分享插件", defaultPath: "/publish", description: "上传插件或申请引入社区插件" },
+  "dev-docs": { title: "开发文档", defaultPath: "/docs", description: "dsh-ee 视角的开发入口：插件、扩展、权限与发布" },
+  "dev-examples": { title: "开发样例", defaultPath: "/examples", description: "精选 DSH 插件样例：固定版本、安装命令、来源与许可" },
   "my-keys": { title: "我的令牌", defaultPath: "/tokens", description: "我的额度，自助创建与吊销令牌" },
   "admin-users": { title: "用户", defaultPath: "/admin/users", description: "账号、禁用、重置密码、分配角色" },
   "admin-roles": { title: "角色与权限", defaultPath: "/admin/roles", description: "角色、权限点与授权" },
