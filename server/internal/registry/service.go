@@ -50,16 +50,24 @@ type Service struct {
 	settings func(context.Context) (*store.AppSettings, error)
 	// 单个 tarball 的大小上限
 	MaxTarball int64
+	// 同时运行的同步/导入任务上限；0 表示用默认值（见 mirror.go）
+	MaxSyncJobs        int
+	MaxSyncJobsPerUser int
 	// dshfind 插件目录（DSH 索引 format 1）的地址，上游预载从这里挑插件
 	FeedURL string
 	feed    feedCache
+	// 同步任务准入（数量上限与 (name,version) 去重）
+	gate syncGate
 }
 
 func NewService(st *store.Store, blobs *Blobs, up *Upstream, settings func(context.Context) (*store.AppSettings, error), log *slog.Logger) *Service {
 	return &Service{
 		store: st, blobs: blobs, up: up, log: log, settings: settings,
-		MaxTarball: 100 << 20,
-		FeedURL:    "https://api.dshfind.com/market/dsh-index.json",
+		MaxTarball:         100 << 20,
+		MaxSyncJobs:        defaultMaxSyncJobs,
+		MaxSyncJobsPerUser: defaultMaxSyncJobsPerUser,
+		FeedURL:            "https://api.dshfind.com/market/dsh-index.json",
+		gate:               newSyncGate(),
 	}
 }
 

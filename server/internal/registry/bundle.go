@@ -153,6 +153,13 @@ func (s *Service) ImportBundle(ctx context.Context, r io.Reader, by int64) (*Imp
 	if err != nil {
 		return nil, nil, err
 	}
+	// 导入和在线预载共用同一份任务名额：解包、逐版本扫描、写 blob 同样吃 CPU 和磁盘，
+	// 不限并发时管理员误操作或脚本刷接口就能同时跑很多个。
+	release, err := s.gate.reserve(by, nil, s.MaxSyncJobs, s.MaxSyncJobsPerUser)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
 	tr := tar.NewReader(r)
 	h, err := tr.Next()
 	if err != nil {
