@@ -450,7 +450,7 @@ Dify 的模型插件和 Agent 策略插件不做：dsh-ee 不自己跑 AI（road
   - `revoked`：签名对得上，但签名者的公钥已撤销——历史签名仍能核对，但不能用它新装 / 升级（不管有没有开强制签名）。
 - 默认只在计划里提示，不阻断安装（「警告后允许」）。
 - 可选强制：`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 时，没签名或 `invalid` 的扩展检查不通过、装不了（fail closed）；这时库里或 `DSH_EE_EXTENSION_TRUSTED_KEYS` 至少要有一把受信任公钥。一把都没有时启动只警告、不拒绝启动（管理员可以先起服务再用管理 API 加公钥），否则所有扩展都会被拦下。库里的公钥改完立即生效；环境变量里的公钥在启动时读一次，换它要重启。
-- 边界：签名只证明「这段清单 / 接口文档是谁签的、没被换过」，不是安全审计，也不覆盖服务扩展运行时的行为、端侧扩展在本机的执行、npm 插件包；装之前仍要看清单、接口地址、凭据和权限（[plugin-quality.md](./plugin-quality.md)）。受信任公钥现在通过管理 API（`/api/admin/signing-keys`）和 `DSH_EE_EXTENSION_TRUSTED_KEYS` 配置，还没有「设置 → 扩展 → 签名」网页；官方扩展也还没有用官方密钥签名。
+- 边界：签名只证明「这段清单 / 接口文档是谁签的、没被换过」，不是安全审计，也不覆盖服务扩展运行时的行为、端侧扩展在本机的执行、npm 插件包；装之前仍要看清单、接口地址、凭据和权限（[plugin-quality.md](./plugin-quality.md)）。受信任公钥通过管理后台「能力与连接 → 扩展签名」页面（`/api/admin/signing-keys`，列表 / 新增 PEM / 换下 / 撤销，环境变量来源只读展示）和 `DSH_EE_EXTENSION_TRUSTED_KEYS` 配置，只有 `settings.manage` 的管理员也能直接打开；官方扩展也还没有用官方密钥签名。
 
 ### 9.4 安装、升级和卸载
 
@@ -594,7 +594,7 @@ extensions/
 | 5 | 端侧老系统模板、Claude Code 适配器 | ✅ | `extensions/official/legacy-local`、`extensions/official/claude-code` |
 | 5 | §13 待定 2、3 的真机验证 | ⏳ | |
 
-**有人要才做**（设计留着，不排期）：受信任公钥的网页管理界面（现在用管理 API / 环境变量）和策略界面、自动升级策略、企业目录、`/extensions` 列表页和安装按钮、反向连接和远程调试、网盘类知识源、事件、通知渠道、权限策略扩展、字段填充、审计投递、更多内置扩展、Python SDK、服务端无头浏览器、token exchange。
+**有人要才做**（设计留着，不排期）：受信任公钥的策略界面（如自动批准、多环境标记）、自动升级策略、企业目录、`/extensions` 列表页和安装按钮、反向连接和远程调试、网盘类知识源、事件、通知渠道、权限策略扩展、字段填充、审计投递、更多内置扩展、Python SDK、服务端无头浏览器、token exchange。
 
 **已经做了的最小部分**：签名（§9.3）——`dsh-ee extension keygen / sign / verify`、安装计划显示 `unsigned / valid / invalid / revoked`、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 强制验证签名，以及信任根落库（`trusted_signing_keys` 表 + `/api/admin/signing-keys` 管理接口，换下 / 撤销保留历史，env 只读兼容）；企业目录、自动升级、自助分发和回滚仍是设计（#130 的 `docs/plugin-signing.md`）。
 

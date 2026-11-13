@@ -90,6 +90,8 @@ export default {
   confirm: {
     delete: { title: "Delete?", action: "Delete" },
     revoke: { title: "Revoke?", action: "Revoke" },
+    retire: { title: "Retire this key?", action: "Retire" },
+    revokeKey: { title: "Revoke this key?", action: "Revoke" },
     disable: { title: "Disable?", action: "Disable" },
     reset: { title: "Restore defaults?", action: "Restore defaults" },
     restore: { title: "Restore?", action: "Restore" },
@@ -134,6 +136,7 @@ export default {
     "admin-settings": "Settings",
     "admin-brand": "Brand & appearance",
     "admin-auth": "Sign-in",
+    "admin-signing-keys": "Extension signing",
     knowledge: "Knowledge Q&A",
   },
   pageDesc: {
@@ -169,6 +172,7 @@ export default {
     "admin-settings": "Global settings",
     "admin-brand": "Company name, logo, home title, and colors in DSH",
     "admin-auth": "LDAP / AD and single sign-on (OIDC)",
+    "admin-signing-keys": "Trusted public keys for extension signing: add, retire, revoke",
     knowledge: "Policies, handbooks and documents; ask in Knowledge Q&A in DSH",
   },
   menuGroups: {
@@ -191,9 +195,10 @@ export default {
     admin: "Admin",
     search: "Search features & settings",
     searchTitle: "Search",
-    searchPlaceholder: "Search pages and settings, e.g. “logo”, “default model”…",
-    empty: "No matching page or setting",
+    searchPlaceholder: "Search pages, docs and settings, e.g. “logo”, “default model”, “device code”…",
+    empty: "No matching page, doc or setting",
     pages: "Pages",
+    docs: "Docs",
     settings: "Settings",
     toc: "On this page",
     related: "Related pages",

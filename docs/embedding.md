@@ -32,6 +32,8 @@ DSH_EE_EMBED_ORIGINS='https://harness.acme.internal,http://localhost:5173'
 - 自动去空白、大小写归一化、去重；末尾一个 `/` 等价于不带路径。
 - 不设置该环境变量时只允许同站嵌入（`frame-ancestors 'self'`）。
 - 跨站嵌入 v1 还需要 `DSH_EE_EMBED_CROSS_SITE=1`（默认关闭，且必须同时配置来源，否则启动失败）；会话 TTL 用 `DSH_EE_EMBED_SESSION_TTL`（默认 `2h`，1m–8h）。详见文末「跨站嵌入 v1」。
+- 限流额度可配：`DSH_EE_EMBED_MINT_PER_MINUTE`（默认 30）、`DSH_EE_EMBED_EXCHANGE_PER_MINUTE`（默认 60），都是**每 IP 每分钟**、按数据库共享计数——多实例部署时是合计额度，不是每实例一份。非法值（非正整数）启动失败。
+- **多实例部署**：一次性 code、嵌入会话、限流计数都在数据库里，多个实例（不同进程/端口）共享同一份状态，不需要 Redis 或负载均衡粘性。详见文末「多实例部署」。
 
 **管理端覆盖（settings.embed）**：管理员可以在「系统设置 → 跨站嵌入」（`/admin/settings#settings-embed`）里追加来源、开关跨站、设置应用白名单与会话时长。有效配置 = 环境变量（只读基线）∪ 数据库设置：
 
@@ -209,11 +211,25 @@ SPA ◄──⑧ {token:"ee_emb_…", limited:true, expires_in}（不 Set-Cookie
 | `POST /api/auth/embed/exchange` | code 即凭证；必须 `Content-Type: application/json` | `{code}` | `{token:"ee_emb_…", token_type:"Bearer", expires_in, app, user, limited:true}`；**不 Set-Cookie** | `embed_code_invalid` / `embed_code_expired` / `embed_disabled` |
 | `POST /api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` | `{}` | `204`（删会话 + 审计） | `401` |
 
-- code 60 秒、一次性、只存哈希在内存（**单实例**；多实例部署需要把 code 放到共享存储，见「限制」）。
-- `ee_emb_` 会话默认 2 小时（`DSH_EE_EMBED_SESSION_TTL`，1m–8h），不提供 refresh；过期/被吊销后 iframe 发 `dsh-ee:auth-required {reason:"expired"}`，宿主重新 mint 一次。
+- code 60 秒、一次性，只存 sha256 在数据库 `embed_codes` 表（明文只在 mint 响应里出现一次）；一次性由 `UPDATE … SET consumed_at=now() WHERE consumed_at IS NULL AND expires_at>now()` 的 affected rows 保证，**跨实例只有一个 exchange 能成功**。
+- `ee_emb_` 会话默认 2 小时（`DSH_EE_EMBED_SESSION_TTL`，1m–8h），不提供 refresh；过期/被吊销后 iframe 发 `dsh-ee:auth-required {reason:"expired"}`，宿主重新 mint 一次。每个用户同时有效的嵌入会话默认**最多 5 个**，超过时撤销最旧的；logout 用 `revoked_at` 软删除，所有实例立刻看到 401。
 - 嵌入会话 = **limited 会话**（员工权限、无 `keys.self`、无管理权限），并且只能访问路由白名单：`GET /api/auth/me`、`GET /api/auth/methods`、`GET /api/settings`、`GET /api/me/menus`、`GET /api/me/apps/{slug}/web`、`POST /api/me/apps/{slug}/source`、`/api/apps/{slug}/data…`（表读写/导出）、`POST /api/auth/embed/logout`；其余接口 403 `{"code":"embed_scope"}`。
 - 审计：mint 记 `embed.session_create`；exchange 成功记 `auth.login`（`via=embed`，含 app/host_origin、limited）；logout 记 `embed.revoke`；拒绝记 `embed.deny`。不记 code/令牌明文。
 - 改密码、禁用账号、解绑身份会同时删除该用户的网页会话与嵌入会话。
+
+**多实例部署**
+
+多个 dsh-ee 实例（不同进程 / 不同端口 / 多副本）连同一个数据库时，跨站嵌入的三份状态都在共享表里：
+
+| 状态 | 表 | 多实例语义 |
+|---|---|---|
+| 一次性 code | `embed_codes`（只存 sha256、绑定用户/应用/宿主 origin/next、60 秒过期） | A 实例 mint、B 实例 exchange 成功；同一个 code 并发 exchange 只有一个实例的 `UPDATE` 生效，其余返回 `embed_code_invalid` |
+| 嵌入会话 | `embed_sessions`（token 只存 sha256、`revoked_at` 软删除） | 任一实例建立的会话，其它实例都能读；A 实例 logout 后，B 实例立刻 401；每用户会话上限（默认 5）是全局的 |
+| 限流 | `embed_rates`（固定窗口，按 IP / 用户分键） | mint 30 次/分钟、exchange 60 次/分钟是**所有实例合计**；不会因为起 3 个副本就变成 90/180 |
+
+- 清理：每个实例启动时清一次、之后每分钟清理过期的 code 与上一分钟的限流窗口（`DELETE` 条件相同，多实例重复执行幂等）；过期/已吊销的嵌入会话每小时清理一次。会话/ code 的有效性判断不依赖清理任务，清理只回收空间。
+- 兼容性：这三张表由迁移 `0034_embed_multi.sql` 创建；升级时所有实例跑同一版迁移；滚动发布期间新旧实例共存时，旧实例仍用内存 code（跨实例 exchange 会失败），建议一次性切换或先让所有实例升级到本版本。
+- 仍不需要 Redis：当前规模用 MySQL 共享行锁足够；以后如果限流行成为瓶颈，再考虑把限流换成 Redis（code/session 的一次性语义仍以数据库为准）。
 
 **宿主后端 mint 示例**
 
@@ -261,8 +277,8 @@ window.addEventListener("message", (event) => {
 
 **限制与安全边界**
 
-- 单实例内存 code：多实例部署前需要把 code/会话放共享存储（本版未做）。
 - 每用户 `ee_at_` 是硬前提；不要用共享服务令牌 mint（会让所有嵌入变成令牌主人的身份、审计失真）。
+- 共享状态在 MySQL/TiDB/OceanBase 的 `embed_codes` / `embed_sessions` / `embed_rates` 三张表里，只需要各实例连同一个库；固定窗口限流依赖各实例时钟同步（部署时开 NTP），窗口边界有几秒偏差时额度最多多放出一小截，不会成倍放大。
 - `ee_emb_` Bearer 只存在 iframe 内存：不写 cookie / localStorage / URL；不通过 postMessage 回传给宿主。
 - 不引入 `SameSite=None`、不放开 CORS、不做匿名公开链接、不把 dsh-ee 反代到宿主域名；现有网页会话与 CSRF 防线不变。
 - 移动端（视口 < 640px 或移动 UA）建议宿主顶层打开而不是 iframe；任何失败态都提供「在浏览器打开」。

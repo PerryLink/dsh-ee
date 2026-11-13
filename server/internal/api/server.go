@@ -92,6 +92,13 @@ type Options struct {
 	ExtensionRequireSignature bool
 	// 旧版 npm 令牌 / API key 的 scope 收敛（docs/token-lifecycle.md）；默认 false 保持旧行为。
 	RestrictLegacyTokenScopes bool
+	// mint 的共享（数据库）固定窗口限流：每 IP 每分钟次数；0 用默认 30（DSH_EE_EMBED_MINT_PER_MINUTE）。
+	// 多实例部署时是合计额度，不是每实例一份。
+	EmbedMintPerMinute int
+	// exchange 的共享固定窗口限流：每 IP 每分钟次数；0 用默认 60（DSH_EE_EMBED_EXCHANGE_PER_MINUTE）。
+	EmbedExchangePerMinute int
+	// 每用户同时有效的嵌入会话上限；0 用默认 5，超过时撤销最旧的会话。
+	EmbedMaxSessionsPerUser int
 	// 企业目录（directory.go）：tarball 来源的主机白名单；空表示只接受公网 https 地址。
 	DirectoryTarballHosts []string
 }
@@ -159,10 +166,6 @@ type Server struct {
 	oidcClient *oidc.Client
 	oidcStates oidcStates
 	webLinks   webLinks
-	// 跨站嵌入 v1：一次性 code 与限流（见 embed.go）
-	embedCodes        embedCodes
-	embedMintRate     *ipRate
-	embedExchangeRate *ipRate
 }
 
 func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Server {
@@ -189,7 +192,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 			MaxIdleConnsPerHost:   32,
 		})}
 	}
-	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), embedMintRate: newIPRate(embedMintPerMinute), embedExchangeRate: newIPRate(embedExchangePerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}

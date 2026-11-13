@@ -52,6 +52,40 @@ dsh-ee 本身只提供 HTTP，放在企业的反向代理 / 负载均衡后面�
 - 登录失败先按用户名锁（15 分钟 5 次），再按客户端 IP 固定窗口限流：默认 15 分钟 50 次，只统计用户名或密码错误，触发后返回 429 并带 `Retry-After`。公司很多人共用一个出口 IP 时可调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭；窗口长度用 `DSH_EE_LOGIN_IP_WINDOW` 调整。
 - 需要接 Prometheus 时设 `DSH_EE_METRICS=true`，从本机或内网抓 `GET /metrics`；指标只有进程运行信息与登录失败 / 限流计数，不含账号、IP 或具体请求内容。
 
+### 健康检查与探针
+
+dsh-ee 提供两个不用登录的探针，语义不同（响应形状见 [../server/README.md](../server/README.md#健康检查)）：
+
+- `GET /healthz`：**liveness**，只证明进程能响应，恒为 200；用来判断「要不要重启这个实例」。
+- `GET /readyz`：**readiness**，检查数据库连接、迁移是否已到当前二进制的最新版本、数据目录是否可写、主密钥是否已加载，整体超时 2 秒；全部通过 200，任一失败 503 `{"status":"unready",…}`。用来判断「要不要把流量打给这个实例」。
+
+Kubernetes：
+
+```yaml
+livenessProbe:
+  httpGet: {path: /healthz, port: 8080}
+  periodSeconds: 15
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  httpGet: {path: /readyz, port: 8080}
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 2
+```
+
+Docker / Compose：镜像内置的 `HEALTHCHECK` 打 `/healthz`（容器是否活）；`restart: unless-stopped` 不会因为 unhealthy 而重启，readiness 仍由前面的负载均衡调 `/readyz`。如果希望 `docker ps` 里看到的健康状态也反映依赖，可在 compose 里覆盖成一个 readiness 检查：
+
+```yaml
+healthcheck:
+  test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+  interval: 15s
+  timeout: 3s
+  retries: 3
+```
+
+systemd：没有内置 readiness 探针，`/healthz` 只用于存活；需要就绪判断时由外部监控 / 负载均衡调 `/readyz`，或按 [systemd/dsh-ee.service](systemd/dsh-ee.service) 里的注释在启动后跑一次。
+
 ## 不用 docker
 
 ```bash

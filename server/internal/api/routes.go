@@ -86,6 +86,8 @@ func (s *Server) routes() []route {
 		}),
 		// 监控抓取用，默认关闭且只允许本机 / 内网来源，见 metrics.go
 		pub("GET /metrics", s.handleMetrics),
+		// 就绪探针：数据库、迁移、数据目录、主密钥；给负载均衡 / 编排系统判断能否接流量。
+		pub("GET /readyz", s.handleReadyz),
 
 		// 示例内容里的演示差旅系统，只认示例连接带的密钥
 		pub("GET /demo/travel/summary", s.handleDemoSummary),

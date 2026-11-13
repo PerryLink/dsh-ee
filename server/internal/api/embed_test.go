@@ -3,12 +3,14 @@ package api_test
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +24,8 @@ const embedHost = "https://harness.example.com"
 
 type embedFixture struct {
 	st    *store.Store
+	box   *secret.Box
+	opts  api.Options
 	srv   *api.Server
 	ts    *httptest.Server
 	admin *client
@@ -58,7 +62,7 @@ func newEmbedFixture(t *testing.T, mutate func(*api.Options)) *embedFixture {
 	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
 	expect(t, "管理员登录", code, 200, body)
 
-	f := &embedFixture{st: st, srv: srv, ts: ts, admin: admin, slug: "embed-app"}
+	f := &embedFixture{st: st, box: box, opts: opts, srv: srv, ts: ts, admin: admin, slug: "embed-app"}
 	spec := map[string]any{
 		"title": "嵌入应用", "description": "e2e", "persona": "你是嵌入助手。", "web": true,
 		"tables": []any{map[string]any{
@@ -97,16 +101,30 @@ func (f *embedFixture) token(t *testing.T, userID int64, plain string, scopes []
 	}
 }
 
+// instance 起第二个服务端，共用同一个数据库与配置（模拟多实例部署：不同端口/进程）。
+func (f *embedFixture) instance(t *testing.T) *embedFixture {
+	t.Helper()
+	srv := api.New(f.st, f.box, f.opts, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return &embedFixture{st: f.st, box: f.box, opts: f.opts, srv: srv, ts: ts, slug: f.slug}
+}
+
+func (f *embedFixture) mintAt(t *testing.T, base, token string, body map[string]any) (int, []byte) {
+	t.Helper()
+	return newClient(t, base).do("POST", "/api/embed/sessions", body, bearer(token))
+}
+
 func (f *embedFixture) mint(t *testing.T, token string, body map[string]any) (int, []byte) {
 	t.Helper()
-	return newClient(t, f.ts.URL).do("POST", "/api/embed/sessions", body, bearer(token))
+	return f.mintAt(t, f.ts.URL, token, body)
 }
 
 // exchange 用原始 HTTP 客户端，方便检查响应头（必须没有 Set-Cookie）。
-func (f *embedFixture) exchange(t *testing.T, code string) (*http.Response, []byte) {
+func (f *embedFixture) exchangeAt(t *testing.T, base, code string) (*http.Response, []byte) {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]string{"code": code})
-	req, _ := http.NewRequest("POST", f.ts.URL+"/api/auth/embed/exchange", strings.NewReader(string(raw)))
+	req, _ := http.NewRequest("POST", base+"/api/auth/embed/exchange", strings.NewReader(string(raw)))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -115,6 +133,42 @@ func (f *embedFixture) exchange(t *testing.T, code string) (*http.Response, []by
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	return resp, body
+}
+
+func (f *embedFixture) exchange(t *testing.T, code string) (*http.Response, []byte) {
+	t.Helper()
+	return f.exchangeAt(t, f.ts.URL, code)
+}
+
+// exchangeStatus 给并发测试用：不在子 goroutine 里调 t.Fatal。
+func exchangeStatus(base, code string) (int, error) {
+	raw, _ := json.Marshal(map[string]string{"code": code})
+	req, _ := http.NewRequest("POST", base+"/api/auth/embed/exchange", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
+
+// mintRaw 给需要检查响应头（Retry-After）的测试用。
+func mintRaw(base, token string, body map[string]any) (*http.Response, []byte, error) {
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", base+"/api/embed/sessions", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	return resp, out, nil
 }
 
 func (f *embedFixture) mintAndExchange(t *testing.T, token string) string {
@@ -129,9 +183,14 @@ func (f *embedFixture) mintAndExchange(t *testing.T, token string) string {
 	return decode[struct{ Token string }](t, raw).Token
 }
 
+func (f *embedFixture) meAt(t *testing.T, base, token string) (int, []byte) {
+	t.Helper()
+	return newClient(t, base).do("GET", "/api/auth/me", nil, bearer(token))
+}
+
 func (f *embedFixture) me(t *testing.T, token string) (int, []byte) {
 	t.Helper()
-	return newClient(t, f.ts.URL).do("GET", "/api/auth/me", nil, bearer(token))
+	return f.meAt(t, f.ts.URL, token)
 }
 
 func TestEmbedMintAndExchange(t *testing.T) {
@@ -267,15 +326,29 @@ func TestEmbedMintAndExchange(t *testing.T) {
 
 func TestEmbedCodeExpiry(t *testing.T) {
 	f := newEmbedFixture(t, func(o *api.Options) { o.EmbedCodeTTL = 20 * time.Millisecond })
+	other := f.instance(t)
 	emp := f.user(t, "embed-exp")
 	f.token(t, emp.ID, "ee_at_embed_exp", []string{rbac.ScopeHub, rbac.ScopeAgent})
 	code, body := f.mint(t, "ee_at_embed_exp", map[string]any{"app": f.slug, "host_origin": embedHost})
 	expect(t, "mint", code, 200, body)
 	minted := decode[struct{ Code string }](t, body)
 	time.Sleep(50 * time.Millisecond)
-	resp, raw := f.exchange(t, minted.Code)
+	// 换另一个实例也一样：过期判断在共享表里。
+	resp, raw := other.exchange(t, minted.Code)
 	if resp.StatusCode != 400 || decode[struct{ Code string }](t, raw).Code != "embed_code_expired" {
 		t.Fatalf("过期 code 应 400 embed_code_expired：%d %s", resp.StatusCode, raw)
+	}
+	// 后台清理把过期 code 物理删掉；之后再兑就是 invalid（测试里直接调清理，不等 ticker）。
+	if n, err := f.st.DeleteExpiredEmbedCodes(context.Background()); err != nil || n < 1 {
+		t.Fatalf("清理过期 code：n=%d err=%v", n, err)
+	}
+	// 多实例都会跑清理：重复执行幂等，第二次没有东西可删。
+	if n, err := f.st.DeleteExpiredEmbedCodes(context.Background()); err != nil || n != 0 {
+		t.Fatalf("清理应该幂等：n=%d err=%v", n, err)
+	}
+	resp, raw = other.exchange(t, minted.Code)
+	if resp.StatusCode != 400 || decode[struct{ Code string }](t, raw).Code != "embed_code_invalid" {
+		t.Fatalf("清理后 code 应 400 embed_code_invalid：%d %s", resp.StatusCode, raw)
 	}
 }
 
@@ -401,5 +474,261 @@ func TestEmbedErrorObservability(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("embed.deny 审计应带 reason/app/host_origin：%+v", logs)
+	}
+}
+
+// ---- 多实例共享（stacked #118）：code / 会话 / 限流都在数据库里 ----
+
+// TestEmbedCodeSharedAcrossInstances：A 实例 mint、B 实例 exchange 成功；
+// code 只存哈希、绑定信息完整、跨实例一次性；会话共享可读。
+func TestEmbedCodeSharedAcrossInstances(t *testing.T) {
+	f := newEmbedFixture(t, nil)
+	other := f.instance(t)
+	emp := f.user(t, "embed-multi")
+	f.token(t, emp.ID, "ee_at_embed_multi", []string{rbac.ScopeHub, rbac.ScopeAgent})
+	ctx := context.Background()
+
+	// next 只能绑定到本应用的站内路径：跨应用/管理页在 mint 时拒绝。
+	code, body := f.mint(t, "ee_at_embed_multi", map[string]any{"app": f.slug, "host_origin": embedHost, "next": "/admin/users"})
+	expect(t, "非法 next", code, 400, body)
+	if got := decode[struct{ Code string }](t, body).Code; got != "next_invalid" {
+		t.Fatalf("next 错误码 = %q", got)
+	}
+
+	next := "/a/" + f.slug + "?tab=main"
+	code, body = f.mint(t, "ee_at_embed_multi", map[string]any{"app": f.slug, "host_origin": embedHost, "next": next})
+	expect(t, "A 实例 mint", code, 200, body)
+	minted := decode[struct{ Code string }](t, body)
+
+	// 库里只存 sha256、绑定用户/应用/来源/next，且还未消费。
+	var (
+		hash, host, nextPath, appSlug string
+		userID                        int64
+		consumed                      sql.NullTime
+	)
+	if err := f.st.DB().QueryRowContext(ctx,
+		`SELECT code_hash, host_origin, next_path, user_id, app_slug, consumed_at FROM embed_codes WHERE code_hash = ?`,
+		secret.Hash(minted.Code)).
+		Scan(&hash, &host, &nextPath, &userID, &appSlug, &consumed); err != nil {
+		t.Fatalf("读 embed_codes：%v", err)
+	}
+	if hash != secret.Hash(minted.Code) || hash == minted.Code {
+		t.Fatalf("库里应该只存 code 的 sha256：hash=%q", hash)
+	}
+	if host != embedHost || nextPath != next || userID != emp.ID || appSlug != f.slug {
+		t.Fatalf("code 绑定信息不对：host=%q next=%q user=%d app=%q", host, nextPath, userID, appSlug)
+	}
+	if consumed.Valid {
+		t.Fatal("刚 mint 的 code 不应该已消费")
+	}
+
+	// A 实例 mint、B 实例 exchange：跨实例可用，并带回 mint 时绑定的 app/next。
+	resp, raw := other.exchange(t, minted.Code)
+	if resp.StatusCode != 200 {
+		t.Fatalf("B 实例 exchange 失败：%d %s", resp.StatusCode, raw)
+	}
+	var exchanged struct {
+		Token string `json:"token"`
+		Next  string `json:"next"`
+		App   struct{ Slug, Title string }
+	}
+	if err := json.Unmarshal(raw, &exchanged); err != nil {
+		t.Fatal(err)
+	}
+	if exchanged.Token == "" || exchanged.Next != next || exchanged.App.Slug != f.slug || exchanged.App.Title == "" {
+		t.Fatalf("exchange 响应没有带回 mint 的绑定：%s", raw)
+	}
+
+	// 会话也在共享表里：A 实例认 B 实例 exchange 出来的 token，me.embed 绑定不变。
+	code, body = f.me(t, exchanged.Token)
+	expect(t, "A 实例读 B 实例的嵌入会话", code, 200, body)
+	me := decode[struct {
+		Limited bool `json:"limited"`
+		Embed   *struct{ App, Host string }
+	}](t, body)
+	if !me.Limited || me.Embed == nil || me.Embed.App != f.slug || me.Embed.Host != embedHost {
+		t.Fatalf("共享会话的 me 不对：%s", body)
+	}
+
+	// 已消费：consumed_at 落库，两个实例都不能再兑。
+	if err := f.st.DB().QueryRowContext(ctx,
+		`SELECT consumed_at FROM embed_codes WHERE code_hash = ?`, secret.Hash(minted.Code)).Scan(&consumed); err != nil {
+		t.Fatalf("读 consumed_at：%v", err)
+	}
+	if !consumed.Valid {
+		t.Fatal("exchange 后 consumed_at 应该落库")
+	}
+	for name, inst := range map[string]*embedFixture{"A": f, "B": other} {
+		resp, raw := inst.exchange(t, minted.Code)
+		if resp.StatusCode != 400 || decode[struct{ Code string }](t, raw).Code != "embed_code_invalid" {
+			t.Fatalf("%s 实例重复 exchange 应 400 embed_code_invalid：%d %s", name, resp.StatusCode, raw)
+		}
+	}
+}
+
+// TestEmbedCodeConcurrentExchangeOnce：同一个 code 被多个实例并发 exchange，只有一个成功。
+func TestEmbedCodeConcurrentExchangeOnce(t *testing.T) {
+	f := newEmbedFixture(t, nil)
+	other := f.instance(t)
+	emp := f.user(t, "embed-race")
+	f.token(t, emp.ID, "ee_at_embed_race", []string{rbac.ScopeHub, rbac.ScopeAgent})
+	code, body := f.mint(t, "ee_at_embed_race", map[string]any{"app": f.slug, "host_origin": embedHost})
+	expect(t, "mint", code, 200, body)
+	minted := decode[struct{ Code string }](t, body)
+
+	const n = 8
+	bases := []string{f.ts.URL, other.ts.URL}
+	statuses := make([]int, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			statuses[i], errs[i] = exchangeStatus(bases[i%2], minted.Code)
+		}(i)
+	}
+	wg.Wait()
+
+	success := 0
+	for i, status := range statuses {
+		if errs[i] != nil {
+			t.Fatalf("并发 exchange 请求失败：%v", errs[i])
+		}
+		switch status {
+		case 200:
+			success++
+		case 400:
+			// 其余请求必须是 invalid；不能是 500/429。
+		default:
+			t.Fatalf("并发 exchange 返回了意外状态：%d", status)
+		}
+	}
+	if success != 1 {
+		t.Fatalf("同一个 code 并发 exchange 只能成功一次，实际成功 %d 次", success)
+	}
+	// 只消费一次、只建一条会话。
+	var consumed int
+	if err := f.st.DB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM embed_codes WHERE code_hash = ? AND consumed_at IS NOT NULL`,
+		secret.Hash(minted.Code)).Scan(&consumed); err != nil || consumed != 1 {
+		t.Fatalf("consumed_at 应该只写一次：%d %v", consumed, err)
+	}
+	if n, err := f.st.CountActiveEmbedSessions(context.Background(), emp.ID); err != nil || n != 1 {
+		t.Fatalf("并发 exchange 只应该建一条会话：%d %v", n, err)
+	}
+}
+
+// TestEmbedSessionPerUserLimitAndRevokeShared：每用户会话上限、吊销在跨实例时同样生效。
+func TestEmbedSessionPerUserLimitAndRevokeShared(t *testing.T) {
+	f := newEmbedFixture(t, func(o *api.Options) { o.EmbedMaxSessionsPerUser = 2 })
+	other := f.instance(t)
+	emp := f.user(t, "embed-cap")
+	f.token(t, emp.ID, "ee_at_embed_cap", []string{rbac.ScopeHub, rbac.ScopeAgent})
+	tokens := []string{
+		f.mintAndExchange(t, "ee_at_embed_cap"),
+		f.mintAndExchange(t, "ee_at_embed_cap"),
+		f.mintAndExchange(t, "ee_at_embed_cap"),
+	}
+
+	// 3 次握手只留 2 个活跃会话：超上限时最旧的被撤销（created_at 同毫秒时顺序不保证，
+	// 所以只断言「恰好 2 个还能用、且 B 实例看到的结果与 A 一致」）。
+	active := 0
+	activeToken := ""
+	for _, tok := range tokens {
+		code, _ := f.me(t, tok)
+		codeB, _ := other.me(t, tok)
+		if code != codeB {
+			t.Fatalf("两个实例看到的会话状态不一致：A=%d B=%d", code, codeB)
+		}
+		switch code {
+		case 200:
+			active++
+			activeToken = tok
+		case 401:
+		default:
+			t.Fatalf("me 返回了意外状态：%d", code)
+		}
+	}
+	if active != 2 {
+		t.Fatalf("每用户会话上限 2，实际还能用 %d 个", active)
+	}
+	if n, err := f.st.CountActiveEmbedSessions(context.Background(), emp.ID); err != nil || n != 2 {
+		t.Fatalf("活跃会话数 = %d %v，期望 2", n, err)
+	}
+
+	// 吊销跨实例：A 实例 logout，B 实例立刻 401（revoked_at 在共享表里）。
+	c := newClient(t, f.ts.URL)
+	if code, body := c.do("POST", "/api/auth/embed/logout", map[string]any{}, bearer(activeToken)); code != 204 {
+		t.Fatalf("logout 应 204：%d %s", code, body)
+	}
+	if code, _ := other.me(t, activeToken); code != 401 {
+		t.Fatalf("B 实例应立刻看到会话被吊销：%d", code)
+	}
+	var revoked int
+	if err := f.st.DB().QueryRowContext(context.Background(),
+		"SELECT COUNT(*) FROM embed_sessions WHERE revoked_at IS NOT NULL").Scan(&revoked); err != nil || revoked != 1 {
+		t.Fatalf("revoked_at 应该落库：%d %v", revoked, err)
+	}
+	// 清理会物理删除已吊销/过期的会话。
+	if n, err := f.st.DeleteExpiredEmbedSessions(context.Background()); err != nil || n < 1 {
+		t.Fatalf("清理已吊销会话：%d %v", n, err)
+	}
+}
+
+// TestEmbedRateLimitSharedAcrossInstances：mint/exchange 限流是数据库里的合计额度，
+// 不会因为多实例部署而成倍放水。
+func TestEmbedRateLimitSharedAcrossInstances(t *testing.T) {
+	// mint：两个实例合计每分钟 2 次（第三个请求在另一个实例上也应该 429）。
+	fm := newEmbedFixture(t, func(o *api.Options) { o.EmbedMintPerMinute = 2 })
+	otherMint := fm.instance(t)
+	emp := fm.user(t, "embed-mint-rate")
+	fm.token(t, emp.ID, "ee_at_embed_mint_rate", []string{rbac.ScopeHub, rbac.ScopeAgent})
+	mintBody := map[string]any{"app": fm.slug, "host_origin": embedHost}
+	for i := 0; i < 2; i++ {
+		code, body := fm.mint(t, "ee_at_embed_mint_rate", mintBody)
+		expect(t, "共享额度内 mint", code, 200, body)
+	}
+	resp, body, err := mintRaw(otherMint.ts.URL, "ee_at_embed_mint_rate", mintBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 429 {
+		t.Fatalf("跨实例的第三次 mint 应 429：%d %s", resp.StatusCode, body)
+	}
+	if got := decode[struct{ Code string }](t, body).Code; got != "rate_limited" {
+		t.Fatalf("限流错误码 = %q", got)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "60" {
+		t.Fatalf("429 应带 Retry-After=60，实际 %q", got)
+	}
+
+	// exchange：另一个库，合计每分钟 2 次（限流键按 IP，两个实例共用一个客户端 IP）。
+	fe := newEmbedFixture(t, func(o *api.Options) { o.EmbedMintPerMinute = 10; o.EmbedExchangePerMinute = 2 })
+	otherExchange := fe.instance(t)
+	empE := fe.user(t, "embed-ex-rate")
+	fe.token(t, empE.ID, "ee_at_embed_ex_rate", []string{rbac.ScopeHub, rbac.ScopeAgent})
+	var codes []string
+	for i := 0; i < 3; i++ {
+		code, body := fe.mint(t, "ee_at_embed_ex_rate", map[string]any{"app": fe.slug, "host_origin": embedHost})
+		expect(t, "mint", code, 200, body)
+		codes = append(codes, decode[struct{ Code string }](t, body).Code)
+	}
+	for i, code := range codes[:2] {
+		inst := fe
+		if i == 1 {
+			inst = otherExchange
+		}
+		resp, body := inst.exchange(t, code)
+		if resp.StatusCode != 200 {
+			t.Fatalf("共享额度内 exchange 应成功：%d %s", resp.StatusCode, body)
+		}
+	}
+	resp, body = otherExchange.exchange(t, codes[2])
+	if resp.StatusCode != 429 {
+		t.Fatalf("跨实例的第三次 exchange 应 429：%d %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "60" {
+		t.Fatalf("429 应带 Retry-After=60，实际 %q", got)
 	}
 }

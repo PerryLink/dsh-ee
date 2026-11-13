@@ -1,0 +1,55 @@
+{
+  "note": "站内 /docs 的发布白名单：只列出 docs/ 下要上站内页面的文档（相对 docs/ 的路径）。正文与标题、摘要、分类、标签等元数据都在文档的 front matter 里维护，这里只做白名单、缺省分类与给 Agent 的 llms.txt 入口。新增一篇：在 docs/dev/ 加 .md + 这里加一行，再运行 `cd web && pnpm docs:build`。",
+  "defaultCategory": "start",
+  "repository": "https://github.com/hikariming/dsh-ee",
+  "docs": [
+    "dev/overview.md",
+    "dev/harness-quickstart.md",
+    "dev/plugin-quickstart.md",
+    "dev/extension-quickstart.md",
+    "dev/access-rules.md",
+    "dev/publish-precheck.md",
+    "dev/quality-standards.md"
+  ],
+  "llms": {
+    "title": "dsh-ee 开发文档",
+    "summary": "dsh-ee（DeepSeek Harness 企业版）的开发者入口：DSH 插件、dsh-ee 扩展、第三方 Harness / 自研客户端接入、权限与发布。站内文档在 /docs，机器可读契约从这里开始。",
+    "contracts": [
+      {
+        "title": "能力发现文档",
+        "url": "/.well-known/dsh-ee",
+        "description": "匿名的版本与能力发现：api_version、设备码端点、scopes、模型/MCP/应用能力与限制。"
+      },
+      {
+        "title": "模型网关",
+        "url": "/v1/models",
+        "description": "OpenAI 兼容的模型列表与 /v1/chat/completions；Bearer 令牌。"
+      },
+      {
+        "title": "MCP 工具面",
+        "url": "/mcp",
+        "description": "Streamable HTTP + JSON-RPC：initialize、tools/list、tools/call；写工具走服务端确认。"
+      },
+      {
+        "title": "错误码索引",
+        "docs": "errors.md",
+        "description": "发布预检、审核、令牌、网关、MCP、扩展与嵌入的错误码与修法。"
+      },
+      {
+        "title": "扩展协议",
+        "docs": "extension-protocol.md",
+        "description": "服务扩展与端侧扩展和 dsh-ee 之间的协议、清单与调用约定。"
+      },
+      {
+        "title": "非 DSH 客户端接入 L1",
+        "docs": "l1-client.md",
+        "description": "第三方 Harness / 自研客户端使用 /v1 与 /mcp 的中立契约与限制。"
+      },
+      {
+        "title": "插件规范与准入",
+        "docs": "plugin-quality.md",
+        "description": "上游 ENTRY / FLOW / BOOST 与 dsh-ee 预检、审核的边界。"
+      }
+    ]
+  }
+}

@@ -1,5 +1,7 @@
 # dsh-ee 构建入口。产物都在 dist/。
 #
+#   make docs               从 docs/ 重新生成站内开发文档（web build 会自动跑）
+#   make docs-check         校验站内文档生成物与 docs/ 一致
 #   make build              前端 + 嵌入前端的单文件服务端（本机平台）
 #   make release            linux/amd64 与 linux/arm64 两个静态二进制
 #   make test               Go 集成测试（需要 DSH_EE_TEST_DSN）
@@ -13,7 +15,16 @@ PNPM    ?= corepack pnpm
 LDFLAGS := -s -w -X main.version=$(VERSION)
 EMBED   := server/internal/webui/build
 
-.PHONY: web plugin embed build release test e2e image bundle clean
+.PHONY: docs docs-check web plugin embed build release test e2e image bundle clean
+
+# 站内开发文档：docs/ 是单一事实源，生成 web/src/generated/dev-docs.ts。
+# web 的 build 会经 prebuild 自动跑一遍；这个目标用于只改文档后单独重生成。
+docs:
+	node scripts/docs/build.mjs
+
+# 校验生成物与 docs/ 一致（CI 的 web job 与 `make docs` 后都可跑）。
+docs-check:
+	node scripts/docs/build.mjs --check
 
 web:
 	cd web && $(PNPM) install --frozen-lockfile && $(PNPM) build

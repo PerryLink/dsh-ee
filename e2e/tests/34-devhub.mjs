@@ -25,16 +25,38 @@ export default async function (t) {
   await page.getByRole("button", { name: "DSH 插件" }).click();
   assertEq(await page.locator("a[data-dev-doc]").count(), 1, "按分类筛选后的文档数");
   await page.getByRole("button", { name: "全部" }).click();
-  // 客户端搜索：中文两字词过滤标题/摘要，清除后恢复全部
+  // 客户端搜索：标题/摘要/标签/正文全覆盖，中文两字词直接子串；清除后恢复全部
   const search = page.getByRole("searchbox");
-  await search.fill("权限");
-  assertEq(await page.locator("a[data-dev-doc]").count(), 1, "搜索「权限」后的文档数");
+  await search.fill("设备码"); // 只出现在 harness-quickstart 正文里，验证正文搜索
+  assertEq(await page.locator("a[data-dev-doc]").count(), 1, "搜索「设备码」后的文档数");
+  assertEq(await page.locator('a[data-dev-doc="harness-quickstart"]').count(), 1, "正文命中应出现 harness-quickstart");
+  await search.fill("TASL"); // overview 与 quality-standards 正文都有
+  assertEq(await page.locator("a[data-dev-doc]").count(), 2, "搜索「TASL」后的文档数");
   await page.getByRole("button", { name: "清除搜索" }).click();
   assertEq(await page.locator("a[data-dev-doc]").count(), 7, "清除搜索后恢复全部文档");
-  step("/docs 支持客户端搜索（标题/摘要/标签，中文两字词）与分类筛选叠加");
+  step("/docs 支持标题+正文搜索（中文两字词）与分类筛选叠加");
   await shot(page, "devhub-docs-list");
+
+  // /llms.txt：构建期生成给 Agent 的入口，匿名静态可读
+  const llmsRes = await page.request.get(`${BASE}/llms.txt`);
+  assertEq(llmsRes.status(), 200, "/llms.txt 状态");
+  const llmsText = await llmsRes.text();
+  assert(llmsText.startsWith("# dsh-ee 开发文档"), "llms.txt 应以 H1 标题开头");
+  for (const needle of ["/docs/overview", "/docs/harness-quickstart", "/.well-known/dsh-ee", "/v1/models", "/mcp", "docs/errors.md", "docs/extension-protocol.md"]) {
+    assert(llmsText.includes(needle), `/llms.txt 缺少「${needle}」`);
+  }
+  assert((llmsText.match(/\/docs\/[a-z-]+\)/g) || []).length >= 7, "llms.txt 应列出全部站内文档");
+  step("/llms.txt 可匿名读取，含文档清单与发现/模型/MCP/错误码入口");
+
   await page.locator('a[data-dev-doc="overview"]').click();
   await page.waitForURL(/\/docs\/overview$/);
+  // 详情页小入口：复制链接 + 查看仓库源文件
+  const sourceHref = await page.locator("[data-dev-doc-source]").getAttribute("href");
+  assert(sourceHref?.endsWith("/blob/main/docs/dev/overview.md"), `查看源文件应指向仓库 docs/dev/overview.md，实际 ${sourceHref}`);
+  await page.getByRole("button", { name: "复制链接" }).click();
+  await page.getByText(/链接已复制|复制失败/).first().waitFor();
+  await shot(page, "devhub-doc-actions");
+  step("详情页有「复制链接」与「在 GitHub 查看源文件」入口，源文件指向 docs/dev");
   // 正文里的站内链接用 router 跳转，不刷新整页
   await page.getByRole("link", { name: /写 DSH 插件并发布到企业源/ }).click();
   await page.waitForURL(/\/docs\/plugin-quickstart$/);
@@ -76,6 +98,19 @@ export default async function (t) {
   for (const needle of ["不在服务端内置执行 checker", "Change Notice", "引用或改编", "合并后可用"]) assert(stdText.includes(needle), `规范文档缺少「${needle}」`);
   assert(!stdText.includes("不复制规范正文"), "规范文档不应再写「不复制规范正文」（与 #119/#121 改编矛盾）");
   step("站内文档与代码事实一致：清单 schema / init --id / pack=zip / Node≥24.9 / 预检模式 / 规范改编许可");
+
+  // ---- ⌘K「文档」分组：正文命中也能搜到，选中进 /docs/:slug ----
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog");
+  await palette.waitFor();
+  const paletteInput = palette.getByRole("combobox");
+  await paletteInput.fill("设备码");
+  const docOption = palette.getByRole("option", { name: /接第三方 Harness \/ 自研客户端/ });
+  await docOption.waitFor();
+  await shot(page, "devhub-doc-palette");
+  await docOption.click();
+  await page.waitForURL(/\/docs\/harness-quickstart$/);
+  step("⌘K 新增「文档」分组：标题/摘要/正文命中，选中进 /docs/:slug");
 
   // ---- 固定路由不依赖菜单：直接打开 /docs/:slug 也能渲染；未知 slug 显示空态 ----
   await page.goto(`${BASE}/docs/access-rules`);
