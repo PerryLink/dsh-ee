@@ -287,7 +287,7 @@ export function InstallExtensionButton() {
                       <dd>{t("extensions.toolCount", { count: check.tools?.length ?? 0, writes })}</dd>
                       <dt className="text-neutral-500">{t("extensions.signature")}</dt>
                       <dd className="flex flex-wrap items-center gap-2">
-                        <Badge tone={signature?.status === "valid" ? "green" : signature?.status === "invalid" ? "red" : "amber"}>
+                        <Badge tone={signature?.status === "valid" ? "green" : signature?.status === "invalid" || signature?.status === "revoked" ? "red" : "amber"}>
                           {t(`extensions.signatureStatus.${signature?.status ?? "unsigned"}`)}
                         </Badge>
                         {signature?.key_id && <span className="font-mono text-xs text-neutral-500">{signature.key_id}</span>}

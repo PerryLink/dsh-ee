@@ -343,7 +343,11 @@ func (s *Server) planExtension(ctx context.Context, files map[string][]byte, ser
 	res := extension.CheckFiles(files)
 	p := &extPlan{Check: res, AdminParams: []extension.AdminParam{}, Changes: []string{}, Sensitive: []string{},
 		Config: []extension.ConfigField{}, Capabilities: []string{}, Handover: []string{}, Fields: []extension.Field{}, ServiceURL: serviceURL}
-	p.Signature = extension.VerifyFiles(files, s.opts.ExtensionTrustedKeys)
+	trusted, err := s.trustedExtensionKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	p.Signature = extension.VerifyFilesWithKeys(files, trusted)
 	if d := signatureProblem(s.opts.ExtensionRequireSignature, p.Signature); d != nil {
 		res.OK = false
 		res.Errors++
@@ -496,10 +500,13 @@ func signatureAudit(st *extension.SignatureStatus) string {
 	return st.Status + ":" + st.KeyID
 }
 
-// signatureProblem 按签名策略给出要报的错误：配了强制验证签名、但扩展没签名或签名验不过时，
-// 安装计划不通过（fail closed）。默认（不强制）返回 nil，只在计划里显示签名状态。
+// signatureProblem 按签名策略给出要报的错误。
+// 撤销过的签名公钥对应的包一律不能新装 / 升级（不管有没有开强制签名）；默认「警告后允许」
+// 下没签名、验不过只在计划里显示状态；配了强制验证签名时它们也不通过（fail closed）。
 func signatureProblem(require bool, st *extension.SignatureStatus) *extension.Diagnostic {
-	if !require || (st != nil && st.Status == extension.SignatureValid) {
+	valid := st != nil && st.Status == extension.SignatureValid
+	revoked := st != nil && st.Status == extension.SignatureRevoked
+	if valid || (!require && !revoked) {
 		return nil
 	}
 	reason := ""
@@ -509,13 +516,19 @@ func signatureProblem(require bool, st *extension.SignatureStatus) *extension.Di
 	if reason == "" {
 		reason = "这个扩展没有签名"
 	}
-	return &extension.Diagnostic{
+	d := &extension.Diagnostic{
 		Code:     "signature.required",
 		Severity: extension.SevError,
 		Where:    extension.SignatureFile,
 		Message:  "dsh-ee 配成了必须验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1），这个扩展不能安装：" + reason,
-		Fix:      "让作者用 `dsh-ee extension sign` 签名，并把签名者的公钥加进 DSH_EE_EXTENSION_TRUSTED_KEYS；或者由管理员关闭强制签名",
+		Fix:      "让作者用 `dsh-ee extension sign` 签名，并把签名者的公钥加进受信任的签名公钥（管理 API / DSH_EE_EXTENSION_TRUSTED_KEYS）；或者由管理员关闭强制签名",
 	}
+	if revoked {
+		d.Code = "signature.revoked"
+		d.Message = "这个扩展的签名者的公钥已撤销，不能安装或升级：" + reason
+		d.Fix = "让作者用受信任的新公钥重新签名；撤销过的公钥不能重新加回来"
+	}
+	return d
 }
 
 func credModeOf(c *extension.Credential) string {

@@ -432,18 +432,24 @@ Dify 的模型插件和 Agent 策略插件不做：dsh-ee 不自己跑 AI（road
   - `dsh-ee extension sign <目录> --key <私钥文件> [-o 文件] [--json]`：先做 `check`，通过后签名，默认写 `<目录>/signature.json`。
   - `dsh-ee extension verify <目录> [--key <公钥文件>] [--json]`：用受信任的公钥核对。没有签名、签名对不上、签名者不在受信任公钥里都返回退出码 1。
   - `dsh-ee extension pack` 会把 `signature.json` 一起打进 zip，上传后安装计划里就能看到签名状态。
-- 受信任的公钥是一个 PEM 文件，可以放多把（公钥、证书、私钥文件都认），用 `DSH_EE_EXTENSION_TRUSTED_KEYS=<文件>` 配置；命令行 `verify --key` 和它等价。私钥文件不要放进扩展目录（`pack` 只打清单、接口文档、签名等固定文件，不会把目录里的其他文件打进去）。
+- 受信任的公钥有两处来源，验签时合并（#134）：
+  - **库里的信任根**（主要来源）：表 `trusted_signing_keys`，管理员通过 `GET/POST /api/admin/signing-keys` 看和加，`POST /api/admin/signing-keys/{key_id}/retire` 换下，`POST /api/admin/signing-keys/{key_id}/revoke` 撤销；权限是 `connections.manage` 或 `settings.manage`，增 / 换下 / 撤销都记审计（`signing_key.add / retire / revoke`）。库里存的公钥是 PEM（`PUBLIC KEY` 或 `CERTIFICATE`，不收私钥）。换下、撤销都保留记录，不删行。
+  - **环境变量**（只读兼容）：`DSH_EE_EXTENSION_TRUSTED_KEYS=<PEM 文件>`，可以放多把（公钥、证书、私钥文件都认）；同一个 key id 以库里的状态为准，所以撤销一把也写在 env 里的公钥会生效。环境的公钥仍然要在启动时读，换它要重启；库里的改动立即生效。
+  - 命令行 `verify --key` 和环境变量等价，只是本地核对，不读库。
+- 公钥状态：`active`（正常使用）、`retired`（换下：不再用于新签名，历史签名仍认，安装计划里带 `key_state`）、`revoked`（撤销：历史签名显示 `revoked`，不管有没有开强制签名，新装 / 升级都拒绝；不能重新加回来，要恢复信任请加新钥匙）、`pending`（`valid_from` 还没到，验签时先不用）。
+- 私钥文件不要放进扩展目录（`pack` 只打清单、接口文档、签名等固定文件，不会把目录里的其他文件打进去）。
 - 服务扩展的清单是从对方服务实时取的，目前安装计划里显示 unsigned、也不阻断；服务扩展如何随清单提供签名还没做。所以配了强制签名时，从服务地址安装的服务扩展也会被拦下——这是现在的最小闭环的边界。
 
 **安装时怎么处理**
 
-- 安装计划（`POST /api/admin/extensions/check`、管理后台「安装扩展」、`dsh-ee extension verify`）显示签名状态，三档分开显示，不合并成一个「可信」：
+- 安装计划（`POST /api/admin/extensions/check`、管理后台「安装扩展」、`dsh-ee extension verify`）显示签名状态，分开显示，不合并成一个「可信」：
   - `unsigned`：没有 `signature.json`；
-  - `valid`：签名对得上，签名者也在受信任的公钥里；
-  - `invalid`：有签名但格式不对、内容被改过、或者签名者不受信任（消息里会说是哪一种）。
+  - `valid`：签名对得上，签名者也在受信任的公钥里（带 `key_state`，换下的公钥也算有效，但会标出来）；
+  - `invalid`：有签名但格式不对、内容被改过、或者签名者不受信任（消息里会说是哪一种）；
+  - `revoked`：签名对得上，但签名者的公钥已撤销——历史签名仍能核对，但不能用它新装 / 升级（不管有没有开强制签名）。
 - 默认只在计划里提示，不阻断安装（「警告后允许」）。
-- 可选强制：`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 时，没签名或 `invalid` 的扩展检查不通过、装不了（fail closed）；这时必须同时用 `DSH_EE_EXTENSION_TRUSTED_KEYS` 给出公钥，否则 dsh-ee 启动时直接报错（不允许配出一个什么都装不了的状态）。公钥只在启动时读一次，换公钥要重启。
-- 边界：签名只证明「这段清单 / 接口文档是谁签的、没被换过」，不是安全审计，也不覆盖服务扩展运行时的行为、端侧扩展在本机的执行、npm 插件包；装之前仍要看清单、接口地址、凭据和权限（[plugin-quality.md](./plugin-quality.md)）。受信任公钥的增删目前只能改环境变量，还没有「设置 → 扩展 → 签名」页面；官方扩展也还没有用官方密钥签名。
+- 可选强制：`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 时，没签名或 `invalid` 的扩展检查不通过、装不了（fail closed）；这时库里或 `DSH_EE_EXTENSION_TRUSTED_KEYS` 至少要有一把受信任公钥。一把都没有时启动只警告、不拒绝启动（管理员可以先起服务再用管理 API 加公钥），否则所有扩展都会被拦下。库里的公钥改完立即生效；环境变量里的公钥在启动时读一次，换它要重启。
+- 边界：签名只证明「这段清单 / 接口文档是谁签的、没被换过」，不是安全审计，也不覆盖服务扩展运行时的行为、端侧扩展在本机的执行、npm 插件包；装之前仍要看清单、接口地址、凭据和权限（[plugin-quality.md](./plugin-quality.md)）。受信任公钥现在通过管理 API（`/api/admin/signing-keys`）和 `DSH_EE_EXTENSION_TRUSTED_KEYS` 配置，还没有「设置 → 扩展 → 签名」网页；官方扩展也还没有用官方密钥签名。
 
 ### 9.4 安装、升级和卸载
 
@@ -586,9 +592,9 @@ extensions/
 | 5 | 端侧老系统模板、Claude Code 适配器 | ✅ | `extensions/official/legacy-local`、`extensions/official/claude-code` |
 | 5 | §13 待定 2、3 的真机验证 | ⏳ | |
 
-**有人要才做**（设计留着，不排期）：受信任公钥的管理页面和策略界面（现在用环境变量）、自动升级策略、企业目录、`/extensions` 列表页和安装按钮、反向连接和远程调试、网盘类知识源、事件、通知渠道、权限策略扩展、字段填充、审计投递、更多内置扩展、Python SDK、服务端无头浏览器、token exchange。
+**有人要才做**（设计留着，不排期）：受信任公钥的网页管理界面（现在用管理 API / 环境变量）和策略界面、自动升级策略、企业目录、`/extensions` 列表页和安装按钮、反向连接和远程调试、网盘类知识源、事件、通知渠道、权限策略扩展、字段填充、审计投递、更多内置扩展、Python SDK、服务端无头浏览器、token exchange。
 
-**已经做了的最小部分**：签名（§9.3）——`dsh-ee extension keygen / sign / verify`、安装计划显示 `unsigned / valid / invalid`、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 强制验证签名；企业目录、自动升级、自助分发和回滚仍是设计（#130 的 `docs/plugin-signing.md`）。
+**已经做了的最小部分**：签名（§9.3）——`dsh-ee extension keygen / sign / verify`、安装计划显示 `unsigned / valid / invalid / revoked`、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 强制验证签名，以及信任根落库（`trusted_signing_keys` 表 + `/api/admin/signing-keys` 管理接口，换下 / 撤销保留历史，env 只读兼容）；企业目录、自动升级、自助分发和回滚仍是设计（#130 的 `docs/plugin-signing.md`）。
 
 这样排的理由：
 

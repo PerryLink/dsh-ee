@@ -390,7 +390,7 @@ export default {
     tools: "工具",
     toolCount: "{{count}} 个，其中 {{writes}} 个会改数据",
     signature: "签名",
-    signatureStatus: { valid: "签名有效", invalid: "签名无效", unsigned: "没有签名" },
+    signatureStatus: { valid: "签名有效", invalid: "签名无效", unsigned: "没有签名", revoked: "签名者公钥已撤销" },
     signatureUnsignedHint: "默认可以装；管理员配了强制验证签名时不让装。",
     readOnly: "只读",
     write: "写操作",

@@ -38,11 +38,41 @@ const (
 const (
 	// SignatureUnsigned 没有 signature.json。
 	SignatureUnsigned = "unsigned"
-	// SignatureValid 签名对得上，签名者也在受信任的公钥里。
+	// SignatureValid 签名对得上，签名者也在受信任的公钥里（公钥可能是 active 或 retired）。
 	SignatureValid = "valid"
 	// SignatureInvalid 有签名，但格式不对、内容被改过、或者签名者不受信任。
 	SignatureInvalid = "invalid"
+	// SignatureRevoked 签名对得上，但签名者的公钥已撤销：历史签名仍能核对，但不能用这个签名
+	// 新装或升级扩展（docs/plugin-signing.md §3 的信任根生命周期）。
+	SignatureRevoked = "revoked"
 )
+
+// 受信任公钥的状态。
+const (
+	// KeyStateActive 正在使用，可以用来验新装和新签名。
+	KeyStateActive = "active"
+	// KeyStateRetired 已换下：不再用于新签名，但历史签名仍认（换钥匙时保留一段时间的旧公钥）。
+	KeyStateRetired = "retired"
+	// KeyStateRevoked 已撤销：等于不信任；历史签名标注 revoked，新装 / 升级拒绝。
+	KeyStateRevoked = "revoked"
+)
+
+// TrustedKey 是验签时可用的一把公钥及其状态。
+// 命令行 `--key`、DSH_EE_EXTENSION_TRUSTED_KEYS 里的公钥都是 active；库里的记录可能是
+// retired / revoked，用来区分「历史签名」和「还能不能新装」。
+type TrustedKey struct {
+	Public ed25519.PublicKey
+	// active / retired / revoked；空当 active
+	State string
+}
+
+// keyStateOf 取公钥状态，空当正在使用。
+func keyStateOf(k TrustedKey) string {
+	if k.State == "" {
+		return KeyStateActive
+	}
+	return k.State
+}
 
 // Signature 是 signature.json 的内容。
 type Signature struct {
@@ -67,6 +97,8 @@ type SignatureStatus struct {
 	KeyID string `json:"key_id,omitempty"`
 	// 签名文件里写的扩展身份（有的话）
 	Identity string `json:"identity,omitempty"`
+	// 签名者的公钥状态：active / retired / revoked；签名对得上、公钥在受信任列表里时才有
+	KeyState string `json:"key_state,omitempty"`
 	// 给人看的一句话：为什么是这个状态、怎么处理
 	Message string `json:"message,omitempty"`
 }
@@ -131,9 +163,33 @@ func SignExtension(manifest, openapi []byte, priv ed25519.PrivateKey) (*Signatur
 	return sig, append(raw, '\n'), nil
 }
 
-// VerifyFiles 核对一个扩展的签名。trusted 是受信任的公钥；没有配置时，签了名的扩展也只会是
-// invalid（签名者不受信任），而不是 valid。
+// ActiveKeys 把一组公钥都当成 active（正在使用），给命令行和 DSH_EE_EXTENSION_TRUSTED_KEYS 用。
+func ActiveKeys(pubs []ed25519.PublicKey) []TrustedKey {
+	out := make([]TrustedKey, 0, len(pubs))
+	for _, p := range pubs {
+		out = append(out, TrustedKey{Public: p})
+	}
+	return out
+}
+
+// VerifyFiles 核对一个扩展的签名。trusted 是受信任的公钥（都当成 active）；没有配置时，
+// 签了名的扩展也只会是 invalid（签名者不受信任），而不是 valid。
 func VerifyFiles(files map[string][]byte, trusted []ed25519.PublicKey) *SignatureStatus {
+	return VerifyFilesWithKeys(files, ActiveKeys(trusted))
+}
+
+// Verify 核对一个扩展目录的签名，给 `dsh-ee extension verify` 用。
+func Verify(files fs.FS, trusted []ed25519.PublicKey) *SignatureStatus {
+	return VerifyWithKeys(files, ActiveKeys(trusted))
+}
+
+// VerifyDir 读取扩展目录做验签。
+func VerifyDir(dir string, trusted []ed25519.PublicKey) *SignatureStatus {
+	return VerifyDirWithKeys(dir, ActiveKeys(trusted))
+}
+
+// VerifyFilesWithKeys 核对一个扩展的签名，公钥带状态（active / retired / revoked）。
+func VerifyFilesWithKeys(files map[string][]byte, trusted []TrustedKey) *SignatureStatus {
 	read := func(name string) ([]byte, bool) {
 		b, ok := files[name]
 		return b, ok
@@ -141,8 +197,8 @@ func VerifyFiles(files map[string][]byte, trusted []ed25519.PublicKey) *Signatur
 	return verify(read, trusted)
 }
 
-// Verify 核对一个扩展目录的签名，给 `dsh-ee extension verify` 用。
-func Verify(files fs.FS, trusted []ed25519.PublicKey) *SignatureStatus {
+// VerifyWithKeys 核对一个扩展目录的签名，公钥带状态。
+func VerifyWithKeys(files fs.FS, trusted []TrustedKey) *SignatureStatus {
 	read := func(name string) ([]byte, bool) {
 		b, err := fs.ReadFile(files, name)
 		return b, err == nil
@@ -150,8 +206,8 @@ func Verify(files fs.FS, trusted []ed25519.PublicKey) *SignatureStatus {
 	return verify(read, trusted)
 }
 
-// VerifyDir 读取扩展目录做验签。
-func VerifyDir(dir string, trusted []ed25519.PublicKey) *SignatureStatus {
+// VerifyDirWithKeys 读取扩展目录做验签，公钥带状态。
+func VerifyDirWithKeys(dir string, trusted []TrustedKey) *SignatureStatus {
 	read := func(name string) ([]byte, bool) {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		return b, err == nil
@@ -160,7 +216,7 @@ func VerifyDir(dir string, trusted []ed25519.PublicKey) *SignatureStatus {
 }
 
 // verify 是验签的公共部分。read 返回扩展根目录下的一个文件。
-func verify(read func(name string) ([]byte, bool), trusted []ed25519.PublicKey) *SignatureStatus {
+func verify(read func(name string) ([]byte, bool), trusted []TrustedKey) *SignatureStatus {
 	raw, ok := read(SignatureFile)
 	if !ok {
 		return unsignedStatus("没有 " + SignatureFile + "：这个扩展没有签名")
@@ -193,23 +249,34 @@ func verify(read func(name string) ([]byte, bool), trusted []ed25519.PublicKey) 
 	if err != nil || len(got) != ed25519.SignatureSize {
 		return invalidStatusOf(sig, "签名不是合法的 base64 或长度不对")
 	}
-	var trustedKey ed25519.PublicKey
+	byID := map[string]TrustedKey{}
 	for _, k := range trusted {
-		if KeyID(k) == sig.KeyID {
-			trustedKey = k
-			break
+		if len(k.Public) != ed25519.PublicKeySize {
+			continue
+		}
+		if id := KeyID(k.Public); byID[id].Public == nil {
+			byID[id] = TrustedKey{Public: k.Public, State: keyStateOf(k)}
 		}
 	}
-	if trustedKey == nil {
-		if len(trusted) == 0 {
+	key, ok := byID[sig.KeyID]
+	if !ok {
+		if len(byID) == 0 {
 			return invalidStatusOf(sig, "签名者 "+sig.KeyID+" 不受信任：dsh-ee 还没有配置受信任的签名公钥")
 		}
 		return invalidStatusOf(sig, "签名者 "+sig.KeyID+" 不在受信任的公钥里")
 	}
-	if !ed25519.Verify(trustedKey, SignedPayload(sig.Identity, sig.Digest), got) {
+	if !ed25519.Verify(key.Public, SignedPayload(sig.Identity, sig.Digest), got) {
 		return invalidStatusOf(sig, "签名和内容对不上：可能被改过")
 	}
-	return &SignatureStatus{Status: SignatureValid, KeyID: sig.KeyID, Identity: sig.Identity,
+	switch key.State {
+	case KeyStateRevoked:
+		return &SignatureStatus{Status: SignatureRevoked, KeyID: sig.KeyID, Identity: sig.Identity,
+			KeyState: KeyStateRevoked, Message: "签名者的公钥 " + sig.KeyID + " 已撤销：历史签名仍能核对，但不能用它新装或升级扩展"}
+	case KeyStateRetired:
+		return &SignatureStatus{Status: SignatureValid, KeyID: sig.KeyID, Identity: sig.Identity, KeyState: KeyStateRetired,
+			Message: "签名者 " + sig.KeyID + " 的公钥已换下，仍认这个签名；新签名请让作者换用新公钥"}
+	}
+	return &SignatureStatus{Status: SignatureValid, KeyID: sig.KeyID, Identity: sig.Identity, KeyState: KeyStateActive,
 		Message: "签名者 " + sig.KeyID + " 在受信任的公钥里"}
 }
 
@@ -242,6 +309,37 @@ func LoadPublicKeys(path string) ([]ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("%s：%w", path, err)
 	}
 	return keys, nil
+}
+
+// ParsePublicKeyPEM 解析 PEM 里的一把 Ed25519 公钥（只接受公钥或证书，不接受私钥）。
+// 管理员在 API 里新增受信任公钥时用：私钥不该贴进来。
+func ParsePublicKeyPEM(raw []byte) (ed25519.PublicKey, error) {
+	for rest := raw; len(rest) > 0; {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		rest = next
+		switch block.Type {
+		case "PUBLIC KEY":
+			k, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("读公钥：%w", err)
+			}
+			if p, ok := k.(ed25519.PublicKey); ok {
+				return p, nil
+			}
+		case "CERTIFICATE":
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("读证书：%w", err)
+			}
+			if p, ok := cert.PublicKey.(ed25519.PublicKey); ok {
+				return p, nil
+			}
+		}
+	}
+	return nil, errors.New("文件里没有 Ed25519 公钥（PEM 格式的 PUBLIC KEY 或 CERTIFICATE）；不要贴私钥")
 }
 
 // ParsePublicKeysPEM 解析 PEM 格式的公钥（可以有多块，公钥 / 私钥 / 证书都行）。

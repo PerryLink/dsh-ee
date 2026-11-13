@@ -183,13 +183,26 @@ func TestCLISignVerifyUsage(t *testing.T) {
 	}
 }
 
-// 启动时的签名策略校验：强制签名必须同时给受信任的公钥，否则 dsh-ee 不启动。
+// 启动时的签名策略：env 里的公钥只是兼容来源，主要来源是库里的信任根；
+// 强制签名却一把公钥都没有时只提醒（可以先起服务再用管理 API 加），不拒绝启动。
 func TestExtensionTrustedKeys(t *testing.T) {
-	if _, err := extensionTrustedKeys(&config.Config{ExtensionRequireSignature: true}); err == nil || !strings.Contains(err.Error(), "DSH_EE_EXTENSION_TRUSTED_KEYS") {
-		t.Fatalf("强制签名却没给公钥应报错：%v", err)
+	if keys, err := extensionTrustedKeys(&config.Config{ExtensionRequireSignature: true}); err != nil || keys != nil {
+		t.Fatalf("没配 env 公钥时不是错误（库里的信任根另算）：%v %v", keys, err)
 	}
 	if keys, err := extensionTrustedKeys(&config.Config{}); err != nil || keys != nil {
 		t.Fatalf("没配签名策略时没有公钥：%v %v", keys, err)
+	}
+	if msg := extensionSigningWarning(true, 0, 0); !strings.Contains(msg, "所有扩展都会被拒绝安装") || !strings.Contains(msg, "signing-keys") {
+		t.Fatalf("强制签名却没有公钥时应提醒：%q", msg)
+	}
+	if msg := extensionSigningWarning(true, 0, 1); msg != "" {
+		t.Fatalf("库里有公钥时不应提醒：%q", msg)
+	}
+	if msg := extensionSigningWarning(true, 1, 0); msg != "" {
+		t.Fatalf("env 有公钥时不应提醒：%q", msg)
+	}
+	if msg := extensionSigningWarning(false, 0, 0); msg != "" {
+		t.Fatalf("没开强制签名时不应提醒：%q", msg)
 	}
 	dir := t.TempDir()
 	keys := keygen(t, dir)

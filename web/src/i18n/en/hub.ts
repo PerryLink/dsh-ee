@@ -392,7 +392,7 @@ export default {
     tools: "Tools",
     toolCount: "{{count}}, of which {{writes}} change data",
     signature: "Signature",
-    signatureStatus: { valid: "Signature valid", invalid: "Signature invalid", unsigned: "Not signed" },
+    signatureStatus: { valid: "Signature valid", invalid: "Signature invalid", unsigned: "Not signed", revoked: "Signing key revoked" },
     signatureUnsignedHint: "Installable by default; blocked only when the admin requires signatures.",
     readOnly: "Read-only",
     write: "Writes data",

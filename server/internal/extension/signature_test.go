@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -229,5 +230,54 @@ func TestSignNeedsIdentity(t *testing.T) {
 	}
 	if _, _, err := SignExtension(exampleFiles(t)[ManifestFile], nil, ed25519.PrivateKey("short")); err == nil {
 		t.Fatal("长度不对的私钥应报错")
+	}
+}
+
+// 受信任公钥的状态（docs/plugin-signing.md §3）：换下的仍认历史签名，撤销的标 revoked 且不能新装。
+func TestVerifyKeyStates(t *testing.T) {
+	pub, priv := newSigningKey(t)
+	files := signExample(t, priv)
+	cases := []struct {
+		name     string
+		state    string
+		want     string
+		wantKey  string
+		contains string
+	}{
+		{"空状态当正在使用", "", SignatureValid, KeyStateActive, "在受信任的公钥里"},
+		{"正在使用", KeyStateActive, SignatureValid, KeyStateActive, "在受信任的公钥里"},
+		{"已换下", KeyStateRetired, SignatureValid, KeyStateRetired, "已换下"},
+		{"已撤销", KeyStateRevoked, SignatureRevoked, KeyStateRevoked, "已撤销"},
+	}
+	for _, tc := range cases {
+		got := VerifyFilesWithKeys(files, []TrustedKey{{Public: pub, State: tc.state}})
+		if got.Status != tc.want || got.KeyState != tc.wantKey || got.KeyID != KeyID(pub) || !strings.Contains(got.Message, tc.contains) {
+			t.Fatalf("%s：签名状态 %+v，期望 %s / %s / %q", tc.name, got, tc.want, tc.wantKey, tc.contains)
+		}
+	}
+	// 撤销之后就算签名本身对，也不能当成有效
+	if got := VerifyFilesWithKeys(files, []TrustedKey{{Public: pub, State: KeyStateRevoked}}); got.Status == SignatureValid {
+		t.Fatalf("撤销的公钥不该给出 valid：%+v", got)
+	}
+	// 撤销的公钥 + 内容被改：还是 invalid（改过比撤销更严重）
+	tampered := signExample(t, priv)
+	tampered["openapi.yaml"] = append(tampered["openapi.yaml"], ' ')
+	if got := VerifyFilesWithKeys(tampered, []TrustedKey{{Public: pub, State: KeyStateRevoked}}); got.Status != SignatureInvalid {
+		t.Fatalf("内容被改应是 invalid：%+v", got)
+	}
+}
+
+func TestParsePublicKeyPEM(t *testing.T) {
+	pub, priv := newSigningKey(t)
+	pubPEM, _ := MarshalPublicKeyPEM(pub)
+	if k, err := ParsePublicKeyPEM(pubPEM); err != nil || !k.Equal(pub) {
+		t.Fatalf("读公钥：%v", err)
+	}
+	privPEM, _ := MarshalPrivateKeyPEM(priv)
+	if _, err := ParsePublicKeyPEM(privPEM); err == nil || !strings.Contains(err.Error(), "不要贴私钥") {
+		t.Fatalf("私钥不该当公钥收：%v", err)
+	}
+	if _, err := ParsePublicKeyPEM([]byte("not pem")); err == nil {
+		t.Fatal("不是 PEM 应报错")
 	}
 }

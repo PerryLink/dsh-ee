@@ -1,10 +1,16 @@
 package api
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/extension"
+	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
 // 签名策略（docs/plugins.md §9.3）：默认不阻断；配了强制验证签名时，没签名、验不过都当作检查不通过。
@@ -48,5 +54,63 @@ func TestSignatureProblem(t *testing.T) {
 	// 强制验证签名，但签名有效：放行
 	if d := signatureProblem(true, valid); d != nil {
 		t.Fatalf("签名有效时不应报错：%+v", d)
+	}
+
+	// 撤销过的公钥：不管有没有开强制签名，新装 / 升级都拒绝（历史签名标 revoked，但保留）
+	revoked := &extension.SignatureStatus{Status: extension.SignatureRevoked, KeyID: "0123456789abcdef", KeyState: extension.KeyStateRevoked,
+		Message: "签名者的公钥 0123456789abcdef 已撤销"}
+	for _, require := range []bool{false, true} {
+		d := signatureProblem(require, revoked)
+		if d == nil || d.Code != "signature.revoked" || d.Severity != extension.SevError || !strings.Contains(d.Message, "已撤销") {
+			t.Fatalf("撤销的公钥（require=%v）应报 signature.revoked：%+v", require, d)
+		}
+	}
+}
+
+// 信任根合并（docs/plugin-signing.md §3）：库里的状态优先于环境变量；未生效、坏记录跳过。
+func TestMergeTrustedExtensionKeys(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemOf := func(p ed25519.PublicKey) string {
+		der, err := x509.MarshalPKIXPublicKey(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	}
+	now := time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC)
+	t1 := now.Add(-time.Hour)
+	t2 := now.Add(time.Hour)
+	rows := []store.TrustedSigningKey{
+		// 和 env 里是同一把：库里的状态优先
+		{KeyID: extension.KeyID(pub), PublicKey: pemOf(pub), Purpose: "extension", ValidFrom: t1, RevokedAt: &t2},
+		// 还没到生效时间
+		{KeyID: extension.KeyID(otherPub), PublicKey: pemOf(otherPub), Purpose: "extension", ValidFrom: t2.Add(time.Hour)},
+		// 不是 PEM 的记录跳过
+		{KeyID: "0123456789abcdef", PublicKey: "not pem", Purpose: "extension", ValidFrom: t1},
+		// 别的用途不参与扩展验签
+		{KeyID: "fedcba9876543210", PublicKey: pemOf(pub), Purpose: "npm", ValidFrom: t1},
+	}
+	keys := mergeTrustedExtensionKeys(rows, []ed25519.PublicKey{pub}, now)
+	if len(keys) != 1 || extension.KeyID(keys[0].Public) != extension.KeyID(pub) || keys[0].State != extension.KeyStateRevoked {
+		t.Fatalf("库里的撤销状态应压过 env、其它记录跳过：%+v", keys)
+	}
+	// 没有库记录时 env 的钥匙是 active
+	keys = mergeTrustedExtensionKeys(nil, []ed25519.PublicKey{pub}, now)
+	if len(keys) != 1 || keys[0].State != extension.KeyStateActive {
+		t.Fatalf("env 的钥匙应是 active：%+v", keys)
+	}
+	// 换下的状态会带到验签里
+	rows[0].RevokedAt = nil
+	rows[0].RetiredAt = &t2
+	keys = mergeTrustedExtensionKeys(rows[:1], nil, now)
+	if len(keys) != 1 || keys[0].State != extension.KeyStateRetired {
+		t.Fatalf("换下的钥匙状态：%+v", keys)
 	}
 }
