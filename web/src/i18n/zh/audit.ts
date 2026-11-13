@@ -27,6 +27,7 @@ export default {
       connection: "企业连接",
       connect: "DSH 接入插件",
       dsh_release: "DSH 桌面版分发",
+      embed: "跨站嵌入",
       brand: "企业品牌",
       kb: "知识库",
       app_data: "应用数据",
@@ -76,6 +77,7 @@ export default {
       data: { upload: "上传数据表", drop: "删除数据表", dataset_create: "新建数据集", dataset_update: "修改数据集", dataset_delete: "删除数据集" },
       app_data: { insert: "新增应用数据", update: "修改应用数据", delete: "删除应用数据", export: "导出应用数据" },
       kb: { create: "新建知识库", edit: "修改知识库", delete: "删除知识库", doc_create: "添加文档", doc_edit: "修改文档", doc_delete: "删除文档" },
+      embed: { session_create: "签发嵌入登录码", revoke: "撤销嵌入会话", deny: "拒绝嵌入请求" },
     },
   },
 };

@@ -96,6 +96,9 @@ jobs:
       E2E_BIN: ${{ github.workspace }}/dist/dsh-ee
       E2E_DSN: root:@tcp(127.0.0.1:4000)/
       CHROME: /usr/bin/google-chrome
+      # 跨站嵌入 e2e（35-embed-v1）：宿主页起在 http://localhost:8099，与 127.0.0.1 不同站
+      DSH_EE_EMBED_CROSS_SITE: "1"
+      DSH_EE_EMBED_ORIGINS: http://localhost:8099
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6

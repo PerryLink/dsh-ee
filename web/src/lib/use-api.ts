@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError } from "./api";
 
 /** 加载一次接口数据，提供 reload；组件卸载或重新加载后，过期的响应会被丢弃。 */
 export function useApi<T>(fn: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 出错时的 HTTP 状态码（0=网络不可达）；调用方需要区分「没权限」和「加载失败」时用。
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const seq = useRef(0);
   const fnRef = useRef(fn);
@@ -18,10 +21,14 @@ export function useApi<T>(fn: () => Promise<T>) {
         if (id === seq.current) {
           setData(d);
           setError(null);
+          setErrorStatus(null);
         }
       })
       .catch((e: unknown) => {
-        if (id === seq.current) setError(e instanceof Error ? e.message : String(e));
+        if (id === seq.current) {
+          setError(e instanceof Error ? e.message : String(e));
+          setErrorStatus(e instanceof ApiError ? e.status : null);
+        }
       })
       .finally(() => {
         if (id === seq.current) setLoading(false);
@@ -35,7 +42,7 @@ export function useApi<T>(fn: () => Promise<T>) {
     };
   }, [reload]);
 
-  return { data, error, loading, reload };
+  return { data, error, errorStatus, loading, reload };
 }
 
 /** 执行一个写操作，期间禁用按钮，失败时返回错误信息。 */

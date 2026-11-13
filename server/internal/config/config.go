@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hikariming/dsh-ee/server/internal/embed"
 )
 
 type Config struct {
@@ -50,6 +52,14 @@ type Config struct {
 	DemoVideoDir string
 	// DemoStatsFile：演示站的访问统计追加到这个文件（每行一个 JSON）；空则不记。
 	DemoStatsFile string
+	// 允许用 iframe 嵌入 dsh-ee 网页的宿主来源（DSH_EE_EMBED_ORIGINS，逗号分隔）。
+	// 只接受完整 origin：https://host[:port]，http 只放行回环地址；为空时只允许同站嵌入。
+	EmbedOrigins []string
+	// 跨站 iframe 嵌入 v1（DSH_EE_EMBED_CROSS_SITE）：默认关闭。
+	// 开启后 /api/embed/sessions 与 /api/auth/embed/exchange 才可用，且必须同时配置 EmbedOrigins。
+	EmbedCrossSite bool
+	// ee_emb_ 嵌入会话有效期（DSH_EE_EMBED_SESSION_TTL），默认 2h；设计建议 1h–8h。
+	EmbedSessionTTL time.Duration
 }
 
 func Load() (*Config, error) {
@@ -146,6 +156,34 @@ func Load() (*Config, error) {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return nil, errors.New("DSH_EE_PUBLIC_URL 必须是 http(s)://host[:port][/path] 形式")
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_EMBED_ORIGINS")); v != "" {
+		origins, err := embed.ParseOrigins(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_EMBED_ORIGINS: %w", err)
+		}
+		c.EmbedOrigins = origins
+	}
+	if v := os.Getenv("DSH_EE_EMBED_CROSS_SITE"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_EMBED_CROSS_SITE: %w", err)
+		}
+		c.EmbedCrossSite = b
+	}
+	c.EmbedSessionTTL = 2 * time.Hour
+	if v := os.Getenv("DSH_EE_EMBED_SESSION_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_EMBED_SESSION_TTL: %w", err)
+		}
+		if d < time.Minute || d > 8*time.Hour {
+			return nil, errors.New("DSH_EE_EMBED_SESSION_TTL 要在 1m 到 8h 之间")
+		}
+		c.EmbedSessionTTL = d
+	}
+	if c.EmbedCrossSite && len(c.EmbedOrigins) == 0 {
+		return nil, errors.New("DSH_EE_EMBED_CROSS_SITE 需要同时设置 DSH_EE_EMBED_ORIGINS：跨站嵌入只放行配置的宿主来源")
 	}
 	return c, nil
 }

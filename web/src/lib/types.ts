@@ -136,6 +136,17 @@ export interface Settings {
     /** 安装（读取）也要求令牌；关闭后只有发布需要令牌。 */
     requireToken: boolean;
   };
+  /** 跨站嵌入 v1 的管理端设置；非管理员从 /api/settings 拿不到这一段。 */
+  embed: {
+    /** true/false = 数据库显式覆盖；null/undefined = 跟随部署环境变量 */
+    crossSite?: boolean | null;
+    /** 追加在 DSH_EE_EMBED_ORIGINS 之后的宿主 origin；部署环境变量只读 */
+    allowedOrigins: string[];
+    /** 允许嵌入的应用 slug；空 = 所有开放网页版的应用 */
+    apps: string[];
+    /** ee_emb_ 会话有效期（分钟）；0 = 跟随部署配置 */
+    sessionMinutes: number;
+  };
 }
 
 /** 基于 DSH 运行的企业微应用：界面由 dsh-ee 托管，推理与工具调用交给员工本机 DSH。 */

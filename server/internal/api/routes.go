@@ -96,6 +96,10 @@ func (s *Server) routes() []route {
 		pub("GET /api/auth/oidc/callback", s.handleOIDCCallback),
 		pub("POST /api/auth/feishu/card", s.handleFeishuCard),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
+		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
+		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),
+		pub("POST /api/auth/embed/exchange", s.handleEmbedExchange),
+		usr("POST /api/auth/embed/logout", s.handleEmbedLogout),
 		pub("POST /api/auth/login", s.handleLogin),
 		pub("POST /api/auth/demo-login", s.handleDemoLogin),
 		pub("GET /demo/intro/{lang}", s.handleDemoVideo),
@@ -190,6 +194,7 @@ func (s *Server) routes() []route {
 
 		// 系统设置：登录即可读（前端要用组织名、作用域、评分开关），按段落校验写权限
 		usr("GET /api/settings", s.handleGetSettings),
+		prm("GET /api/admin/embed-settings", s.handleAdminEmbedSettings, rbac.SettingsManage),
 		prm("PUT /api/admin/settings", s.handlePutSettings, rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage),
 
 		// LDAP / AD 登录：配置里有服务账号，单独存、单独授权
