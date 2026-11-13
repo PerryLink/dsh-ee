@@ -29,6 +29,7 @@ export default {
       connection: "Connections",
       connect: "DSH connect plugin",
       dsh_release: "DSH Desktop distribution",
+      embed: "Cross-site embedding",
       brand: "Company branding",
       kb: "Knowledge base",
       app_data: "App data",
@@ -78,6 +79,7 @@ export default {
       data: { upload: "Upload data table", drop: "Delete data table", dataset_create: "Create dataset", dataset_update: "Edit dataset", dataset_delete: "Delete dataset" },
       app_data: { insert: "Add app data", update: "Edit app data", delete: "Delete app data", export: "Export app data" },
       kb: { create: "Create knowledge base", edit: "Edit knowledge base", delete: "Delete knowledge base", doc_create: "Add document", doc_edit: "Edit document", doc_delete: "Delete document" },
+      embed: { session_create: "Issued embed code", revoke: "Revoked embed session", deny: "Denied embed request" },
     },
   },
 } satisfies Messages<typeof zh>;

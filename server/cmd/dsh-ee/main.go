@@ -66,6 +66,10 @@ func run(log *slog.Logger) error {
 	} else if n, _ := st.CountUsers(ctx); n == 0 {
 		log.Warn("还没有任何用户：设置 DSH_EE_BOOTSTRAP_ADMIN_PASSWORD 后重启以创建管理员")
 	}
+	// 库里的设置（例如手工改库写进的非法嵌入来源）在启动时就校验；不合法直接拒绝启动。
+	if err := api.ValidateStoredSettings(ctx, st); err != nil {
+		return err
+	}
 
 	box, err := secret.NewBox(cfg.SecretKey)
 	if err != nil {
@@ -130,6 +134,9 @@ func run(log *slog.Logger) error {
 		DemoSite:                  demoSite(cfg),
 		ExtensionTrustedKeys:      extKeys,
 		ExtensionRequireSignature: cfg.ExtensionRequireSignature,
+		EmbedOrigins:              cfg.EmbedOrigins,
+		EmbedCrossSite:            cfg.EmbedCrossSite,
+		EmbedSessionTTL:           cfg.EmbedSessionTTL,
 	}, log)
 
 	go sweepSessions(ctx, st, log)
@@ -196,6 +203,11 @@ func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 				log.Warn("清理过期会话失败", "err", err)
 			} else if n > 0 {
 				log.Info("已清理过期会话", "count", n)
+			}
+			if n, err := st.DeleteExpiredEmbedSessions(ctx); err != nil {
+				log.Warn("清理过期嵌入会话失败", "err", err)
+			} else if n > 0 {
+				log.Info("已清理过期嵌入会话", "count", n)
 			}
 			if _, err := st.DeleteExpiredAgentConfirms(ctx); err != nil {
 				log.Warn("清理过期确认码失败", "err", err)

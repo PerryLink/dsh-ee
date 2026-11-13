@@ -6,6 +6,7 @@ import "./i18n";
 import { initTheme } from "./lib/theme";
 import { StoreProvider } from "./lib/store";
 import { AuthProvider, RequireAuth, useAuth } from "./lib/auth";
+import { EmbedProvider } from "./lib/embed-provider";
 import { api, type SetupStatus } from "./lib/api";
 import { MenuProvider, useMenus } from "./lib/menus";
 import { AppLayout } from "./components/layout";
@@ -224,7 +225,9 @@ createRoot(document.getElementById("root")!).render(
           <TooltipProvider delayDuration={300}>
             <ConfirmProvider>
               <BrowserRouter>
-                <AppRoutes />
+                <EmbedProvider>
+                  <AppRoutes />
+                </EmbedProvider>
               </BrowserRouter>
               <Toaster position="bottom-center" />
             </ConfirmProvider>

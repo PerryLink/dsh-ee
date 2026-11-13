@@ -58,6 +58,9 @@ var demoSiteBlocked = map[string]bool{
 	"POST /api/admin/providers":            true,
 	"PATCH /api/admin/providers/{id}":      true,
 	"POST /api/admin/providers/{id}/check": true,
+	// 跨站嵌入：演示站不对外签发嵌入会话，避免访客拿到演示管理员的长期凭据
+	"POST /api/embed/sessions":      true,
+	"POST /api/auth/embed/exchange": true,
 	// 上传文件、从外网拉东西
 	"POST /api/me/packages":                    true,
 	"POST /api/agent/packages":                 true,

@@ -6,6 +6,7 @@ import { Button, Card, cx, Field, inputBase, inputCls, PageHeader, Segmented, To
 import { DemoSettings } from "../../components/demo-import";
 import ConnectSettings from "./connect-settings";
 import { WriteConfirmSettings } from "../../components/write-confirm-settings";
+import { EmbedSettings } from "../../components/embed-settings";
 import { PageLink, useMenus } from "../../lib/menus";
 import { useConfirm } from "../../lib/confirm";
 import { Trans, useTranslation } from "react-i18next";
@@ -178,6 +179,10 @@ export default function AdminSettings() {
           <WriteConfirmSettings />
         </Section>
 
+        <Section id="settings-embed" title={t("settingsAdmin.embed.title")} desc={t("settingsAdmin.embed.desc")}>
+          <EmbedSettings />
+        </Section>
+
         <Section id="settings-demo" title={t("demo.title")} desc={t("demo.desc")}>
           <DemoSettings />
         </Section>
@@ -195,6 +200,7 @@ const TOC: { id: string; label: string }[] = [
   { id: "settings-distribution", label: "settingsAdmin.distribution" },
   { id: "settings-connect", label: "connectAdmin.title" },
   { id: "settings-write-confirm", label: "writeConfirm.title" },
+  { id: "settings-embed", label: "settingsAdmin.embed.title" },
   { id: "settings-demo", label: "demo.title" },
 ];
 
