@@ -129,6 +129,17 @@ func applyExtension(sp *assetSpec, tools []*store.ConnectionTool) error {
 		return err
 	}
 	res := extension.CheckFiles(map[string][]byte{extension.ManifestFile: []byte(sp.Extension.Manifest), m.OpenAPI: []byte(sp.OpenAPI)})
+	// 这里只拿了两份文件：清单和 openapi。完整安装时已经检查过 apps/icon，
+	// 但同步时它们必然报 missing；只把与工具/接口文档相关的 error 当失败。
+	for _, d := range res.Results {
+		if d.Severity != extension.SevError {
+			continue
+		}
+		if strings.HasPrefix(d.Code, "apps.") || strings.HasPrefix(d.Code, "icon.") {
+			continue
+		}
+		return fmt.Errorf("扩展检查未通过（%s）：%s", d.Code, d.Message)
+	}
 	ro := map[string]bool{}
 	for _, ti := range res.Tools {
 		ro[ti.Name] = ti.ReadOnly

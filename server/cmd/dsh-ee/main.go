@@ -115,14 +115,16 @@ func run(log *slog.Logger) error {
 		log.Warn(msg)
 	}
 	srv := api.New(st, box, api.Options{
-		CookieSecure:              cfg.CookieSecure,
-		SessionTTL:                cfg.SessionTTL,
-		Version:                   version,
-		Web:                       webui.Handler(),
-		DataDir:                   cfg.DataDir,
-		PublicURL:                 cfg.PublicURL,
-		Addr:                      cfg.Addr,
-		AdminModeUnit:             cfg.AdminModeUnit,
+		CookieSecure:  cfg.CookieSecure,
+		SessionTTL:    cfg.SessionTTL,
+		Version:       version,
+		Web:           webui.Handler(),
+		DataDir:       cfg.DataDir,
+		PublicURL:     cfg.PublicURL,
+		Addr:          cfg.Addr,
+		AdminModeUnit: cfg.AdminModeUnit,
+		// 旧令牌 scope 收敛（DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES）；默认关闭，不破坏现有客户端
+		RestrictLegacyTokenScopes: cfg.RestrictLegacyTokenScopes,
 		DataHub:                   dataHub,
 		DataHubErr:                dataErr,
 		DemoSite:                  demoSite(cfg),

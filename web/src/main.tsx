@@ -24,6 +24,10 @@ import AppWebPage from "./pages/app-web";
 import AccessRequestPage from "./pages/access-request";
 import KnowledgeBase from "./pages/knowledge-base";
 import KnowledgeDoc from "./pages/knowledge-doc";
+import DevDocs from "./pages/dev-docs";
+import DevDocDetail from "./pages/dev-doc-detail";
+import DevExamples from "./pages/dev-examples";
+import DevExampleDetail from "./pages/dev-example-detail";
 import DevicePage from "./pages/device";
 import Onboarding from "./pages/onboarding";
 import GetStarted from "./pages/get-started";
@@ -185,6 +189,11 @@ function AppRoutes() {
         <Route path="request" element={<AccessRequestPage />} />
         <Route path="confirm/:id" element={<ConfirmPage />} />
         <Route path="knowledge/docs/:id" element={<KnowledgeDoc />} />
+        {/* 开发文档 / 开发样例：固定路由，URL 不随菜单 path 变化（侧栏与工作台卡片只是入口） */}
+        <Route path="docs" element={<DevDocs />} />
+        <Route path="docs/:slug" element={<DevDocDetail />} />
+        <Route path="examples" element={<DevExamples />} />
+        <Route path="examples/:id" element={<DevExampleDetail />} />
         <Route path="knowledge/:id" element={<KnowledgeBase />} />
         {!pages.some((m) => m.path === "/market") && <Route path="market" element={<LegacyHub />} />}
         {!pages.some((m) => m.path === "/hub") && <Route path="hub" element={<LegacyHub />} />}

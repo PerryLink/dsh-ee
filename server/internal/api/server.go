@@ -61,6 +61,8 @@ type Options struct {
 	ExtensionTrustedKeys []ed25519.PublicKey
 	// 强制验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1）：没签名或验不过的扩展不让装。
 	ExtensionRequireSignature bool
+	// 旧版 npm 令牌 / API key 的 scope 收敛（docs/token-lifecycle.md）；默认 false 保持旧行为。
+	RestrictLegacyTokenScopes bool
 }
 
 type Server struct {
@@ -81,6 +83,8 @@ type Server struct {
 	streamsOnce sync.Once
 	// 上游 MCP 连接的缓存，按资产 id
 	conns connClients
+	// 网关的上游连接与模型冷却状态
+	providerCD providerCooldowns
 	// ee_jwt 的签名密钥（内存里的一份，定期重读库，见 user_identity.go）
 	eeKeyring eeKeyring
 	// 服务扩展：连续出错时的熔断、回调地址的限流（service_ext.go）
@@ -209,7 +213,8 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/", s.opts.Web)
 	}
 
-	return s.logRequests(mux)
+	// 中立 Harness 契约的版本响应头/请求号只加在 /v1 与发现文档上，既有 API 语义不变。
+	return s.logRequests(harnessAPI(mux))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -300,10 +305,18 @@ type principal struct {
 	access *rbac.Access
 	// 会话是从 DSH 凭设备令牌换来的，只带员工权限（见 web_link.go）
 	limited bool
+	// 经由接入令牌认证时的令牌 id 与客户端类型；网页会话为零值
+	tokenID    int64
+	clientKind string
 }
 
 func withUser(ctx context.Context, u *store.User, a *rbac.Access) context.Context {
 	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: a})
+}
+
+// withTokenUser 与 withUser 相同，并带上令牌属性（id / 客户端类型），供写确认与调用记录用。
+func withTokenUser(ctx context.Context, u *store.User, a *rbac.Access, tokenID int64, clientKind string) context.Context {
+	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: a, tokenID: tokenID, clientKind: clientKind})
 }
 
 func withLimitedUser(ctx context.Context, u *store.User, a *rbac.Access) context.Context {
@@ -325,6 +338,18 @@ func currentUser(r *http.Request) *store.User {
 func currentAccess(r *http.Request) *rbac.Access {
 	p, _ := r.Context().Value(ctxKey{}).(principal)
 	return p.access
+}
+
+// currentTokenID 返回这次请求所用接入令牌的 id；网页会话或旧令牌为 0。
+func currentTokenID(r *http.Request) int64 {
+	p, _ := r.Context().Value(ctxKey{}).(principal)
+	return p.tokenID
+}
+
+// currentClientKind 返回这次请求所用令牌的客户端类型；网页会话为空。
+func currentClientKind(r *http.Request) string {
+	p, _ := r.Context().Value(ctxKey{}).(principal)
+	return p.clientKind
 }
 
 func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }

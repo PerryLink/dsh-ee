@@ -270,7 +270,13 @@ func (s *Service) mirror(ctx context.Context, name string, uv *UpstreamVersion, 
 		if err != nil {
 			return nil, err
 		}
-		scan, _ = json.Marshal(Check(inner, info, d.Size, set.CompanyScopes()))
+		items := Check(inner, info, d.Size, set.CompanyScopes())
+		scan, _ = json.Marshal(items)
+		// 自动检查有 LevelFail 的包不能因为上游预载传了 publish=true 就直接上架；
+		// 与 Service.Publish 的 open 模式闸门保持一致，先进入待审核。
+		if status == store.StatusPublished && slices.ContainsFunc(items, func(i ScanItem) bool { return i.Level == LevelFail }) {
+			status = store.StatusPending
+		}
 	}
 
 	manifest, err := json.Marshal(trimManifest(uv.Manifest))

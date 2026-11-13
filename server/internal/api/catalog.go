@@ -943,6 +943,12 @@ func (s *Server) handleUpstreamSync(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "一次预载 1–500 个包")
 		return
 	}
+	// 预载本身只需要 upstream.manage；但 publish=true 会跳过审核直接上架，
+	// 等同于 plugins.manage（审核/上下架）的职责，不能靠 upstream.manage 绕过。
+	if req.Publish && !currentAccess(r).Has(rbac.PluginsManage) {
+		writeErr(w, http.StatusForbidden, "publish=true 会跳过审核直接上架，需要 plugins.manage 权限；没有该权限请用 publish=false 进入待审核")
+		return
+	}
 	feedByName := map[string]registry.FeedPlugin{}
 	if plugins, _, err := s.registry.Feed(r.Context(), false); err == nil {
 		for _, p := range plugins {

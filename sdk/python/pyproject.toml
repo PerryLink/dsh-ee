@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsh-ee-harness"
+version = "0.1.0"
+description = "dsh-ee Harness minimal Python client: discovery, device code, model gateway, MCP tools"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+keywords = ["dsh-ee", "harness", "mcp", "openai-compatible"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/hikariming/dsh-ee/tree/main/sdk/python#readme"
+Repository = "https://github.com/hikariming/dsh-ee"
+"Bug Tracker" = "https://github.com/hikariming/dsh-ee/issues"
+Changelog = "https://github.com/hikariming/dsh-ee/blob/main/sdk/python/CHANGELOG.md"
+Compatibility = "https://github.com/hikariming/dsh-ee/blob/main/sdk/python/COMPATIBILITY.md"
+
+[project.optional-dependencies]
+dev = []
+
+[tool.setuptools]
+packages = ["dsh_ee_harness"]
