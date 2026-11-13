@@ -321,6 +321,28 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apiError{Error: msg})
 }
 
+// httpProblem 是带状态码和给人看的信息的失败：处理函数内部把校验失败返回给外层统一写回，
+// 免得每个步骤都自己 writeErr。实现函数见 writeProblem。
+type httpProblem struct {
+	status int
+	msg    string
+}
+
+func (e *httpProblem) Error() string { return e.msg }
+
+// statusErr 造一个带状态码的失败。
+func statusErr(status int, msg string) error { return &httpProblem{status: status, msg: msg} }
+
+// writeProblem 把处理函数返回的失败写回：带状态码的按状态码，其余按 500。
+func (s *Server) writeProblem(w http.ResponseWriter, r *http.Request, err error) {
+	var p *httpProblem
+	if errors.As(err, &p) {
+		writeErr(w, p.status, p.msg)
+		return
+	}
+	s.internalErr(w, r, err)
+}
+
 func (s *Server) internalErr(w http.ResponseWriter, r *http.Request, err error) {
 	// 客户端刷新或切页会取消请求上下文，这时写库/读库报 context canceled 是正常现象，
 	// 既不是服务端故障，也没有可写的响应，别在日志里刷 500。

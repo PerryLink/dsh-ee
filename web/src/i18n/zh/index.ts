@@ -26,6 +26,7 @@ import appGuide from "./app-guide";
 import { sharedCredentials } from "./shared-credentials";
 import ext from "./ext";
 import signingKeys from "./signing-keys";
+import directory from "./directory";
 import devdocs from "./devdocs";
 import embed from "./embed";
 
@@ -59,6 +60,7 @@ export default {
   ...appGuide,
   ...ext,
   ...signingKeys,
+  ...directory,
   ...devdocs,
   ...embed,
 };
