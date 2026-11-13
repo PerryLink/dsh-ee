@@ -105,6 +105,7 @@ var agentExcluded = map[string]string{
 	"POST /api/auth/embed/exchange":             "iframe 与宿主之间的握手由浏览器完成，code 不进模型上下文",
 	"POST /api/auth/embed/logout":               "浏览器里的嵌入会话注销，由 iframe 自己调用",
 	"GET /api/admin/embed-settings":             "管理端嵌入设置页读环境基线与有效值",
+	"GET /api/admin/embed/stats":                "管理端嵌入运行概览只在网页上看，不把会话/拒绝统计交给 Agent",
 	"POST /api/dsh/feedback":                    "接入插件的 👍👎 按钮自己调用；员工自己打分，不让模型替人评价",
 	"GET /api/apps/{slug}/data":                 "应用数据给网页用；模型经 /mcp 的 app__rows / app__write",
 	"GET /api/apps/{slug}/data/{table}":         "应用数据给网页用；模型经 /mcp 的 app__rows",

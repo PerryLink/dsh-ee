@@ -112,11 +112,13 @@ type Server struct {
 	loginIPLimiter  *loginIPLimiter
 	deviceCodeRate  *ipRate
 	deviceTokenRate *ipRate
-	// 启动时间与登录计数，只给 /metrics 用
+	// 启动时间、登录计数与嵌入拒绝计数，只给 /metrics 用
 	startedAt            time.Time
 	loginFailures        atomic.Uint64
 	loginIPLimited       atomic.Uint64
 	loginUsernameLimited atomic.Uint64
+	// 被拒绝的嵌入请求数（embed.deny 审计）：进程内累计，重启清零、多实例各自独立
+	embedDenied atomic.Uint64
 	// 可信反向代理网段；只有这些对端的 X-Forwarded-* 会被采信（见 proxy.go）
 	trustedProxies []netip.Prefix
 	upstream       *http.Client

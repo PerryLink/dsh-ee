@@ -46,6 +46,19 @@ DSH_EE_EMBED_ORIGINS='https://harness.acme.internal,http://localhost:5173'
 
 非法值在保存时拒绝；库里被手工改坏的设置会让服务**启动失败**（fail closed）。CSP 与 mint/exchange 读同一份有效配置，保存后立即生效（设置缓存 5 秒，保存时会主动失效）。
 
+**管理端运行概览（E5）**：同一分区下方展示跨站嵌入的运行数据（活跃会话 / 今日创建 / 今日过期 / 今日吊销 / 24h 拒绝 + 活跃应用 top 10），带手动刷新；数据来自 `GET /api/admin/embed/stats`（需要 `settings.manage`）：
+
+| 字段 | 含义 |
+|---|---|
+| `active_sessions` | 当前有效（未过期、未吊销）的嵌入会话数 |
+| `created_today` / `expired_today` / `revoked_today` | 本地时区「今天」新建 / 到期 / 被吊销的会话数 |
+| `denied_24h` | 最近 24 小时 `embed.deny` 审计的条数（来源/应用不匹配、嵌入关闭、code 无效等拒绝） |
+| `top_apps` | 活跃会话最多的应用，最多 10 个，只有应用 slug 与数量 |
+
+- 只返回聚合数量：**不含用户、IP、令牌或宿主 origin**；`tz` 是本地时区相对 UTC 的分钟数（界面按浏览器时区请求），一次统计的总查询预算 2 秒，响应 `Cache-Control: no-store`。
+- 过期/被吊销的会话行会保留 7 天再物理清理（每小时清理任务），所以「今天过期/吊销」不会在当天就被清理掉；活跃会话的判定不受保留期影响。
+- 监控抓取（`DSH_EE_METRICS=true` 且本机 / 内网来源）另外输出两个低基数指标：`dsh_ee_embed_sessions_active`（gauge）与 `dsh_ee_embed_denied_total`（counter）。前者是数据库里的全库活跃会话数，多实例是同一个值（Prometheus 用 `max()` 而不是 `sum()`）；后者是进程内累计，多实例各自独立、重启清零。
+
 **作用范围**：只影响微应用网页版 `/a/<标识>` 的 CSP；其它 HTML（`/admin/*` 管理页、`/login`、`/go` 等）始终保持 `frame-ancestors 'self'`，配置过的宿主 origin **不能**框管理后台。
 
 ### 反代 / CDN 注意
@@ -178,6 +191,7 @@ frame.addEventListener("load", () => {
 5. 嵌入会话 logout 后原 token 调 `/api/auth/me` 返回 401（服务端会话已删）。
 4. 退出 dsh-ee 会话或换无痕窗口：iframe 显示失败态，宿主收到 `auth_required`，iframe 的地址仍停在 `/a/...`。
 5. 移动端窄屏：宿主按策略顶层打开。
+6. 管理端「系统设置 → 跨站嵌入 → 运行概览」：完成一次握手后点「刷新」，活跃会话与 top apps 出现；`GET /api/admin/embed/stats` 不返回用户、IP、令牌或宿主 origin。
 
 ## 7. 跨站嵌入 v1（不同站点的 iframe）
 
@@ -210,6 +224,7 @@ SPA ◄──⑧ {token:"ee_emb_…", limited:true, expires_in}（不 Set-Cookie
 | `POST /api/embed/sessions` | `Authorization: Bearer ee_at_`（需 `agent` scope、human 账号） | `{app, host_origin, next?}` | `{code, expires_in:60, app, user, session_ttl}` | `embed_disabled` / `origin_not_allowed` / `app_not_found` / `app_not_web` / `forbidden` |
 | `POST /api/auth/embed/exchange` | code 即凭证；必须 `Content-Type: application/json` | `{code}` | `{token:"ee_emb_…", token_type:"Bearer", expires_in, app, user, limited:true}`；**不 Set-Cookie** | `embed_code_invalid` / `embed_code_expired` / `embed_disabled` |
 | `POST /api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` | `{}` | `204`（删会话 + 审计） | `401` |
+| `GET /api/admin/embed/stats?tz=` | 管理员网页会话（`settings.manage`） | 无 | `{active_sessions, created_today, expired_today, revoked_today, denied_24h, top_apps[], day_start, generated_at}`；只有聚合数量 | `400`（tz 非法）/ `403` |
 
 - code 60 秒、一次性，只存 sha256 在数据库 `embed_codes` 表（明文只在 mint 响应里出现一次）；一次性由 `UPDATE … SET consumed_at=now() WHERE consumed_at IS NULL AND expires_at>now()` 的 affected rows 保证，**跨实例只有一个 exchange 能成功**。
 - `ee_emb_` 会话默认 2 小时（`DSH_EE_EMBED_SESSION_TTL`，1m–8h），不提供 refresh；过期/被吊销后 iframe 发 `dsh-ee:auth-required {reason:"expired"}`，宿主重新 mint 一次。每个用户同时有效的嵌入会话默认**最多 5 个**，超过时撤销最旧的；logout 用 `revoked_at` 软删除，所有实例立刻看到 401。
@@ -227,7 +242,7 @@ SPA ◄──⑧ {token:"ee_emb_…", limited:true, expires_in}（不 Set-Cookie
 | 嵌入会话 | `embed_sessions`（token 只存 sha256、`revoked_at` 软删除） | 任一实例建立的会话，其它实例都能读；A 实例 logout 后，B 实例立刻 401；每用户会话上限（默认 5）是全局的 |
 | 限流 | `embed_rates`（固定窗口，按 IP / 用户分键） | mint 30 次/分钟、exchange 60 次/分钟是**所有实例合计**；不会因为起 3 个副本就变成 90/180 |
 
-- 清理：每个实例启动时清一次、之后每分钟清理过期的 code 与上一分钟的限流窗口（`DELETE` 条件相同，多实例重复执行幂等）；过期/已吊销的嵌入会话每小时清理一次。会话/ code 的有效性判断不依赖清理任务，清理只回收空间。
+- 清理：每个实例启动时清一次、之后每分钟清理过期的 code 与上一分钟的限流窗口（`DELETE` 条件相同，多实例重复执行幂等）；过期/已吊销的嵌入会话每小时清理一次，终态行保留 7 天供管理端按天统计，之后才物理删除。会话/code 的有效性判断不依赖清理任务，清理只回收空间。
 - 兼容性：这三张表由迁移 `0034_embed_multi.sql` 创建；升级时所有实例跑同一版迁移；滚动发布期间新旧实例共存时，旧实例仍用内存 code（跨实例 exchange 会失败），建议一次性切换或先让所有实例升级到本版本。
 - 仍不需要 Redis：当前规模用 MySQL 共享行锁足够；以后如果限流行成为瓶颈，再考虑把限流换成 Redis（code/session 的一次性语义仍以数据库为准）。
 

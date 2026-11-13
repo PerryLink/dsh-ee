@@ -74,6 +74,22 @@ export interface AdminEmbedSettings {
   settings: Settings["embed"];
 }
 
+/**
+ * 管理端嵌入运行概览（GET /api/admin/embed/stats）：只有聚合数量，
+ * 不含用户、IP、令牌与宿主 origin；top_apps 最多 10 个低基数应用标识。
+ */
+export interface AdminEmbedStats {
+  generated_at: string;
+  /** 统计口径的「今天零点」；界面按浏览器本地时区请求 */
+  day_start: string;
+  active_sessions: number;
+  created_today: number;
+  expired_today: number;
+  revoked_today: number;
+  denied_24h: number;
+  top_apps: { app: string; sessions: number }[];
+}
+
 export interface Role {
   id: number;
   code: string;
@@ -1837,6 +1853,8 @@ export const api = {
   settings: () => request<Settings>("GET", "/api/settings", undefined, { silent401: true }),
   saveSettings: (s: Settings) => request<Settings>("PUT", "/api/admin/settings", s),
   adminEmbedSettings: () => request<AdminEmbedSettings>("GET", "/api/admin/embed-settings"),
+  /** 嵌入运行概览：按浏览器本地时区算「今天」，只返回聚合数量。 */
+  adminEmbedStats: () => request<AdminEmbedStats>("GET", `/api/admin/embed/stats?tz=${-new Date().getTimezoneOffset()}`),
   embedLogout: () => request<void>("POST", "/api/auth/embed/logout", {}),
 
   catalog: () => request<{ plugins: CatalogPlugin[] }>("GET", "/api/catalog").then((r) => r.plugins),
