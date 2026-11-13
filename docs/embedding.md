@@ -48,6 +48,8 @@ DSH_EE_EMBED_ORIGINS='https://harness.acme.internal,http://localhost:5173'
 
 **作用范围**：只影响微应用网页版 `/a/<标识>` 的 CSP；其它 HTML（`/admin/*` 管理页、`/login`、`/go` 等）始终保持 `frame-ancestors 'self'`，配置过的宿主 origin **不能**框管理后台。
 
+**可选的完整 CSP（`DSH_EE_CSP`）**：默认 `off` 时这里只加 `frame-ancestors`。设成 `report` / `enforce` 后会再给 HTML 加一份完整内容安全策略，`frame-ancestors` 与上面的嵌入来源**合并**：`report` 模式用 `Content-Security-Policy-Report-Only` 报告违规，但嵌入收口仍放在会执行的 CSP 里（不会因为「只报告」被放开）。模式、策略内容与上线顺序见 [operations.md](./operations.md) §10.1。
+
 ### 反代 / CDN 注意
 
 - **不要**在反代再设置 `X-Frame-Options`（`ALLOW-FROM` 已废弃，和 `frame-ancestors` 叠加只会冲突）。

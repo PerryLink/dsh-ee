@@ -147,6 +147,7 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
 - `DSH_EE_EMBED_CROSS_SITE` **只控制 mint/exchange 是否可用**；CSP 的来源追加由 `DSH_EE_EMBED_ORIGINS` 决定。只配 origins 不配 cross-site 时，同站/顶层嵌入的 CSP 生效，但跨站 mint 返回 `embed_disabled`。
 - 默认 `frame-ancestors 'self'`；管理页、登录页、`/go` 等永远只允许 `'self'`。
 - **不设 `X-Frame-Options`**；反代/CDN 不要重复添加 CSP 或 XFO；HTTPS 是硬前提。
+- 可选的完整内容安全策略（`DSH_EE_CSP=report|enforce`，默认 `off`）：在同一中间件里给 HTML 加 `default-src` / `script-src`（含 index.html 内联脚本的 sha256 哈希）等指令，`frame-ancestors` 与本节来源合并；`report` 模式的完整策略走 `Content-Security-Policy-Report-Only`，但 `frame-ancestors` 收口仍放在会执行的 CSP 里。见 [operations.md](./operations.md) §10.1。
 
 ## 9. 失败态与兜底（已实现）
 
