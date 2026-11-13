@@ -531,6 +531,8 @@ export interface OidcConfig {
   groupsClaim: string;
   roleMappings: { group: string; roleId: number }[];
   autoCreate: boolean;
+  /** 严格身份绑定：要求 IdP 声明邮箱已验证；预建账号填了邮箱时还要求邮箱一致 */
+  requireEmailVerified: boolean;
   feishuApiBase?: string;
   feishuSync?: boolean;
   feishuSyncDisable?: boolean;

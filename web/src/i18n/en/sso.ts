@@ -37,6 +37,8 @@ export default {
     mappingsDesc: "People whose group claim contains the value get the role, and lose it when they leave. Keycloak group paths can use just the last segment. Roles not in the mapping are untouched.",
     autoCreate: "Create accounts on first sign-in",
     autoCreateDesc: "When off, only SSO accounts an admin created in advance can sign in.",
+    requireEmailVerified: "Require verified email (strict identity binding)",
+    requireEmailVerifiedDesc: "When on, the IdP must assert email_verified=true in the ID Token or userinfo. Binding a pre-created account that has an email set also requires the declared email to match, so the same username prefix in another domain cannot claim it. Off by default: some enterprise IdPs do not return this claim, and enabling it would lock those accounts out.",
     save: "Save SSO settings",
     saved: "SSO settings saved",
     test: "Test",
