@@ -392,6 +392,13 @@ func (s *Server) routes() []route {
 		// OpenAI 兼容网关，用个人 key 鉴权
 		pub("GET /v1/models", s.handleModels),
 		pub("POST /v1/chat/completions", s.handleChatCompletions),
+
+		// 第三方 Harness 的中立 v1 契约（harness.go）：发现文档、能力摘要、只读微应用描述、机器可读契约
+		pub("GET /.well-known/dsh-ee", s.handleHarnessDiscovery),
+		pub("GET /v1/capabilities", s.handleHarnessCapabilities),
+		pub("GET /v1/apps", s.handleHarnessApps),
+		pub("GET /v1/apps/{name}", s.handleHarnessApp),
+		pub("GET /v1/openapi.json", s.handleHarnessOpenAPI),
 	}
 	for i := range rs {
 		rs[i].agent = agentSpecs[rs[i].pattern]

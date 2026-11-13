@@ -169,8 +169,14 @@ var agentExcluded = map[string]string{
 	"GET /setup.ps1":                            "安装脚本",
 	"GET /v1/models":                            "模型网关协议入口",
 	"POST /v1/chat/completions":                 "模型网关协议入口",
-	"POST /api/me/packages":                     "网页上传；Agent 用 ee_plugins.upload（经 /api/agent/packages）",
-	"POST /api/me/packages/check":               "网页发布前预检；Agent 的 upload 会直接发布，暂不单独暴露检查工具",
+	// 第三方 Harness 契约（harness.go）：发现与只读能力摘要，不是模型工具
+	"GET /.well-known/dsh-ee":     "中立发现文档，给第三方 Harness 读取服务能力",
+	"GET /v1/capabilities":        "中立能力摘要，给第三方 Harness 生成自己的配置与系统提示",
+	"GET /v1/apps":                "只读中立微应用列表，给第三方 Harness 展示企业应用",
+	"GET /v1/apps/{name}":         "只读中立微应用描述，给第三方 Harness 展示企业应用",
+	"GET /v1/openapi.json":        "机器可读的中立 API 契约（静态 OpenAPI 3.1），给第三方 Harness 生成客户端",
+	"POST /api/me/packages":       "网页上传；Agent 用 ee_plugins.upload（经 /api/agent/packages）",
+	"POST /api/me/packages/check": "网页发布前预检；Agent 的 upload 会直接发布，暂不单独暴露检查工具",
 
 	"GET /api/me/welcome":            "网页登录后的落点判断",
 	"PUT /api/me/welcome":            "网页「开始使用」页的「以后再说」",

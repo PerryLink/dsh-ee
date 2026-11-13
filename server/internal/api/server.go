@@ -204,7 +204,8 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/", s.opts.Web)
 	}
 
-	return s.logRequests(mux)
+	// 中立 Harness 契约的版本响应头/请求号只加在 /v1 与发现文档上，既有 API 语义不变。
+	return s.logRequests(harnessAPI(mux))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
