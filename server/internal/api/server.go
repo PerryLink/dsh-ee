@@ -39,6 +39,9 @@ type Options struct {
 	DataDir string
 	// 对外地址，用于生成 tarball 下载地址；为空时按请求推断。
 	PublicURL string
+	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单，逗号分隔的完整 origin
+	// 已由 config 解析、校验；为空时关闭 CORS，见 cors.go。
+	CORSOrigins []string
 	// 可信反向代理的地址或网段（DSH_EE_TRUSTED_PROXIES）。只有来自这些对端的
 	// X-Forwarded-* 才会被采信；为空时只信任本机回环地址。
 	TrustedProxies []netip.Prefix
@@ -237,8 +240,10 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	// 中立 Harness 契约的版本响应头/请求号只加在 /v1 与发现文档上，既有 API 语义不变。
+	// 浏览器内第三方 Harness 的跨域白名单（DSH_EE_CORS_ORIGINS，默认关闭），只作用于 /v1/* 与 /mcp，见 cors.go；
+	// 放在 harnessAPI 外面，预检先于方法检查处理，harness 的错误响应也带 CORS 头。
 	// securityHeaders 在最外层，harnessAPI 直接写出的响应同样带文档安全头。
-	return s.logRequests(s.securityHeaders(harnessAPI(mux)))
+	return s.logRequests(s.securityHeaders(s.cors(harnessAPI(mux))))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {

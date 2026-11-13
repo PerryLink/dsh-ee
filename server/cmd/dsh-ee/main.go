@@ -126,6 +126,7 @@ func run(log *slog.Logger) error {
 		DataDir:        cfg.DataDir,
 		PublicURL:      cfg.PublicURL,
 		TrustedProxies: cfg.TrustedProxies,
+		CORSOrigins:    cfg.CORSOrigins,
 		Addr:           cfg.Addr,
 		AdminModeUnit:  cfg.AdminModeUnit,
 		// 旧令牌 scope 收敛（DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES）；默认关闭，不破坏现有客户端

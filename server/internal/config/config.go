@@ -39,6 +39,9 @@ type Config struct {
 	// 对外访问地址（如 https://dsh.acme.internal），用于生成 tarball 下载地址；
 	// 为空时按请求的 Host / X-Forwarded-* 推断。
 	PublicURL string
+	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单（DSH_EE_CORS_ORIGINS，逗号分隔）。
+	// 只接受完整 origin：https://host[:port]，http 只放行 localhost；为空时关闭 CORS。
+	CORSOrigins []string
 	// 可信反向代理的地址或网段（DSH_EE_TRUSTED_PROXIES，逗号分隔的 IP / CIDR）。
 	// 只有来自这些对端的 X-Forwarded-For/Host/Proto 才会被采信；不设置时只信任本机回环地址。
 	// 反向代理在别的机器、容器网络或云负载均衡后面时必须显式配置，否则客户端 IP 会记成
@@ -189,6 +192,13 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("DSH_EE_DB_WAIT: %w", err)
 		}
 		c.DBWait = d
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_CORS_ORIGINS")); v != "" {
+		origins, err := parseCORSOrigins(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_CORS_ORIGINS: %w", err)
+		}
+		c.CORSOrigins = origins
 	}
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)
