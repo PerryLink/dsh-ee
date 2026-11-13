@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"testing"
-	"time"
 )
 
 func TestEmbedRouteWhitelist(t *testing.T) {
@@ -60,22 +59,6 @@ func TestEmbedNextMatches(t *testing.T) {
 		if embedNextMatches(bad, "signup") {
 			t.Errorf("%q 应该拒绝", bad)
 		}
-	}
-}
-
-func TestEmbedCodesOneTimeAndExpired(t *testing.T) {
-	var codes embedCodes
-	codes.put("h1", embedCodePending{userID: 1, exp: time.Now().Add(time.Minute)})
-	if _, found, expired := codes.take("h1"); !found || expired {
-		t.Fatalf("第一次 take 应命中且未过期：found=%v expired=%v", found, expired)
-	}
-	if _, found, _ := codes.take("h1"); found {
-		t.Fatal("同一个 code 不能取第二次")
-	}
-
-	codes.put("h2", embedCodePending{userID: 1, exp: time.Now().Add(-time.Second)})
-	if _, found, expired := codes.take("h2"); !found || !expired {
-		t.Fatalf("过期 code 应标记 expired：found=%v expired=%v", found, expired)
 	}
 }
 

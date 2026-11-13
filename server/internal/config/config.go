@@ -88,6 +88,11 @@ type Config struct {
 	EmbedCrossSite bool
 	// ee_emb_ 嵌入会话有效期（DSH_EE_EMBED_SESSION_TTL），默认 2h；设计建议 1h–8h。
 	EmbedSessionTTL time.Duration
+	// mint 的共享固定窗口限流：每 IP 每分钟次数（DSH_EE_EMBED_MINT_PER_MINUTE），默认 30。
+	// 落数据库，多实例部署时是合计额度。
+	EmbedMintPerMinute int
+	// exchange 的共享固定窗口限流：每 IP 每分钟次数（DSH_EE_EMBED_EXCHANGE_PER_MINUTE），默认 60。
+	EmbedExchangePerMinute int
 }
 
 func Load() (*Config, error) {
@@ -292,7 +297,28 @@ func Load() (*Config, error) {
 	if c.EmbedCrossSite && len(c.EmbedOrigins) == 0 {
 		return nil, errors.New("DSH_EE_EMBED_CROSS_SITE 需要同时设置 DSH_EE_EMBED_ORIGINS：跨站嵌入只放行配置的宿主来源")
 	}
+	c.EmbedMintPerMinute, err = positiveIntEnv("DSH_EE_EMBED_MINT_PER_MINUTE", 30)
+	if err != nil {
+		return nil, err
+	}
+	c.EmbedExchangePerMinute, err = positiveIntEnv("DSH_EE_EMBED_EXCHANGE_PER_MINUTE", 60)
+	if err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// positiveIntEnv 读一个正整数环境变量；不设时用默认值，非法值让启动失败（fail closed）。
+func positiveIntEnv(key string, def int) (int, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 100000 {
+		return 0, fmt.Errorf("%s: 要是 1–100000 之间的整数", key)
+	}
+	return n, nil
 }
 
 func getenv(k, def string) string {

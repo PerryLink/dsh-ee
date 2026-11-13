@@ -97,6 +97,29 @@ func TestLoadEmbedConfig(t *testing.T) {
 	if cfg.EmbedSessionTTL != 2*time.Hour {
 		t.Fatalf("EmbedSessionTTL 默认 2h，实际 %v", cfg.EmbedSessionTTL)
 	}
+	if cfg.EmbedMintPerMinute != 30 || cfg.EmbedExchangePerMinute != 60 {
+		t.Fatalf("嵌入限流默认值不对：mint=%d exchange=%d", cfg.EmbedMintPerMinute, cfg.EmbedExchangePerMinute)
+	}
+}
+
+// 多实例共享限流的额度可配；非法值启动失败（fail closed）。
+func TestLoadEmbedRateLimits(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("DSH_EE_EMBED_MINT_PER_MINUTE", "7")
+	t.Setenv("DSH_EE_EMBED_EXCHANGE_PER_MINUTE", "120")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 报错：%v", err)
+	}
+	if cfg.EmbedMintPerMinute != 7 || cfg.EmbedExchangePerMinute != 120 {
+		t.Fatalf("限流配置没读到：mint=%d exchange=%d", cfg.EmbedMintPerMinute, cfg.EmbedExchangePerMinute)
+	}
+	for _, bad := range []string{"0", "-1", "abc", "100001"} {
+		t.Setenv("DSH_EE_EMBED_MINT_PER_MINUTE", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DSH_EE_EMBED_MINT_PER_MINUTE") {
+			t.Fatalf("DSH_EE_EMBED_MINT_PER_MINUTE=%q 应该让 Load 失败，实际 err=%v", bad, err)
+		}
+	}
 }
 
 func TestLoadEmbedOriginsFailClosed(t *testing.T) {

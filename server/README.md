@@ -145,6 +145,8 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_EMBED_SESSION_TTL` | `ee_emb_` 嵌入会话有效期，默认 `2h`，允许 `1m`–`8h`；过期后宿主重新 mint 即可，不提供 refresh。管理端设置（分钟）非 0 时覆盖 |
 | `DSH_EE_EXTENSION_TRUSTED_KEYS` | 受信任的扩展签名公钥（PEM 文件，可以放多把；公钥、证书、私钥文件都认）。**这是启动时读的只读兼容来源**：主要的信任根在库里（表 `trusted_signing_keys`，管理员用 `/api/admin/signing-keys` 增 / 换下 / 撤销，撤销后新装拒绝，历史保留）；同一个 key id 以库里的状态为准。不配时签了名的扩展也显示「不受信任」。改这个变量要重启，改库里立即生效 |
 | `DSH_EE_EXTENSION_REQUIRE_SIGNATURE` | 设为 `1` 时，没签名或签名无效的扩展不让安装（fail closed）；库里或 `DSH_EE_EXTENSION_TRUSTED_KEYS` 至少要有受信任的公钥，一把都没有时启动只警告、所有扩展都装不了。撤销的签名在任何策略下都不让新装。默认只在安装计划里提示，不阻断。见 [docs/plugins.md](../docs/plugins.md) §9.3 |
+| `DSH_EE_EMBED_MINT_PER_MINUTE` | `POST /api/embed/sessions` 的限流：每 IP 每分钟次数，默认 `30`，允许 1–100000。计数在数据库 `embed_rates` 表里，多实例部署时是合计额度 |
+| `DSH_EE_EMBED_EXCHANGE_PER_MINUTE` | `POST /api/auth/embed/exchange` 的限流：每 IP 每分钟次数，默认 `60`，允许 1–100000。同样跨实例合计；超限返回 `429` + `Retry-After: 60` |
 
 ## 接口
 
@@ -154,9 +156,9 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 |---|---|---|
 | POST | `/api/auth/login` | `{username, password}` |
 | POST | `/api/auth/logout` | |
-| POST | `/api/embed/sessions` | 宿主后端换一次性嵌入 code：`Authorization: Bearer ee_at_`（需 `agent` scope），`{app, host_origin, next?}`；需要开启 `DSH_EE_EMBED_CROSS_SITE`；60 秒一次性，绑定用户+应用+宿主 origin |
-| POST | `/api/auth/embed/exchange` | iframe 同源调用：`{code}` → `{token:"ee_emb_…", limited:true, expires_in}`；不 Set-Cookie |
-| POST | `/api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` 撤销本次嵌入会话；不影响网页会话 |
+| POST | `/api/embed/sessions` | 宿主后端换一次性嵌入 code：`Authorization: Bearer ee_at_`（需 `agent` scope），`{app, host_origin, next?}`；需要开启 `DSH_EE_EMBED_CROSS_SITE`；60 秒一次性（sha256 落库，跨实例可用），绑定用户+应用+宿主 origin；每 IP 限流 |
+| POST | `/api/auth/embed/exchange` | iframe 同源调用：`{code}` → `{token:"ee_emb_…", limited:true, expires_in}`；不 Set-Cookie；code 跨实例一次性，限流跨实例合计 |
+| POST | `/api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` 撤销本次嵌入会话（`revoked_at` 软删除，所有实例立即生效）；不影响网页会话 |
 | GET | `/api/admin/embed-settings` | 管理端嵌入设置页：部署基线（env，只读）+ 有效值 + 数据库设置；需要 `settings.manage` |
 | GET/PUT | `/api/settings`（embed 段） | `PUT /api/admin/settings` 的 `embed` 段：`crossSite`/`allowedOrigins`/`apps`/`sessionMinutes`；非管理员读不到该段 |
 | GET | `/api/auth/me` | 当前用户、角色、有效权限点、是否超级管理员 |

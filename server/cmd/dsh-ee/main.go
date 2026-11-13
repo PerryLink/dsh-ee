@@ -140,10 +140,12 @@ func run(log *slog.Logger) error {
 		EmbedCrossSite:            cfg.EmbedCrossSite,
 		EmbedSessionTTL:           cfg.EmbedSessionTTL,
 		// 每令牌的 /v1 与 /mcp 请求数；默认 60，可用 DSH_EE_RATE_LIMIT 调整或关闭
-		RateLimitPerMinute: cfg.RateLimitPerMinute,
-		LoginIPLimit:       cfg.LoginIPLimit,
-		LoginIPWindow:      cfg.LoginIPWindow,
-		Metrics:            cfg.Metrics,
+		RateLimitPerMinute:     cfg.RateLimitPerMinute,
+		LoginIPLimit:           cfg.LoginIPLimit,
+		LoginIPWindow:          cfg.LoginIPWindow,
+		Metrics:                cfg.Metrics,
+		EmbedMintPerMinute:     cfg.EmbedMintPerMinute,
+		EmbedExchangePerMinute: cfg.EmbedExchangePerMinute,
 	}, log)
 	if cfg.RateLimitPerMinute > 0 {
 		log.Info("已启用公开协议面限流", "per_minute_per_token", cfg.RateLimitPerMinute)
@@ -152,6 +154,7 @@ func run(log *slog.Logger) error {
 	}
 
 	go sweepSessions(ctx, st, log)
+	go sweepEmbed(ctx, st, log)
 	go srv.RunBackground(ctx)
 
 	httpSrv := &http.Server{
@@ -229,6 +232,35 @@ func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 			} else if n > 0 {
 				log.Info("已清理过期设备码", "count", n)
 			}
+		}
+	}
+}
+
+// sweepEmbed 启动时清理一次、之后每分钟清理过期的一次性 embed code 与限流窗口。
+// code TTL 只有 60 秒，靠每小时的总清理太慢；多实例各自跑一遍是幂等的（DELETE 条件相同）。
+func sweepEmbed(ctx context.Context, st *store.Store, log *slog.Logger) {
+	clean := func() {
+		if n, err := st.DeleteExpiredEmbedCodes(ctx); err != nil {
+			log.Warn("清理过期嵌入 code 失败", "err", err)
+		} else if n > 0 {
+			log.Info("已清理过期嵌入 code", "count", n)
+		}
+		// 只保留当前及以后的窗口；上一分钟的限流行已经没用了。
+		if n, err := st.DeleteOldEmbedRates(ctx, time.Now().UTC().Truncate(time.Minute)); err != nil {
+			log.Warn("清理嵌入限流窗口失败", "err", err)
+		} else if n > 0 {
+			log.Info("已清理嵌入限流窗口", "count", n)
+		}
+	}
+	clean()
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			clean()
 		}
 	}
 }

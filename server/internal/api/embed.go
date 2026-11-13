@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/embed"
@@ -33,14 +33,23 @@ import (
 // 有效配置 = 部署环境变量（只读基线）∪ 管理端 settings.embed（DB 覆盖/追加）：
 // crossSite 以 DB 显式值为准，allowedOrigins 取并集，sessionMinutes 非 0 时覆盖 env。
 // 默认关闭；只有配置了来源且开关打开时才可用（fail closed）。
+//
+// 多实例：一次性 code 落 embed_codes 表、限流落 embed_rates 表、会话在 embed_sessions 表，
+// 三份状态都在数据库里，多个实例（不同进程/端口）共享同一份语义：A 实例 mint、B 实例
+// exchange 能成功；同一个 code 并发 exchange 只有一个成功；限流额度是合计而不是每实例一份。
 
 const (
 	embedTokenPrefix = "ee_emb_"
 	// code 60 秒有效；Options.EmbedCodeTTL 只给自动化测试缩短用。
-	embedCodeTTL           = 60 * time.Second
-	embedMintPerMinute     = 30
-	embedExchangePerMinute = 60
-	defaultEmbedSessionTTL = 2 * time.Hour
+	embedCodeTTL = 60 * time.Second
+	// mint/exchange 的共享固定窗口限流（每 IP 每分钟）；Options 可覆盖，默认值见下方 getter。
+	defaultEmbedMintPerMinute     = 30
+	defaultEmbedExchangePerMinute = 60
+	// 每用户同时有效的嵌入会话上限；超过时撤销最旧的，防止宿主反复握手把表撑大。
+	defaultEmbedMaxSessionsPerUser = 5
+	defaultEmbedSessionTTL         = 2 * time.Hour
+	// 固定窗口限流 429 时建议的等待时间（窗口最长 60 秒）。
+	embedRateRetryAfter = "60"
 )
 
 // embedPrincipal 是一次 ee_emb_ 请求的会话信息（放进请求上下文）。
@@ -87,6 +96,44 @@ func (s *Server) embedCodeTTL() time.Duration {
 		return s.opts.EmbedCodeTTL
 	}
 	return embedCodeTTL
+}
+
+// embedMintLimit / embedExchangeLimit / embedMaxSessions 是运维可配的共享额度与每用户会话上限。
+// Options 为 0 时用默认值（config 层已经校验非 0 的正整数；这里给测试与直接构造 Options 的调用兜底）。
+func (s *Server) embedMintLimit() int {
+	if s.opts.EmbedMintPerMinute > 0 {
+		return s.opts.EmbedMintPerMinute
+	}
+	return defaultEmbedMintPerMinute
+}
+
+func (s *Server) embedExchangeLimit() int {
+	if s.opts.EmbedExchangePerMinute > 0 {
+		return s.opts.EmbedExchangePerMinute
+	}
+	return defaultEmbedExchangePerMinute
+}
+
+func (s *Server) embedMaxSessions() int {
+	if s.opts.EmbedMaxSessionsPerUser > 0 {
+		return s.opts.EmbedMaxSessionsPerUser
+	}
+	return defaultEmbedMaxSessionsPerUser
+}
+
+// embedRateAllow 在数据库的共享固定窗口里消费一次额度（多实例共用同一份额度）。
+// kind 区分用途（mint / mint-user / exchange），subject 是 IP 或用户 id。
+// 数据库出错时返回 error：限流是防刷的，宁可 500 也不静默放开。
+func (s *Server) embedRateAllow(ctx context.Context, kind, subject string, limit int) (bool, error) {
+	window := time.Now().UTC().Truncate(time.Minute)
+	_, allow, err := s.store.TakeEmbedRate(ctx, kind+":"+subject, window, limit)
+	return allow, err
+}
+
+// writeEmbedRateLimited 写 429：老宿主用 Retry-After 知道该等多久（固定窗口最长 60 秒）。
+func writeEmbedRateLimited(w http.ResponseWriter, requestID, stage string) {
+	w.Header().Set("Retry-After", embedRateRetryAfter)
+	writeEmbedErr(w, requestID, stage, http.StatusTooManyRequests, "rate_limited", "请求太频繁，请稍后再试")
 }
 
 // embedConfig 解析「环境变量基线 + 管理端设置」。CSP 中间件、mint、exchange、会话校验共用，
@@ -159,47 +206,6 @@ func writeEmbedErr(w http.ResponseWriter, requestID, stage string, status int, c
 	})
 }
 
-// embedCodePending 是一个等待 exchange 的一次性登录码（只存哈希，取用即删）。
-type embedCodePending struct {
-	userID     int64
-	appSlug    string
-	appTitle   string
-	hostOrigin string
-	next       string
-	exp        time.Time
-}
-
-type embedCodes struct {
-	mu sync.Mutex
-	m  map[string]embedCodePending
-}
-
-func (l *embedCodes) put(hash string, p embedCodePending) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.m == nil {
-		l.m = map[string]embedCodePending{}
-	}
-	now := time.Now()
-	for k, v := range l.m {
-		if now.After(v.exp) {
-			delete(l.m, k)
-		}
-	}
-	l.m[hash] = p
-}
-
-// take 取走 code；found=false 表示无效，expired=true 表示找到了但已过期（错误码要区分）。
-func (l *embedCodes) take(hash string) (p embedCodePending, found, expired bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	p, found = l.m[hash]
-	if found {
-		delete(l.m, hash)
-	}
-	return p, found, found && time.Now().After(p.exp)
-}
-
 // auditEmbedDenied 记录一次被拒绝的嵌入请求（不记 code / 令牌明文），带上已知的 app/host。
 func (s *Server) auditEmbedDenied(r *http.Request, u *store.User, reason string, detail map[string]any) {
 	d := map[string]any{"reason": reason}
@@ -224,8 +230,12 @@ func (s *Server) handleEmbedSessionCreate(w http.ResponseWriter, r *http.Request
 		writeEmbedErr(w, rid, "mint", http.StatusNotFound, "embed_disabled", "没有开启跨站嵌入")
 		return
 	}
-	if !s.embedMintRate.allow(s.clientIP(r)) {
-		writeEmbedErr(w, rid, "mint", http.StatusTooManyRequests, "rate_limited", "请求太频繁，请稍后再试")
+	// 共享固定窗口限流：多实例共用同一份额度（同一 IP 在所有实例上的 mint 合计）。
+	if allow, err := s.embedRateAllow(r.Context(), "mint", s.clientIP(r), s.embedMintLimit()); err != nil {
+		s.internalErr(w, r, err)
+		return
+	} else if !allow {
+		writeEmbedRateLimited(w, rid, "mint")
 		return
 	}
 	p, ok := s.dshPrincipal(w, r)
@@ -241,6 +251,14 @@ func (s *Server) handleEmbedSessionCreate(w http.ResponseWriter, r *http.Request
 	if !p.Scopes.Has(rbac.ScopeAgent) {
 		s.auditEmbedDenied(r, p.User, "agent_scope_required", nil)
 		writeEmbedErr(w, rid, "mint", http.StatusForbidden, "forbidden", "这个令牌不能用于嵌入：需要 agent 范围")
+		return
+	}
+	// 每用户维度是 IP 维度之外的补充：换 IP 也不能无限 mint（防刷额度，不产生审计噪音）。
+	if allow, err := s.embedRateAllow(r.Context(), "mint-user", strconv.FormatInt(p.User.ID, 10), s.embedMintLimit()); err != nil {
+		s.internalErr(w, r, err)
+		return
+	} else if !allow {
+		writeEmbedRateLimited(w, rid, "mint")
 		return
 	}
 	var req struct {
@@ -302,9 +320,19 @@ func (s *Server) handleEmbedSessionCreate(w http.ResponseWriter, r *http.Request
 	}
 	codeTTL := s.embedCodeTTL()
 	code := secret.Token()
-	s.embedCodes.put(secret.Hash(code), embedCodePending{
-		userID: p.User.ID, appSlug: a.Slug, appTitle: sp.Title, hostOrigin: hostOrigin, next: next, exp: time.Now().Add(codeTTL),
-	})
+	// 落库而不是进程内 map：多实例下 A mint、B exchange 也能兑。只存哈希。
+	if err := s.store.CreateEmbedCode(r.Context(), store.EmbedCode{
+		CodeHash:   secret.Hash(code),
+		UserID:     p.User.ID,
+		AppSlug:    a.Slug,
+		AppTitle:   sp.Title,
+		HostOrigin: hostOrigin,
+		Next:       next,
+		ExpiresAt:  time.Now().Add(codeTTL),
+	}); err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
 	s.auditAs(r, p.User, auditEmbedCreate, a.Slug, map[string]any{"app": a.Slug, "host_origin": hostOrigin})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -354,8 +382,12 @@ func (s *Server) handleEmbedExchange(w http.ResponseWriter, r *http.Request) {
 		writeEmbedErr(w, rid, "exchange", http.StatusNotFound, "embed_disabled", "没有开启跨站嵌入")
 		return
 	}
-	if !s.embedExchangeRate.allow(s.clientIP(r)) {
-		writeEmbedErr(w, rid, "exchange", http.StatusTooManyRequests, "rate_limited", "请求太频繁，请稍后再试")
+	// 共享固定窗口限流：多实例共用同一份额度（同一 IP 在所有实例上的 exchange 合计）。
+	if allow, err := s.embedRateAllow(r.Context(), "exchange", s.clientIP(r), s.embedExchangeLimit()); err != nil {
+		s.internalErr(w, r, err)
+		return
+	} else if !allow {
+		writeEmbedRateLimited(w, rid, "exchange")
 		return
 	}
 	var req struct {
@@ -368,19 +400,23 @@ func (s *Server) handleEmbedExchange(w http.ResponseWriter, r *http.Request) {
 		writeEmbedErr(w, rid, "exchange", http.StatusBadRequest, "embed_code_invalid", "登录码无效")
 		return
 	}
-	pending, found, expired := s.embedCodes.take(secret.Hash(req.Code))
-	if expired {
+	// 原子消费（跨实例一次性）：数据库里 consumed_at 只允许从 NULL 改一次。
+	pending, err := s.store.ConsumeEmbedCode(r.Context(), secret.Hash(req.Code))
+	switch {
+	case errors.Is(err, store.ErrEmbedCodeExpired):
 		writeEmbedErr(w, rid, "exchange", http.StatusBadRequest, "embed_code_expired", "登录码已过期，请在宿主页面重新打开")
 		return
-	}
-	if !found {
+	case notFound(err):
 		s.auditEmbedDenied(r, nil, "code_invalid", nil)
 		writeEmbedErr(w, rid, "exchange", http.StatusBadRequest, "embed_code_invalid", "登录码无效")
 		return
+	case err != nil:
+		s.internalErr(w, r, err)
+		return
 	}
-	u, err := s.store.GetUser(r.Context(), pending.userID)
+	u, err := s.store.GetUser(r.Context(), pending.UserID)
 	if notFound(err) || (err == nil && (u.Disabled || u.AccountType != store.AccountHuman)) {
-		s.auditEmbedDenied(r, nil, "user_unavailable", map[string]any{"app": pending.appSlug, "host_origin": pending.hostOrigin})
+		s.auditEmbedDenied(r, nil, "user_unavailable", map[string]any{"app": pending.AppSlug, "host_origin": pending.HostOrigin})
 		writeEmbedErr(w, rid, "exchange", http.StatusBadRequest, "embed_code_invalid", "登录码无效")
 		return
 	}
@@ -389,20 +425,21 @@ func (s *Server) handleEmbedExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := embedTokenPrefix + secret.Token()
-	if err := s.store.CreateEmbedSession(r.Context(), secret.Hash(token), u.ID, pending.appSlug, pending.hostOrigin, cfg.sessionTTL); err != nil {
+	// 会话在共享表里，并且执行每用户会话上限（超过时撤销最旧的）。
+	if err := s.store.CreateEmbedSession(r.Context(), secret.Hash(token), u.ID, pending.AppSlug, pending.HostOrigin, cfg.sessionTTL, s.embedMaxSessions()); err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
-	s.auditAs(r, u, auditLogin, u.Username, map[string]any{"via": "embed", "app": pending.appSlug, "host_origin": pending.hostOrigin, "limited": true})
+	s.auditAs(r, u, auditLogin, u.Username, map[string]any{"via": "embed", "app": pending.AppSlug, "host_origin": pending.HostOrigin, "limited": true})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      token,
 		"token_type": "Bearer",
 		"expires_in": int(cfg.sessionTTL.Seconds()),
-		"app":        map[string]string{"slug": pending.appSlug, "title": pending.appTitle},
+		"app":        map[string]string{"slug": pending.AppSlug, "title": pending.AppTitle},
 		"user":       map[string]string{"username": u.Username, "display_name": u.DisplayName},
 		"limited":    true,
-		"next":       pending.next,
+		"next":       pending.Next,
 		"request_id": rid,
 	})
 }
