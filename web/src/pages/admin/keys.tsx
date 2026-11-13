@@ -83,7 +83,7 @@ export default function AdminTokens() {
               <Field label={t("tokens.owner")}><Combobox value={userId} onChange={setUserId} placeholder={t("tokens.chooseOwner")} options={(users.data ?? []).filter((u) => !u.disabled).map((u) => ({ value: String(u.id), label: u.display_name ? `${u.display_name} (${u.username})` : u.username, hint: u.account_type === "bot" ? `bot · ${u.department}` : u.department }))} /></Field>
               <Field label={t("tokens.name")}><input className={inputCls} required value={name} onChange={(e) => setName(e.target.value)} /></Field>
               <Field label={t("tokens.clientKind")}>
-                <select className={inputCls} value={clientKind} onChange={(e) => setClientKind(e.target.value as TokenClientKind)}>
+                <select aria-label={t("tokens.clientKind")} className={inputCls} value={clientKind} onChange={(e) => setClientKind(e.target.value as TokenClientKind)}>
                   {(["dsh", "third_party"] as const).map((kind) => <option key={kind} value={kind}>{t(`tokens.clientKinds.${kind}`)}</option>)}
                 </select>
               </Field>

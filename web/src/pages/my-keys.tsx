@@ -110,7 +110,7 @@ export default function MyTokens() {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label={t("tokens.name")}><input className={inputCls} required value={name} onChange={(e) => setName(e.target.value)} /></Field>
               <Field label={t("tokens.clientKind")}>
-                <select className={inputCls} value={clientKind} onChange={(e) => setClientKind(e.target.value as TokenClientKind)}>
+                <select aria-label={t("tokens.clientKind")} className={inputCls} value={clientKind} onChange={(e) => setClientKind(e.target.value as TokenClientKind)}>
                   {(["dsh", "third_party"] as const).map((kind) => <option key={kind} value={kind}>{t(`tokens.clientKinds.${kind}`)}</option>)}
                 </select>
               </Field>

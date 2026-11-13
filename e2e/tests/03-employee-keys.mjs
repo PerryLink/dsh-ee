@@ -47,7 +47,7 @@ export default async function (t) {
     await page.goto(`${BASE}/tokens`);
     await page.getByRole("button", { name: "生成令牌" }).first().click();
     // 新表单默认按第三方 Harness 处理；DSH 用户可显式改成 DSH 接入
-    assertEq(await page.getByLabel("客户端类型", { exact: true }).inputValue(), "third_party", "令牌默认客户端类型");
+    assertEq(await page.locator("form select").inputValue(), "third_party", "令牌默认客户端类型");
     await page.getByLabel("名称", { exact: true }).fill("李娜的 DSH");
     await page.locator("form").getByRole("button", { name: "生成令牌" }).click();
     const pre = page.locator("pre").filter({ hasText: /^\s*ee_at_\S+\s*$/ }).first();
@@ -78,9 +78,9 @@ export default async function (t) {
     // 显式选 DSH 接入：给不用设备码登录、手工填进 DSH 的令牌
     await page.getByRole("button", { name: "生成令牌" }).first().click();
     await page.getByLabel("名称", { exact: true }).fill("李娜的 DSH 手工");
-    await page.getByLabel("客户端类型", { exact: true }).selectOption("dsh");
+    await page.locator("form select").selectOption("dsh");
     await page.locator("form").getByRole("button", { name: "生成令牌" }).click();
-    await page.getByText("令牌已生成").waitFor();
+    await page.locator("form").waitFor({ state: "hidden" }); // 等 POST 完成、表单收起
     const mine2 = await api(page, "GET", "/api/me/tokens");
     const dshManual = mine2.data.tokens.find((item) => item.name === "李娜的 DSH 手工");
     assertEq(dshManual?.client_kind, "dsh", "可显式选择 DSH 接入");
