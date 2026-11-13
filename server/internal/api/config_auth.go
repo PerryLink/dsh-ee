@@ -17,7 +17,7 @@ func (s *Server) requireConfig(next http.Handler) http.Handler {
 			user.ServeHTTP(w, r)
 			return
 		}
-		p, err := s.resolveBearer(r.Context(), strings.TrimSpace(token), clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+		p, err := s.resolveBearer(r.Context(), strings.TrimSpace(token), s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 		if err != nil {
 			if be, ok := err.(bearerError); ok {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "令牌无效或已过期", "code": string(be)})
