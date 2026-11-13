@@ -117,45 +117,54 @@ type tokenInput struct {
 	ClientName string `json:"client_name"`
 }
 
+// scopeAllowed 判断这个 scope 能不能授给拥有权限 a 的账号。
+// 手工令牌、API 客户端（client_credentials）共用同一套映射，避免两条签发路径的权限口径漂移。
+func scopeAllowed(a *rbac.Access, scope string) bool {
+	switch scope {
+	case rbac.ScopeModels:
+		return a.Has(rbac.LLMUse)
+	case rbac.ScopeRegistryRead:
+		return a.Has(rbac.RegistryUse)
+	case rbac.ScopeRegistryPublish:
+		return a.Has(rbac.RegistryPublish)
+	case rbac.ScopeHub, rbac.ScopeConnections:
+		return a.Has(rbac.PortalView)
+	case rbac.ScopeAgent:
+		return a.Has(rbac.PortalView)
+	case rbac.ScopeConfig:
+		return a.Has(rbac.FieldsManage, rbac.RolesManage)
+	default:
+		// admin 不能通过签发接口下发，未知 scope 也不认
+		return false
+	}
+}
+
 func validTokenScopes(a *rbac.Access, scopes []string) ([]string, bool) {
 	seen := map[string]bool{}
 	out := []string{}
 	for _, scope := range scopes {
-		if scope == rbac.ScopeAdmin || seen[scope] {
+		if seen[scope] || !scopeAllowed(a, scope) {
 			return nil, false
 		}
 		seen[scope] = true
-		switch scope {
-		case rbac.ScopeModels:
-			if !a.Has(rbac.LLMUse) {
-				return nil, false
-			}
-		case rbac.ScopeRegistryRead:
-			if !a.Has(rbac.RegistryUse) {
-				return nil, false
-			}
-		case rbac.ScopeRegistryPublish:
-			if !a.Has(rbac.RegistryPublish) {
-				return nil, false
-			}
-		case rbac.ScopeHub, rbac.ScopeConnections:
-			if !a.Has(rbac.PortalView) {
-				return nil, false
-			}
-		case rbac.ScopeAgent:
-			if !a.Has(rbac.PortalView) {
-				return nil, false
-			}
-		case rbac.ScopeConfig:
-			if !a.Has(rbac.FieldsManage, rbac.RolesManage) {
-				return nil, false
-			}
-		default:
-			return nil, false
-		}
 		out = append(out, scope)
 	}
 	return out, true
+}
+
+// allowedScopes 返回 scopes 里当前账号还能用的那部分（保序、去重）。
+// client_credentials 用它把注册时申请的 scope 收敛到 owner 当前权限：管理员收回权限后立即生效。
+func allowedScopes(a *rbac.Access, scopes []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, scope := range scopes {
+		if seen[scope] || !scopeAllowed(a, scope) {
+			continue
+		}
+		seen[scope] = true
+		out = append(out, scope)
+	}
+	return out
 }
 
 // issueClientKind 决定新令牌的客户端类型。

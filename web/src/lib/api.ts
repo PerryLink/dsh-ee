@@ -473,7 +473,7 @@ export interface AuditLog {
   target: string;
   detail: Record<string, unknown> | null;
   ip: string;
-  via: "web" | "token" | "agent" | "system";
+  via: "web" | "token" | "agent" | "system" | "client_credentials";
   token_id: number | null;
   client: string;
   created_at: string;

@@ -7,7 +7,7 @@ import { Combobox } from "../../components/pickers";
 import { LoadState } from "../../components/api-ui";
 
 const PAGE = 50;
-const viaOptions = ["web", "token", "agent", "system"] as const;
+const viaOptions = ["web", "token", "agent", "system", "client_credentials"] as const;
 
 export default function AdminAudit() {
   const { t } = useTranslation();

@@ -101,6 +101,9 @@ type Options struct {
 	EmbedMaxSessionsPerUser int
 	// 企业目录（directory.go）：tarball 来源的主机白名单；空表示只接受公网 https 地址。
 	DirectoryTarballHosts []string
+	// API 客户端 client_credentials（clients.go）：每 IP 每分钟最多签发几次；0 表示关闭限流，
+	// 配置默认 120（DSH_EE_CLIENT_TOKEN_PER_MINUTE）。只防撞库，正常集成换 token 远低于这个量。
+	ClientTokenPerMinute int
 }
 
 type Server struct {
@@ -112,6 +115,8 @@ type Server struct {
 	loginIPLimiter  *loginIPLimiter
 	deviceCodeRate  *ipRate
 	deviceTokenRate *ipRate
+	// client_credentials 的每 IP 限流；nil 表示关闭（见 clients.go）
+	clientTokenRate *ipRate
 	// 启动时间与登录计数，只给 /metrics 用
 	startedAt            time.Time
 	loginFailures        atomic.Uint64
@@ -197,6 +202,9 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}
 	s.loginIPLimiter = newLoginIPLimiter(opts.LoginIPLimit, opts.LoginIPWindow)
+	if opts.ClientTokenPerMinute > 0 {
+		s.clientTokenRate = newIPRate(opts.ClientTokenPerMinute)
+	}
 	s.startedAt = time.Now()
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute

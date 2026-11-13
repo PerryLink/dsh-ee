@@ -64,3 +64,29 @@ func TestTokenClientKindMigration(t *testing.T) {
 		}
 	}
 }
+
+// 0036：API 客户端注册（client_credentials）与审计来源加宽。
+func TestAPIClientsMigration(t *testing.T) {
+	body, err := migrationFS.ReadFile("migrations/0036_api_clients.sql")
+	if err != nil {
+		t.Fatalf("读 0036 迁移: %v", err)
+	}
+	joined := strings.Join(splitStatements(string(body)), "\n")
+	for _, want := range []string{
+		"CREATE TABLE api_clients",
+		"client_id     VARCHAR(64)   NOT NULL",
+		"secret_hash   CHAR(64)      NOT NULL",
+		"owner_user_id BIGINT        NOT NULL",
+		"scopes        VARCHAR(1024) NOT NULL",
+		"client_kind   VARCHAR(16)   NOT NULL DEFAULT 'third_party'",
+		"created_by    BIGINT        NOT NULL DEFAULT 0",
+		"disabled_at   DATETIME(3)   NULL",
+		"last_used_at  DATETIME(3)   NULL",
+		"UNIQUE KEY uk_api_clients_client_id (client_id)",
+		"ALTER TABLE audit_logs MODIFY COLUMN via VARCHAR(32)",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("0036 迁移缺少 %q：\n%s", want, joined)
+		}
+	}
+}

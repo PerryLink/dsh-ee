@@ -39,6 +39,7 @@ Go 写的 dsh-ee 服务端。目前实现：
 
 - **统一接入令牌**：`ee_at_…` 同时用于 npm 源、模型网关（`/v1`）、技能目录（`/api/dsh/*`）与企业连接（`/mcp`）。每次请求按账号 RBAC 与令牌 scope 求交集，可配置令牌级月度额度、模型范围和有效期；明文只显示一次，服务端只存 sha256。旧 `ee_npm_…`、`sk-ee-…` 保持原有权限与额度行为。
 - **接入限流与请求 ID**：`/v1/*` 与 `/mcp` 按令牌做固定窗口限流（同一令牌共用一份额度），默认每分钟 60 次，可用 `DSH_EE_RATE_LIMIT` 调整，`0` 或 `off` 关闭。超限返回 429，带 `Retry-After` 与 `X-RateLimit-Limit/Remaining/Reset`；正常响应也带 `X-RateLimit-*`，便于客户端提前退避。所有响应带 `X-Request-Id`：请求里已有合法值时原样沿用（不覆盖），否则服务端生成；同一个 id 会写进访问日志，方便和客户端 / 反向代理对账。限流只影响错误头，不改 `/v1` 的 OpenAI 错误体与 `/mcp` 的 JSON-RPC 错误体形状。
+- **API 客户端（client_credentials）**：给第三方 Harness / CI 按集成方注册 `client_id` / `client_secret`（`POST /api/admin/clients`，需要 `keys.manage`），客户端用 `POST /api/auth/client-token` 换 1 小时有效的 `ee_at_`，不必把管理员令牌交给对方。scope 取注册范围 ∩ owner 账号当前权限（收权立即生效）；secret 只存 sha256、只在创建时显示一次；凭据失败统一 `invalid_client`，换 token 按 IP 限流。详见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) §6。
 - **设备登录**：`POST /api/device/code` 发起 RFC 8628 设备码流程，员工在 `/device` 登录并确认；设备令牌只能领取一次，默认滑动有效 90 天，同账号同设备再次登录会吊销旧令牌。机器人账号由管理员创建并指定负责人，不能会话登录。
 - **技能、提示词、微应用**：存在 `assets` / `asset_versions`；员工提交的版本在白名单模式下要审核。DSH 通过 `GET /api/dsh/catalog`（带 ETag，没变化回 304）拿到自己此刻应有的目录，`GET /api/dsh/skills/{name}` 取正文。提示词与微应用以「只给人调用」的 skill 下发（DSH 里输入 `/名字`）。
 - **企业连接（MCP 网关）**：`/mcp` 是一个 Streamable HTTP MCP 服务，聚合员工有权使用的全部连接，工具名 `<连接>__<工具>`。上游可以是 MCP 服务，也可以是导入的 OpenAPI 文档（每个操作一个工具，写操作默认关闭）。凭据用主密钥加密存在 dsh-ee，按员工逐次校验后带上凭据转发，调用记入 `connection_calls`。同一连接可有多份命名共享凭据，`spec.auth.shared_name` 选择实际使用的一份，空值继续用原来的默认凭据；最近调用记录所选名称。详见 [docs/named-shared-credentials.md](../docs/named-shared-credentials.md)。GET `/mcp` 打开事件流，能力目录变化时推 `notifications/tools/list_changed`。
@@ -139,6 +140,7 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_LOGIN_IP_WINDOW` | 按 IP 统计登录失败的固定窗口，默认 `15m`，取值 `1m`～`24h` |
 | `DSH_EE_METRICS` | 设为 `true` 时开放 `GET /metrics`（Prometheus 文本格式，只允许本机 / 内网抓取）；默认关闭 |
 | `DSH_EE_RATE_LIMIT` | `/v1/*` 与 `/mcp` 的每令牌限流，单位「次/分钟」，默认 `60`；`0` 或 `off` 关闭 |
+| `DSH_EE_CLIENT_TOKEN_PER_MINUTE` | `POST /api/auth/client-token`（API 客户端 client_credentials）每 IP 每分钟最多换几次 token，默认 `120`；`0` 或 `off` 关闭。只防用错误 secret 撞库 / 刷库 |
 | `DSH_EE_TRUSTED_PROXIES` | 可信反向代理的地址 / CIDR（逗号分隔）。只有来自这些对端的 `X-Forwarded-For`、`X-Forwarded-Host`、`X-Forwarded-Proto` 才会被采信；默认只有 `127.0.0.1/32` 与 `::1/128`。代理在别的机器、容器网络或云负载均衡后面时必须配置 |
 | `DSH_EE_EMBED_ORIGINS` | 允许用 iframe 嵌入微应用网页（`/a/*`）的宿主来源，逗号分隔的完整 origin，如 `https://harness.acme.internal,http://localhost:5173`；只接受 https（`http://localhost` 等回环地址例外），非法值启动失败；不设时只允许同站嵌入（`frame-ancestors 'self'`）。接入方式、embed 参数与 postMessage 协议见 [docs/embedding.md](../docs/embedding.md) |
 | `DSH_EE_EMBED_CROSS_SITE` | 跨站 iframe 嵌入 v1 总开关，默认关闭。开启后 `POST /api/embed/sessions`、`POST /api/auth/embed/exchange` 才可用，且必须同时设置 `DSH_EE_EMBED_ORIGINS`（否则启动失败）。管理端「系统设置 → 跨站嵌入」可显式覆盖（数据库值优先） |
@@ -213,6 +215,9 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | DELETE | `/api/admin/keys/{id}` | 吊销旧版 key |
 | GET / POST | `/api/admin/tokens` | 统一令牌筛选 / 给员工或机器人下发令牌 |
 | POST | `/api/admin/tokens/revoke` | 按 id、用户、设备或部门批量吊销 |
+| POST | `/api/auth/client-token` | API 客户端换令牌 `{client_id, client_secret}` → `{access_token, token_type, expires_in, scopes, client_id, client_name, client_kind, token_id}`；1 小时有效，无需会话；凭据错误统一 401 `invalid_client`，按 IP 限流 |
+| GET / POST | `/api/admin/clients` | API 客户端列表（含禁用，带 owner 与最近使用）/ 注册 `{name, owner_user_id, scopes?}`；`client_secret` 只返回一次；需要 `keys.manage` |
+| DELETE | `/api/admin/clients/{client_id}` | 注销 API 客户端（幂等）；已签出的令牌按自身有效期过期 |
 | POST | `/api/device/code`、`/api/device/token` | 设备码发起与轮询领取（无需会话） |
 | GET / POST | `/api/device/{user_code}` | 查看设备信息 / 登录后批准或拒绝 |
 | GET | `/api/settings` | 系统设置（登录即可读） |

@@ -200,3 +200,40 @@ func TestRateLimitConfig(t *testing.T) {
 		})
 	}
 }
+
+// API 客户端（client_credentials）的每 IP 限流开关：默认 120，0/off 关闭，非法值启动失败。
+func TestClientTokenRateLimitConfig(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		want    int
+		wantErr bool
+	}{
+		{name: "默认每分钟 120 次", env: "", want: 120},
+		{name: "环境变量调整", env: "30", want: 30},
+		{name: "0 关闭", env: "0", want: 0},
+		{name: "off 关闭", env: "off", want: 0},
+		{name: "false 关闭", env: "false", want: 0},
+		{name: "负数非法", env: "-1", wantErr: true},
+		{name: "非数字非法", env: "abc", wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("DSH_EE_CLIENT_TOKEN_PER_MINUTE", c.env)
+			cfg, err := Load()
+			if c.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "DSH_EE_CLIENT_TOKEN_PER_MINUTE") {
+					t.Fatalf("期望 DSH_EE_CLIENT_TOKEN_PER_MINUTE 报错，得到 %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.ClientTokenPerMinute != c.want {
+				t.Fatalf("ClientTokenPerMinute = %d，期望 %d", cfg.ClientTokenPerMinute, c.want)
+			}
+		})
+	}
+}

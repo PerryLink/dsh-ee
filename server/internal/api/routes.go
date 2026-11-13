@@ -116,6 +116,9 @@ func (s *Server) routes() []route {
 		pub("POST /api/auth/login", s.handleLogin),
 		// 令牌自省：Bearer 自身（第三方 Harness/SDK）或管理员网页会话查任意令牌
 		pub("POST /api/auth/introspect", s.handleIntrospect),
+		// API 客户端 client_credentials（docs/token-lifecycle.md）：第三方 Harness / CI 用自己的
+		// client_id + client_secret 换 access token，不需要把管理员令牌交给对方。
+		pub("POST /api/auth/client-token", s.handleClientToken),
 		pub("POST /api/auth/demo-login", s.handleDemoLogin),
 		pub("GET /demo/intro/{lang}", s.handleDemoVideo),
 		pub("POST /api/auth/logout", s.handleLogout),
@@ -206,6 +209,11 @@ func (s *Server) routes() []route {
 		usr("GET /api/admin/tokens", s.handleAdminTokens),
 		usr("POST /api/admin/tokens", s.handleIssueToken),
 		usr("POST /api/admin/tokens/revoke", s.handleRevokeTokens),
+		// API 客户端注册（docs/token-lifecycle.md）：管理员用网页会话（keys.manage）创建 / 查看 / 注销；
+		// 换 token 走公开的 POST /api/auth/client-token，凭据只在创建响应里显示一次。
+		prm("GET /api/admin/clients", s.handleListAPIClients, rbac.KeysManage),
+		prm("POST /api/admin/clients", s.handleCreateAPIClient, rbac.KeysManage),
+		prm("DELETE /api/admin/clients/{client_id}", s.handleDisableAPIClient, rbac.KeysManage),
 
 		// 系统设置：登录即可读（前端要用组织名、作用域、评分开关），按段落校验写权限
 		usr("GET /api/settings", s.handleGetSettings),

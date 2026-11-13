@@ -140,7 +140,9 @@ func run(log *slog.Logger) error {
 		EmbedCrossSite:            cfg.EmbedCrossSite,
 		EmbedSessionTTL:           cfg.EmbedSessionTTL,
 		// 每令牌的 /v1 与 /mcp 请求数；默认 60，可用 DSH_EE_RATE_LIMIT 调整或关闭
-		RateLimitPerMinute:     cfg.RateLimitPerMinute,
+		RateLimitPerMinute: cfg.RateLimitPerMinute,
+		// API 客户端 client_credentials 每 IP 每分钟签发次数；默认 120，可用 DSH_EE_CLIENT_TOKEN_PER_MINUTE 调整或关闭
+		ClientTokenPerMinute:   cfg.ClientTokenPerMinute,
 		LoginIPLimit:           cfg.LoginIPLimit,
 		LoginIPWindow:          cfg.LoginIPWindow,
 		Metrics:                cfg.Metrics,
