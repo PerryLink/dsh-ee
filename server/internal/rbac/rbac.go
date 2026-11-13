@@ -118,6 +118,11 @@ var DefaultMenus = []Menu{
 		{Kind: "page", Title: "接入指南", Path: "/setup", PageKey: "setup", Icon: "Terminal", Permission: PortalView},
 		{Kind: "page", Title: "我的令牌", Path: "/tokens", PageKey: "my-keys", Icon: "KeyRound", Permission: KeysSelf},
 	}},
+	// 开发文档与开发样例：页面是固定路由（/docs、/examples），菜单只负责侧栏入口与权限
+	{Kind: "group", Title: "开发", Children: []Menu{
+		{Kind: "page", Title: "开发文档", Path: "/docs", PageKey: "dev-docs", Icon: "BookMarked", Permission: PortalView},
+		{Kind: "page", Title: "开发样例", Path: "/examples", PageKey: "dev-examples", Icon: "FlaskConical", Permission: PortalView},
+	}},
 	// 以下是管理后台：网页侧栏在 /admin 页面里只显示这些分组（见 web/src/components/layout.tsx）
 	{Kind: "group", Title: "运营", Children: []Menu{
 		{Kind: "page", Title: "总览", Path: "/admin", PageKey: "admin-dashboard", Icon: "Gauge", Permission: DashboardView},
