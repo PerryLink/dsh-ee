@@ -152,6 +152,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, r, http.StatusForbidden, "permission_error", "model_not_allowed", "你的账号不能使用模型 "+model+"，可在 /ee-status 查看可用模型")
 		return
 	}
+	// 生成参数在转发前收口：超额输出、多候选会让单次请求的用量脱离额度约束。
+	if code, msg := completionLimitError(body); code != "" {
+		writeGatewayError(w, r, http.StatusBadRequest, "invalid_request_error", code, msg)
+		return
+	}
 	if quota.MonthlyTokenLimit != nil {
 		used, err := s.store.MonthTokensByUser(r.Context(), k.User.ID)
 		if err != nil {
