@@ -56,6 +56,8 @@ type Options struct {
 	DemoSite *DemoSite
 	// 轮换 ee_jwt 密钥时，新钥匙过多久开始签名；0 用默认的 10 分钟（测试里调短）
 	EEKeyDelay time.Duration
+	// 旧版 npm 令牌 / API key 的 scope 收敛（docs/token-lifecycle.md）；默认 false 保持旧行为。
+	RestrictLegacyTokenScopes bool
 }
 
 type Server struct {
@@ -298,10 +300,18 @@ type principal struct {
 	access *rbac.Access
 	// 会话是从 DSH 凭设备令牌换来的，只带员工权限（见 web_link.go）
 	limited bool
+	// 经由接入令牌认证时的令牌 id 与客户端类型；网页会话为零值
+	tokenID    int64
+	clientKind string
 }
 
 func withUser(ctx context.Context, u *store.User, a *rbac.Access) context.Context {
 	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: a})
+}
+
+// withTokenUser 与 withUser 相同，并带上令牌属性（id / 客户端类型），供写确认与调用记录用。
+func withTokenUser(ctx context.Context, u *store.User, a *rbac.Access, tokenID int64, clientKind string) context.Context {
+	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: a, tokenID: tokenID, clientKind: clientKind})
 }
 
 func withLimitedUser(ctx context.Context, u *store.User, a *rbac.Access) context.Context {
@@ -323,6 +333,18 @@ func currentUser(r *http.Request) *store.User {
 func currentAccess(r *http.Request) *rbac.Access {
 	p, _ := r.Context().Value(ctxKey{}).(principal)
 	return p.access
+}
+
+// currentTokenID 返回这次请求所用接入令牌的 id；网页会话或旧令牌为 0。
+func currentTokenID(r *http.Request) int64 {
+	p, _ := r.Context().Value(ctxKey{}).(principal)
+	return p.tokenID
+}
+
+// currentClientKind 返回这次请求所用令牌的客户端类型；网页会话为空。
+func currentClientKind(r *http.Request) string {
+	p, _ := r.Context().Value(ctxKey{}).(principal)
+	return p.clientKind
 }
 
 func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }

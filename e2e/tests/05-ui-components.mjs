@@ -67,7 +67,7 @@ export default async function (t) {
 
   await page.goto(`${BASE}/admin/tokens`);
   await page.getByRole("button", { name: "下发令牌" }).first().click();
-  await page.locator("form").getByRole("combobox").click();
+  await page.locator("form").getByRole("combobox").first().click();
   await page.getByPlaceholder("搜索…").fill(`测试${tag}-12`);
   await page.locator("[cmdk-item]").first().click();
   assert((await page.locator("form").getByRole("combobox").first().innerText()).includes(`${prefix}12`), "可搜索选择没选中");

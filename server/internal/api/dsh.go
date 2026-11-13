@@ -65,7 +65,7 @@ func (s *Server) dshViewer(w http.ResponseWriter, r *http.Request) (viewer, *Pri
 	if !ok {
 		return viewer{}, nil, false
 	}
-	return viewer{user: p.User, access: p.Access, agent: s.agentOn(r.Context(), p), canAdmin: p.CanAdmin, adminLive: p.AdminLive, account: p.Account}, p, true
+	return viewer{user: p.User, access: p.Access, agent: s.agentOn(r.Context(), p), canAdmin: p.CanAdmin, adminLive: p.AdminLive, account: p.Account, tokenID: p.TokenID, clientKind: p.ClientKind}, p, true
 }
 
 var serverNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
@@ -377,8 +377,9 @@ func (s *Server) handleDshWhoami(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(scopes)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username": p.User.Username, "department": p.User.Department, "scopes": scopes,
-		"token_prefix": p.Prefix, "expires_at": p.ExpiresAt, "client_name": p.Client, "legacy": p.Legacy,
-		"agent": s.agentOn(r.Context(), p), "admin_live": p.AdminLive, "admin_until": p.AdminUntil,
+		"token_prefix": p.Prefix, "expires_at": p.ExpiresAt, "client_name": p.Client, "client_kind": p.ClientKind, "legacy": p.Legacy,
+		"legacy_scopes_restricted": s.opts.RestrictLegacyTokenScopes,
+		"agent":                    s.agentOn(r.Context(), p), "admin_live": p.AdminLive, "admin_until": p.AdminUntil,
 	})
 }
 

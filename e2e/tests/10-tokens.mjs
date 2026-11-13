@@ -117,6 +117,7 @@ export default async function (t) {
     assertEq((await api(admin, "PATCH", `/api/admin/users/${bot.id}/quota`, { monthly_token_limit: 100000, allowed_models: [model], quota_expires_at: null })).status, 200, "机器人额度");
     const issued = await api(admin, "POST", "/api/admin/tokens", { user_id: bot.id, name: `CI-${tag}`, scopes: ["models", "registry:read", "hub", "connections"] });
     assertEq(issued.status, 201, "下发机器人令牌");
+    assertEq(issued.data.info.client_kind, "third_party", "管理员签发默认第三方 Harness");
     const botToken = issued.data.token;
     const chat = await bearer(botToken, "POST", "/v1/chat/completions", { model, messages: [{ role: "user", content: "hello" }] });
     assertEq(chat.status, 200, "机器人调用模型");
@@ -127,6 +128,7 @@ export default async function (t) {
 
     await admin.goto(`${BASE}/admin/tokens`);
     await admin.getByRole("heading", { name: "令牌管理" }).waitFor();
+    await admin.getByText("第三方 Harness").first().waitFor();
     await shot(admin, "phase-a-admin-tokens");
     await admin.getByPlaceholder("部门名称").fill(department);
     await admin.getByRole("button", { name: "吊销整个部门的令牌" }).click();

@@ -23,6 +23,10 @@ type Config struct {
 	// 部署在 HTTPS 后面时设为 true，会话 cookie 加 Secure。
 	CookieSecure bool
 	SessionTTL   time.Duration
+	// 旧版 npm 令牌（ee_npm_）与 API key（sk-ee-）的 scope 收敛（docs/token-lifecycle.md）。
+	// true 时它们只保留原始用途的 scope：npm 令牌只剩 registry，key 只剩模型网关；
+	// 默认 false 不改变旧行为，避免现有客户端突然失效。
+	RestrictLegacyTokenScopes bool
 	// 首次启动、用户表为空时创建的管理员。
 	BootstrapAdmin         string
 	BootstrapAdminPassword string
@@ -96,6 +100,13 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("DSH_EE_COOKIE_SECURE: %w", err)
 		}
 		c.CookieSecure = b
+	}
+	if v := os.Getenv("DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES: %w", err)
+		}
+		c.RestrictLegacyTokenScopes = b
 	}
 	if v := os.Getenv("DSH_EE_DEMO_MODE"); v != "" {
 		b, err := strconv.ParseBool(v)
