@@ -391,6 +391,8 @@ export interface Stats {
 
 export type TokenScope = "models" | "registry:read" | "registry:publish" | "hub" | "connections" | "agent" | "admin";
 export type TokenSource = "manual" | "device" | "issued" | "legacy";
+/** 令牌签发给哪类客户端：dsh 只用于 DSH 接入；third_party 给其他 Harness/脚本（写操作始终人工确认）。 */
+export type TokenClientKind = "dsh" | "third_party";
 
 export interface TokenView {
   id: string;
@@ -402,6 +404,8 @@ export interface TokenView {
   name: string;
   prefix: string;
   source: TokenSource;
+  /** 签发时确定的客户端类型：dsh / third_party（旧 npm/key 令牌按 dsh 兼容） */
+  client_kind?: TokenClientKind;
   scopes: TokenScope[];
   client_name: string;
   client_os: string;
@@ -420,6 +424,10 @@ export interface TokenView {
 export interface TokenInput {
   name: string;
   scopes: TokenScope[];
+  /** 不填由后端按签发入口给默认值；网页表单默认 third_party */
+  client_kind?: TokenClientKind;
+  /** 可选的客户端名字，便于在列表里区分第三方接入方 */
+  client_name?: string;
   monthly_token_limit?: number | null;
   allowed_models?: string[];
   expires_in_days?: number;
@@ -967,6 +975,8 @@ export interface ExtPlan {
   oauth_client_id?: string;
   /** 扩展带进来的字段（access-control.md §6.0） */
   fields?: { object: string; key: string; label: unknown; type: string; options?: string[]; access?: boolean }[];
+  /** 签名状态（docs/plugins.md §9.3）：没签名、验签有效、验签无效、签名者公钥已撤销；默认不阻断，配了强制签名才拦，撤销后一律拦新装。 */
+  signature?: { status: "unsigned" | "valid" | "invalid" | "revoked"; key_id?: string; identity?: string; key_state?: "active" | "retired" | "revoked"; message?: string };
 }
 
 export type ExtText = string | { zh?: string; en?: string };

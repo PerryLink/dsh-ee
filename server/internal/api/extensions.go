@@ -312,6 +312,9 @@ type extPlan struct {
 	OAuthClientID string `json:"oauth_client_id,omitempty"`
 	// 扩展带的扩展字段，安装时建好
 	Fields []extension.Field `json:"fields"`
+	// 签名状态：unsigned / valid / invalid。默认不阻断安装；配了 DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1
+	// 时没签名或验不过会作为错误写进 Check。
+	Signature *extension.SignatureStatus `json:"signature"`
 }
 
 type extExisting struct {
@@ -351,6 +354,16 @@ func (s *Server) planExtension(ctx context.Context, files map[string][]byte, ser
 	res := extension.CheckFiles(files)
 	p := &extPlan{Check: res, AdminParams: []extension.AdminParam{}, Changes: []string{}, Sensitive: []string{},
 		Config: []extension.ConfigField{}, Capabilities: []string{}, Handover: []string{}, Fields: []extension.Field{}, ServiceURL: serviceURL}
+	trusted, err := s.trustedExtensionKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	p.Signature = extension.VerifyFilesWithKeys(files, trusted)
+	if d := signatureProblem(s.opts.ExtensionRequireSignature, p.Signature); d != nil {
+		res.OK = false
+		res.Errors++
+		res.Results = append([]extension.Diagnostic{*d}, res.Results...)
+	}
 	m := res.Manifest
 	if m == nil {
 		return p, nil
@@ -485,6 +498,48 @@ func (s *Server) planExtension(ctx context.Context, files map[string][]byte, ser
 	}
 	slices.Sort(p.Changes)
 	return p, nil
+}
+
+// signatureAudit 是写进审计的签名状态：状态和签名者的 key id，不含签名内容。
+func signatureAudit(st *extension.SignatureStatus) string {
+	if st == nil {
+		return ""
+	}
+	if st.KeyID == "" {
+		return st.Status
+	}
+	return st.Status + ":" + st.KeyID
+}
+
+// signatureProblem 按签名策略给出要报的错误。
+// 撤销过的签名公钥对应的包一律不能新装 / 升级（不管有没有开强制签名）；默认「警告后允许」
+// 下没签名、验不过只在计划里显示状态；配了强制验证签名时它们也不通过（fail closed）。
+func signatureProblem(require bool, st *extension.SignatureStatus) *extension.Diagnostic {
+	valid := st != nil && st.Status == extension.SignatureValid
+	revoked := st != nil && st.Status == extension.SignatureRevoked
+	if valid || (!require && !revoked) {
+		return nil
+	}
+	reason := ""
+	if st != nil {
+		reason = st.Message
+	}
+	if reason == "" {
+		reason = "这个扩展没有签名"
+	}
+	d := &extension.Diagnostic{
+		Code:     "signature.required",
+		Severity: extension.SevError,
+		Where:    extension.SignatureFile,
+		Message:  "dsh-ee 配成了必须验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1），这个扩展不能安装：" + reason,
+		Fix:      "让作者用 `dsh-ee extension sign` 签名，并把签名者的公钥加进受信任的签名公钥（管理 API / DSH_EE_EXTENSION_TRUSTED_KEYS）；或者由管理员关闭强制签名",
+	}
+	if revoked {
+		d.Code = "signature.revoked"
+		d.Message = "这个扩展的签名者的公钥已撤销，不能安装或升级：" + reason
+		d.Fix = "让作者用受信任的新公钥重新签名；撤销过的公钥不能重新加回来"
+	}
+	return d
 }
 
 func credModeOf(c *extension.Credential) string {
@@ -645,7 +700,7 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(sp)
 	v := viewerOf(r)
 	var a *store.Asset
-	resp := map[string]any{"identity": m.Identity(), "digest": p.Check.Digest}
+	resp := map[string]any{"identity": m.Identity(), "digest": p.Check.Digest, "signature": p.Signature}
 	if p.Existing != nil {
 		if a, err = s.store.GetAsset(ctx, p.Existing.ID); err != nil {
 			s.internalErr(w, r, err)
@@ -715,6 +770,7 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 	resp["asset"] = a
 	s.audit(r, auditExtInstall, "connection:"+a.Slug, map[string]any{
 		"id": a.ID, "extension": sp.Extension.label(), "upgrade": p.Existing != nil, "confirmed": p.Sensitive,
+		"signature": signatureAudit(p.Signature),
 	})
 	s.hub.notify()
 	writeJSON(w, http.StatusCreated, resp)

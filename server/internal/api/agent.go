@@ -140,6 +140,7 @@ var agentExcluded = map[string]string{
 	"POST /api/auth/demo-login":                 "演示站访客在登录页上点选身份",
 	"GET /demo/intro/{lang}":                    "演示站首页的介绍视频",
 	"POST /api/auth/logout":                     "会话由网页管理",
+	"POST /api/auth/introspect":                 "令牌自省由第三方 Harness/SDK 直接带令牌调用，模型不需要代理",
 	"POST /api/auth/password":                   "凭据只在网页上由本人操作",
 	"POST /api/device/code":                     "设备登录协议入口",
 	"POST /api/device/token":                    "设备登录协议入口",
@@ -173,8 +174,14 @@ var agentExcluded = map[string]string{
 	"GET /setup.ps1":                            "安装脚本",
 	"GET /v1/models":                            "模型网关协议入口",
 	"POST /v1/chat/completions":                 "模型网关协议入口",
-	"POST /api/me/packages":                     "网页上传；Agent 用 ee_plugins.upload（经 /api/agent/packages）",
-	"POST /api/me/packages/check":               "网页发布前预检；Agent 的 upload 会直接发布，暂不单独暴露检查工具",
+	// 第三方 Harness 契约（harness.go）：发现与只读能力摘要，不是模型工具
+	"GET /.well-known/dsh-ee":     "中立发现文档，给第三方 Harness 读取服务能力",
+	"GET /v1/capabilities":        "中立能力摘要，给第三方 Harness 生成自己的配置与系统提示",
+	"GET /v1/apps":                "只读中立微应用列表，给第三方 Harness 展示企业应用",
+	"GET /v1/apps/{name}":         "只读中立微应用描述，给第三方 Harness 展示企业应用",
+	"GET /v1/openapi.json":        "机器可读的中立 API 契约（静态 OpenAPI 3.1），给第三方 Harness 生成客户端",
+	"POST /api/me/packages":       "网页上传；Agent 用 ee_plugins.upload（经 /api/agent/packages）",
+	"POST /api/me/packages/check": "网页发布前预检；Agent 的 upload 会直接发布，暂不单独暴露检查工具",
 
 	"GET /api/me/welcome":            "网页登录后的落点判断",
 	"PUT /api/me/welcome":            "网页「开始使用」页的「以后再说」",
@@ -216,6 +223,12 @@ var agentExcluded = map[string]string{
 	// 声明式扩展（extensions.go）：装之前要管理员看清楚会发往哪些地址、哪些是写操作，再由人确认
 	"POST /api/admin/extensions/check":   "检查扩展包在网页上做；Agent 用 `dsh-ee extension check --json`",
 	"POST /api/admin/extensions/install": "装扩展要管理员在网页上看过安装计划再确认，不交给模型",
+
+	// 扩展签名的信任根（signing_keys.go）：信任谁能签名只能由管理员决定，不交给模型
+	"GET /api/admin/signing-keys":                  "信任根只在管理页面看，不把受信任公钥清单交给 Agent 批量枚举",
+	"POST /api/admin/signing-keys":                 "加受信任的签名公钥只能由管理员在管理页面做",
+	"POST /api/admin/signing-keys/{key_id}/retire": "换下签名公钥由管理员在管理页面做",
+	"POST /api/admin/signing-keys/{key_id}/revoke": "撤销签名公钥由管理员在管理页面做",
 
 	// 多份命名共享凭据（shared_credentials.go）：密钥不进入模型上下文
 	"GET /api/admin/connections/{id}/shared-credentials":           "命名共享凭据只在管理员页面查看，不把授权清单交给 Agent 批量枚举",

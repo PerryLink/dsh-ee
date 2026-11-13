@@ -270,3 +270,109 @@ func TestDeviceExpiryAndBot(t *testing.T) {
 		t.Fatalf("机器人不能批准设备码：%v", err)
 	}
 }
+
+// 0032 迁移：旧令牌（升级前就存在的行）默认 dsh，保持接入插件的原有行为；
+// 新令牌按签发入口指定的值保存。
+func TestAccessTokenClientKind(t *testing.T) {
+	st := openTokenTestStore(t)
+	ctx := context.Background()
+	u := tokenTestUser(t, st, false)
+
+	// 模拟升级前的历史行：INSERT 时不写 client_kind，列默认值兜底（与 ALTER ... DEFAULT 'dsh' 等价）
+	oldPlain := "ee_at_old_" + secret.Token()
+	oldHash := secret.Hash(oldPlain)
+	if _, err := st.DB().ExecContext(ctx, `INSERT INTO access_tokens
+		(user_id, name, prefix, token_hash, source, scopes, client_name, client_os, client_version, last_ip, created_by, created_at)
+		VALUES (?, ?, ?, ?, 'manual', 'models', '', '', '', '', ?, ?)`,
+		u.ID, "升级前的令牌", oldPlain[:12], oldHash, u.ID, now()); err != nil {
+		t.Fatal(err)
+	}
+	old, err := st.ActiveAccessToken(ctx, oldHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.ClientKind != ClientKindDSH {
+		t.Fatalf("旧令牌应默认 dsh：%q", old.ClientKind)
+	}
+
+	// 显式 third_party 原样保存
+	tpPlain := "ee_at_tp_" + secret.Token()
+	tp := &AccessToken{UserID: u.ID, Name: "Claude Code", Prefix: tpPlain[:12], Source: "manual",
+		ClientKind: ClientKindThirdParty, Scopes: []string{"models"}, CreatedBy: u.ID}
+	if err := st.CreateAccessToken(ctx, tp, secret.Hash(tpPlain)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ActiveAccessToken(ctx, secret.Hash(tpPlain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientKind != ClientKindThirdParty {
+		t.Fatalf("third_party 令牌没有保存：%q", got.ClientKind)
+	}
+
+	// 没传 kind 的旧调用点/旧测试仍按 dsh 兼容
+	legacyPlain := "ee_at_legacy_" + secret.Token()
+	legacy := &AccessToken{UserID: u.ID, Name: "旧调用点", Prefix: legacyPlain[:12], Source: "manual", Scopes: []string{"models"}, CreatedBy: u.ID}
+	if err := st.CreateAccessToken(ctx, legacy, secret.Hash(legacyPlain)); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.ActiveAccessToken(ctx, secret.Hash(legacyPlain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientKind != ClientKindDSH {
+		t.Fatalf("没传 client_kind 时应按 dsh 兼容：%q", got.ClientKind)
+	}
+}
+
+// 连接调用记录里的令牌归属：有令牌的调用记 id，没有令牌（网页会话/旧客户端）记 NULL 读成 0。
+func TestConnectionCallTokenID(t *testing.T) {
+	st := openTokenTestStore(t)
+	ctx := context.Background()
+	u := tokenTestUser(t, st, false)
+	if err := st.RecordConnectionCall(ctx, ConnectionCall{AssetID: 11, Tool: "create_page", UserID: u.ID, OK: true, TokenID: 42}); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := st.RecentConnectionCalls(ctx, 11, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].TokenID != 42 {
+		t.Fatalf("连接调用应记下令牌 id：%+v", calls)
+	}
+	if err := st.RecordConnectionCall(ctx, ConnectionCall{AssetID: 12, Tool: "list", UserID: u.ID, OK: true}); err != nil {
+		t.Fatal(err)
+	}
+	calls, err = st.RecentConnectionCalls(ctx, 12, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].TokenID != 0 {
+		t.Fatalf("没有令牌的调用应读成 0：%+v", calls)
+	}
+}
+
+// 写确认记录发起确认的令牌，审批后的审计才能按令牌追溯。
+func TestWriteConfirmationTokenID(t *testing.T) {
+	st := openTokenTestStore(t)
+	ctx := context.Background()
+	u := tokenTestUser(t, st, false)
+	c := &WriteConfirmation{UserID: u.ID, Tool: "local:acme/legacy-oa/submit_leave", ArgsHash: strings.Repeat("a", 64), Args: `{"days":2}`, Client: "test", TokenID: 7}
+	if err := st.CreateWriteConfirmation(ctx, c, secret.Hash(secret.Token()), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetWriteConfirmation(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TokenID != 7 {
+		t.Fatalf("写确认应记下令牌 id：%+v", got)
+	}
+	pending, err := st.PendingWriteConfirmations(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].TokenID != 7 {
+		t.Fatalf("待确认列表应带令牌 id：%+v", pending)
+	}
+}

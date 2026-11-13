@@ -314,7 +314,7 @@ func (s *Server) syncConnectionTools(ctx context.Context, id int64, v viewer, ba
 func (s *Server) callConnectionTool(ctx context.Context, a *store.Asset, t *store.ConnectionTool, v viewer, base string, args json.RawMessage) json.RawMessage {
 	start := time.Now()
 	result, mode, ext, err := s.doConnectionCall(ctx, a, t, v, base, args)
-	call := store.ConnectionCall{AssetID: a.ID, Tool: t.Name, UserID: v.user.ID, OK: err == nil, LatencyMS: int(time.Since(start).Milliseconds()), AuthMode: mode, Extension: ext}
+	call := store.ConnectionCall{AssetID: a.ID, Tool: t.Name, UserID: v.user.ID, OK: err == nil, LatencyMS: int(time.Since(start).Milliseconds()), TokenID: v.tokenID, AuthMode: mode, Extension: ext}
 	// 记下这次用的是哪一份命名共享凭据（空是原连接默认的那一份）
 	if lv, metaErr := s.store.LiveAssetVersion(ctx, a.ID); metaErr == nil {
 		call.SharedName = sharedNameOf(parseSpec(lv.Spec))

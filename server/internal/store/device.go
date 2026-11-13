@@ -153,6 +153,8 @@ func (s *Store) ApproveDevice(ctx context.Context, code string, userID int64, to
 	token.UserID = userID
 	token.CreatedBy = userID
 	token.Source = "device"
+	// 设备码是 DSH 的登录方式：签出来的令牌默认就是 DSH 客户端
+	token.ClientKind = ClientKindDSH
 	token.ClientName = d.ClientName
 	token.ClientOS = d.ClientOS
 	token.ClientVersion = d.ClientVersion
