@@ -163,6 +163,8 @@ ALTER TABLE audit_logs ADD COLUMN client   VARCHAR(128) NOT NULL DEFAULT '';
 
 设备登录默认申请 `models registry:read hub connections agent`；`admin` 只能在网页上给令牌加（需要账号有任一管理权限点）。
 
+**入口级 scope**：`/mcp` 入口本身按 `connections` 检查（`server/internal/api/dsh.go` 的 `dshPrincipal`），所以只带 `agent`、不带 `connections` 的令牌会被 403；`ee_*` Agent 工具同时要 `connections`（进 `/mcp`）和 `agent`（工具出现并可用）。
+
 ### 3.3 统一解析：`internal/api/principal.go`
 
 ```go
@@ -197,7 +199,7 @@ func (s *Server) resolveBearer(ctx context.Context, token string) (*Principal, e
 
 | 接口 | 认证 | 说明 |
 |---|---|---|
-| `POST /api/device/code` | 无 | 入参 `{client_name, client_os, client_version, scopes?}`；返回 `{device_code, user_code, verification_uri, verification_uri_complete, interval:5, expires_in:600}`。按 IP 限流（每分钟 10 次） |
+| `POST /api/device/code` | 无 | 入参 `{client_name, client_os, client_version, scopes?}`；返回 `{device_code, user_code, verification_uri, verification_uri_complete, interval:5, expires_in:600}`。按 IP 限流（每分钟 30 次） |
 | `POST /api/device/token` | 无 | 入参 `{device_code}`；返回 `authorization_pending` / `slow_down`（轮询快于 interval）/ `access_denied` / `expired_token`，或 `{access_token, scopes, user:{username, department}, expires_at}`。令牌只能取一次 |
 | `GET /api/device/{user_code}` | 会话 | 确认页读取设备信息与申请的范围 |
 | `POST /api/device/{user_code}` | 会话 | `{approve: true/false}`。批准时创建 `access_tokens`（source=device），明文用主密钥加密暂存在 `device_codes.token_sealed`，被取走时清空 |

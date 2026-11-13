@@ -2,6 +2,7 @@
 
 > 这是服务扩展和端侧扩展与 dsh-ee 之间的协议，两套 SDK（Go：`extensions/sdk-go`；TypeScript：`extensions/sdk-local`）都按它实现。
 > 用 SDK 写扩展不需要读这份文档；用别的语言自己实现时照着它做，再用 `dsh-ee extension test` 验证。
+> 一页速查（形态、限制、实现状态）见 [extension-protocol/README.md](./extension-protocol/README.md)；错误码与排障见 [extension-protocol/errors.md](./extension-protocol/errors.md)。
 > 设计和取舍见 [plugins.md](./plugins.md) §4.2、§6、§7、§8。
 
 ## 1. 服务扩展是什么
@@ -21,8 +22,8 @@
 格式和声明式扩展的清单相同，规格用 `dsh-ee schema get manifest` 查。服务扩展：
 
 - `kind` 是 `service`，`service.url` 写部署后的地址（安装时以管理员填的为准）；
-- `capabilities` 列出实现了哪些约定接口：`tools`、`validate`、`options`、`health`、`knowledge.documents`（`kb/browse`、`kb/changes`、`kb/document`）、`knowledge.search`（`kb/search`）、`oauth`、`endpoint`。SDK 按注册了哪些处理函数自动生成；
-- `tools` 里每个工具都要在 `/mcp` 的 `tools/list` 里出现。两边不一致时以清单为准，健康检查里报警。只读的工具才标 `readOnly`，没标的一律当写操作；
+- `capabilities` 列出实现了哪些约定接口：`tools`、`validate`、`options`、`health`、`knowledge.documents`（`kb/browse`、`kb/changes`、`kb/document`）、`knowledge.search`（`kb/search`）、`oauth`、`endpoint`。SDK 按注册了哪些处理函数自动生成。清单校验还认识 `knowledge.files`（预留给「网盘」知识源），但对应的 `kb/download` 接口**还没实现**，不要声明它；
+- `tools` 里每个工具都要在 `/mcp` 的 `tools/list` 里出现。两边对不上时：MCP 里多出来的工具不会收进来，是不是只读以清单为准；安装/升级返回的 `warnings` 会逐条列出对不上的地方（健康检查只发现清单变了，不会重新应用）。只读的工具才标 `readOnly`，没标的一律当写操作；
 - 健康检查时 dsh-ee 重新取清单。清单的摘要变了就记下新版本，**新增的工具、写操作、权限、凭据模式的变化先不启用**，等管理员重新安装确认。
 
 ## 3. dsh-ee 怎么证明自己
@@ -30,11 +31,11 @@
 每个请求（MCP 和约定接口）都带 `Authorization: Bearer <ee_jwt>`：
 
 - RS256 签名，公钥在 `<dsh-ee 访问地址>/.well-known/jwks.json`，按 `kid` 选；
-- `iss` 是 dsh-ee 的访问地址，`aud` 是清单里 `credential.audience`（没写就是扩展的连接名），`exp` 是 5 分钟后；
-- 员工调用时 `sub`、`preferred_username`、`name`、`email` 是这位员工，`dept`、`roles` 按管理员的设置带；
+- `iss` 是 dsh-ee 的访问地址，`aud` 是清单里的 `id`（服务扩展每次调用都带 `ee_jwt`，`aud` 固定用扩展的 `id`；SDK 默认按这个值验），`exp` 是 5 分钟后；
+- 员工调用时 `sub`、`preferred_username`、`name`、`email` 是这位员工，`dept`、`roles`、`idp_sub` 按管理员在连接上勾选的声明带；
 - 没有员工的调用（健康检查、保存配置前的检查、知识同步、回调转发）是 `"sub": "system", "sys": true`。
 
-扩展**必须验签**。验不过返回 401 和 `{"code": "unauthenticated"}`。SDK 已经做了；本机开发可以设 `DSH_EE_INSECURE=1` 跳过，生产上绝不能开。
+扩展**必须验签**。验不过返回 401 和 `{"error": {"code": "unauthenticated", "message": "..."}}`。SDK 已经做了；本机开发可以设 `DSH_EE_INSECURE=1` 跳过，生产上绝不能开。
 
 ## 4. dsh-ee 交给扩展的凭据（§7.4）
 
@@ -48,11 +49,11 @@
 
 ## 5. 约定接口
 
-请求和响应都是 JSON。失败时返回非 2xx 和 `{"code": "...", "message": "..."}`，`code` 见 §6。
+请求和响应都是 JSON。失败时返回非 2xx 和 `{"error": {"code": "...", "message": "..."}}`，`code` 在 `error.code` 里（和 Go / TS SDK 的 `writeError` 一致），取值见 §6。
 
 | 接口 | 请求 | 响应 |
 |---|---|---|
-| `validate` | `{"config": {...}}`（还没保存的配置） | `{}`；配置不对返回 400 和 `invalid` |
+| `validate` | `{"config": {...}}`（还没保存的配置） | `{"ok": true}`；配置不对返回 `{"ok": false, "message": "..."}`（HTTP 200）。也可以按 §6 返回带错误码的错误体 |
 | `options` | `{"field": "tenant"}` | `{"options": [{"value": "...", "label": "..."}]}` |
 | `health` | `{}` | `{"ok": true}`，可以带 `version` |
 | `kb/browse` | `{"parent": ""}`（空是最上层） | `{"items": [{"id", "title", "kind": "folder" \| "document", "hasChildren"}]}` |
@@ -75,7 +76,7 @@
 
 ## 6. 错误码
 
-工具结果出错时在 `_meta` 里放 `{"dsh-ee/error": {"code": "..."}}`，约定接口出错时在响应体里放 `code`：
+工具结果出错时在 `_meta` 里放 `{"dsh-ee/error": {"code": "..."}}`；约定接口出错时返回非 2xx 和 `{"error": {"code": "...", "message": "..."}}`。dsh-ee 按 `error.code`（工具结果按 `_meta` 里的 code）决定怎么转给员工和模型：
 
 | code | 含义 | dsh-ee 怎么处理 |
 |---|---|---|
@@ -86,7 +87,8 @@
 | `not_found` | 东西不存在 | 同步时跳过这一篇 |
 | `invalid` | 参数或配置不对 | 原样告诉调用方 |
 | `not_implemented` | 没实现这个约定接口 | 当作不支持 |
-| `unauthenticated` | 令牌没验过 | dsh-ee 自己的问题，记日志 |
+| `unauthenticated` | 扩展没验过 dsh-ee 的令牌（dsh-ee 自己的问题） | 按普通失败把信息交给调用方；不要重试 |
+| `internal` | 扩展内部错误（SDK 对未分类错误用的默认码） | 按普通失败把信息交给调用方；不要重试 |
 
 ## 7. 超时和熔断
 
