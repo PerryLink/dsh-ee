@@ -27,6 +27,8 @@ import studio from "./studio";
 import appGuide from "./app-guide";
 import { sharedCredentials } from "./shared-credentials";
 import ext from "./ext";
+import devdocs from "./devdocs";
+import embed from "./embed";
 
 export default {
   ...common,
@@ -56,4 +58,6 @@ export default {
   ...studio,
   ...appGuide,
   ...ext,
+  ...devdocs,
+  ...embed,
 } satisfies Messages<typeof zh>;

@@ -17,7 +17,7 @@ func (s *Server) requireConfig(next http.Handler) http.Handler {
 			user.ServeHTTP(w, r)
 			return
 		}
-		p, err := s.resolveBearer(r.Context(), strings.TrimSpace(token), clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+		p, err := s.resolveBearer(r.Context(), strings.TrimSpace(token), s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 		if err != nil {
 			if be, ok := err.(bearerError); ok {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "令牌无效或已过期", "code": string(be)})
@@ -30,6 +30,6 @@ func (s *Server) requireConfig(next http.Handler) http.Handler {
 			writeErr(w, http.StatusForbidden, "这个令牌没有 config 范围：在「我的令牌」里建一个带 config 范围的令牌")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), p.User, p.Access)))
+		next.ServeHTTP(w, r.WithContext(withTokenUser(r.Context(), p.User, p.Access, p.TokenID, p.ClientKind)))
 	})
 }

@@ -50,16 +50,24 @@ type Service struct {
 	settings func(context.Context) (*store.AppSettings, error)
 	// 单个 tarball 的大小上限
 	MaxTarball int64
+	// 同时运行的同步/导入任务上限；0 表示用默认值（见 mirror.go）
+	MaxSyncJobs        int
+	MaxSyncJobsPerUser int
 	// dshfind 插件目录（DSH 索引 format 1）的地址，上游预载从这里挑插件
 	FeedURL string
 	feed    feedCache
+	// 同步任务准入（数量上限与 (name,version) 去重）
+	gate syncGate
 }
 
 func NewService(st *store.Store, blobs *Blobs, up *Upstream, settings func(context.Context) (*store.AppSettings, error), log *slog.Logger) *Service {
 	return &Service{
 		store: st, blobs: blobs, up: up, log: log, settings: settings,
-		MaxTarball: 100 << 20,
-		FeedURL:    "https://api.dshfind.com/market/dsh-index.json",
+		MaxTarball:         100 << 20,
+		MaxSyncJobs:        defaultMaxSyncJobs,
+		MaxSyncJobsPerUser: defaultMaxSyncJobsPerUser,
+		FeedURL:            "https://api.dshfind.com/market/dsh-index.json",
+		gate:               newSyncGate(),
 	}
 }
 
@@ -270,7 +278,13 @@ func (s *Service) mirror(ctx context.Context, name string, uv *UpstreamVersion, 
 		if err != nil {
 			return nil, err
 		}
-		scan, _ = json.Marshal(Check(inner, info, d.Size, set.CompanyScopes()))
+		items := Check(inner, info, d.Size, set.CompanyScopes())
+		scan, _ = json.Marshal(items)
+		// 自动检查有 LevelFail 的包不能因为上游预载传了 publish=true 就直接上架；
+		// 与 Service.Publish 的 open 模式闸门保持一致，先进入待审核。
+		if status == store.StatusPublished && slices.ContainsFunc(items, func(i ScanItem) bool { return i.Level == LevelFail }) {
+			status = store.StatusPending
+		}
 	}
 
 	manifest, err := json.Marshal(trimManifest(uv.Manifest))
@@ -361,8 +375,40 @@ type PublishResult struct {
 	Created bool   `json:"created"`
 }
 
-// Publish 发布企业作用域里的一个版本：校验 → 存 tarball → 解包检查 → 入库（待审核或直接上架）。
+// Publish 发布 npm 客户端发来的文档；tarball 在 _attachments 里、base64 编码。
 func (s *Service) Publish(ctx context.Context, p Publisher, doc *PublishDoc) (*PublishResult, error) {
+	if len(doc.Versions) != 1 || len(doc.Attachments) != 1 {
+		return nil, errf(400, "一次只能发布一个版本（versions 与 _attachments 各一个）")
+	}
+	// 校验都通过之后才解码 base64：包名/版本/归属不合法的请求不带 100 MB 的附件做无用功。
+	return s.publish(ctx, p, doc, nil, func() ([]byte, error) {
+		var att string
+		for _, a := range doc.Attachments {
+			att = a.Data
+		}
+		raw, err := base64.StdEncoding.DecodeString(att)
+		if err != nil {
+			return nil, errf(400, "tarball 不是合法的 base64")
+		}
+		return raw, nil
+	})
+}
+
+// PublishTarball 发布网页上传的 tarball：请求体已经是解码后的 .tgz，直接用它发布，
+// 省掉 base64 编码之后再解码产生的两份大内存（单包上限 100 MB）。
+func (s *Service) PublishTarball(ctx context.Context, p Publisher, doc *PublishDoc, raw []byte) (*PublishResult, error) {
+	if len(doc.Versions) != 1 || len(doc.Attachments) != 0 {
+		return nil, errf(400, "一次只能发布一个版本（versions 一个，tarball 在请求体里）")
+	}
+	if len(raw) == 0 {
+		return nil, errf(400, "tarball 为空")
+	}
+	return s.publish(ctx, p, doc, raw, nil)
+}
+
+// publish 发布企业作用域里的一个版本：校验 → 存 tarball → 解包检查 → 入库（待审核或直接上架）。
+// raw 非空时直接用它；否则调用 decode 拿到 tarball 字节（npm 发布是 base64 附件）。
+func (s *Service) publish(ctx context.Context, p Publisher, doc *PublishDoc, raw []byte, decode func() ([]byte, error)) (*PublishResult, error) {
 	set, err := s.settings(ctx)
 	if err != nil {
 		return nil, err
@@ -379,9 +425,6 @@ func (s *Service) Publish(ctx context.Context, p Publisher, doc *PublishDoc) (*P
 	// 之后还能改它的标签。
 	if strings.HasSuffix(name, "/"+ConnectName) && !p.AutoPublish {
 		return nil, errf(403, "%s 这个包名留给 dsh-ee 生成的 DSH 接入插件，请换一个名字", name)
-	}
-	if len(doc.Versions) != 1 || len(doc.Attachments) != 1 {
-		return nil, errf(400, "一次只能发布一个版本（versions 与 _attachments 各一个）")
 	}
 	var version string
 	var meta json.RawMessage
@@ -409,13 +452,10 @@ func (s *Service) Publish(ctx context.Context, p Publisher, doc *PublishDoc) (*P
 		return nil, err
 	}
 
-	var att string
-	for _, a := range doc.Attachments {
-		att = a.Data
-	}
-	raw, err := base64.StdEncoding.DecodeString(att)
-	if err != nil {
-		return nil, errf(400, "tarball 不是合法的 base64")
+	if raw == nil {
+		if raw, err = decode(); err != nil {
+			return nil, err
+		}
 	}
 	if int64(len(raw)) > s.MaxTarball {
 		return nil, errf(413, "tarball 超过 %d MB", s.MaxTarball>>20)

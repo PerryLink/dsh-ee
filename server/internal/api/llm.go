@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,68 @@ func cleanModels(ms []string) []string {
 		}
 	}
 	return out
+}
+
+// ---- 网关请求边界 ----
+
+// maxTokensPerRequest 是一次请求允许申请的最大输出 token 数。
+//
+// 网关按上游返回的 token 用量记账，而一次请求最终用掉多少只有等生成结束才知道；
+// 如果放任客户端把 max_tokens / max_completion_tokens 填成任意大的数，单次调用就
+// 可能烧掉一整个月的额度。管理端按「万 token」为单位分配月度额度（典型先给 10 万），
+// 这里取 32768：单次请求最多占掉最小典型额度的三分之一，同时覆盖长文生成、长代码
+// 和推理模型常见的长输出，正常调用不会受影响。超限直接 400，不做静默截断。
+const maxTokensPerRequest = 32768
+
+// maxChoicesPerRequest 是一次请求允许的候选数（OpenAI 的 n 参数）。
+// 额度和记账都按一次请求统计，n>1 会成倍放大消耗，且各上游对多候选的支持不一致，
+// 因此只接受 n=1（或不传）。
+const maxChoicesPerRequest = 1
+
+// completionLimitError 校验生成类参数，返回 OpenAI 风格的错误码和给用户看的文案；
+// 参数合法时返回空字符串。body 必须是用 UseNumber 解码出来的，数值是 json.Number。
+func completionLimitError(body map[string]any) (code, msg string) {
+	for _, field := range []string{"max_tokens", "max_completion_tokens"} {
+		v, present, ok := intParam(body, field)
+		if !present {
+			continue
+		}
+		switch {
+		case !ok || v < 1:
+			return "invalid_" + field, field + " 必须是正整数"
+		case v > maxTokensPerRequest:
+			return field + "_too_large", fmt.Sprintf("%s 超过单次上限 %d，请调小", field, maxTokensPerRequest)
+		}
+	}
+	// OpenAI 兼容客户端可能只传 n；显式 0/负数/非整数都不该转发给上游。
+	n, present, ok := intParam(body, "n")
+	switch {
+	case !present:
+		return "", ""
+	case !ok || n < 1:
+		return "invalid_n", "n 必须是正整数"
+	case n > maxChoicesPerRequest:
+		return "n_not_supported", fmt.Sprintf("当前不支持 n>%d 的多候选请求，请把 n 设为 %d 或不传", maxChoicesPerRequest, maxChoicesPerRequest)
+	}
+	return "", ""
+}
+
+// intParam 读取 body 里的整数参数。present 表示字段存在且不是 null；
+// ok 表示它确实是一个能解析成 int64 的整数。
+func intParam(body map[string]any, field string) (v int64, present, ok bool) {
+	raw, exists := body[field]
+	if !exists || raw == nil {
+		return 0, false, false
+	}
+	num, isNumber := raw.(json.Number)
+	if !isNumber {
+		return 0, true, false
+	}
+	v, err := strconv.ParseInt(num.String(), 10, 64)
+	if err != nil {
+		return 0, true, false
+	}
+	return v, true, true
 }
 
 // ---- 上游 ----
