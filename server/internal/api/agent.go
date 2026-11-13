@@ -79,6 +79,7 @@ func (sp *agentSpec) key() string { return sp.Tool + "." + sp.Action }
 var agentExcluded = map[string]string{
 	"GET /healthz":                              "探活接口",
 	"GET /metrics":                              "监控抓取用，给运维平台，不经过 Agent",
+	"GET /readyz":                               "就绪探针，给负载均衡 / 编排系统判断能否接流量",
 	"GET /demo/travel/summary":                  "示例差旅系统，模型经企业连接调用",
 	"GET /demo/travel/claims":                   "示例差旅系统，模型经企业连接调用",
 	"POST /demo/travel/claims":                  "示例差旅系统，模型经企业连接调用",
