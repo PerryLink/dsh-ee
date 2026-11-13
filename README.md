@@ -171,6 +171,8 @@ Confirm the device code in the browser, and DSH is connected to the company's ca
 | `DSH_EE_COOKIE_SECURE` | Force the `Secure` flag on the session cookie; defaults to on when `DSH_EE_PUBLIC_URL` is `https://…` |
 | `DSH_EE_DATA_DIR` | Data directory (npm tarballs, caches), default `./data` |
 | `DSH_EE_DATA_DSN` / `DSH_EE_DATA_READ_DSN` | Data hub database (writable / read-only); `off` disables the data hub |
+| `DSH_EE_LOGIN_IP_LIMIT` / `DSH_EE_LOGIN_IP_WINDOW` | Failed logins allowed per client IP in a fixed window, default `50` per `15m`; `0` / `off` disables |
+| `DSH_EE_METRICS` | Set to `true` to expose `GET /metrics` (Prometheus text format, loopback / internal networks only); off by default |
 | `DSH_EE_TRUSTED_PROXIES` | Reverse-proxy IPs/CIDRs (comma-separated) whose `X-Forwarded-*` headers are trusted; defaults to loopback only. Set it when the proxy runs in another container/host or behind a cloud LB |
 
 The full list is in [server/README.md](./server/README.md).

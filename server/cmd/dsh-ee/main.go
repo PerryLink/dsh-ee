@@ -141,6 +141,9 @@ func run(log *slog.Logger) error {
 		EmbedSessionTTL:           cfg.EmbedSessionTTL,
 		// 每令牌的 /v1 与 /mcp 请求数；默认 60，可用 DSH_EE_RATE_LIMIT 调整或关闭
 		RateLimitPerMinute: cfg.RateLimitPerMinute,
+		LoginIPLimit:       cfg.LoginIPLimit,
+		LoginIPWindow:      cfg.LoginIPWindow,
+		Metrics:            cfg.Metrics,
 	}, log)
 	if cfg.RateLimitPerMinute > 0 {
 		log.Info("已启用公开协议面限流", "per_minute_per_token", cfg.RateLimitPerMinute)

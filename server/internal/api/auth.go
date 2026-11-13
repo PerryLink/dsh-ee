@@ -154,14 +154,23 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
+// usernameLocked 检查同一用户名的失败锁定；命中时写 429 并计入 /metrics，调用方直接返回。
+func (s *Server) usernameLocked(w http.ResponseWriter, username string) bool {
+	if !s.limiter.locked(username) {
+		return false
+	}
+	s.loginUsernameLimited.Add(1)
+	writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 15 分钟后再试")
+	return true
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
 	if !readJSON(w, r, &req) {
 		return
 	}
 	username := strings.ToLower(strings.TrimSpace(req.Username))
-	if s.limiter.locked(username) {
-		writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 15 分钟后再试")
+	if s.usernameLocked(w, username) {
 		return
 	}
 	u, ok := s.login(w, r, username, req.Password, "web")
@@ -203,9 +212,18 @@ func (s *Server) startWebSession(w http.ResponseWriter, r *http.Request, u *stor
 
 // login 验证密码并处理限流、审计与错误响应；失败时已写好响应，返回 false。via 是 web / npm。
 func (s *Server) login(w http.ResponseWriter, r *http.Request, username, password, via string) (*store.User, bool) {
+	ip := s.clientIP(r)
+	// 同一出口 IP 失败次数过多时直接拒绝，省掉后面昂贵的密码校验。
+	if retry, blocked := s.loginIPLimiter.blocked(ip); blocked {
+		s.loginIPLimited.Add(1)
+		writeLoginRateLimited(w, retry, "登录失败次数过多，请稍后再试")
+		return nil, false
+	}
 	u, err := s.authenticate(r.Context(), username, password)
 	switch {
 	case errors.Is(err, errBadCredentials):
+		s.loginFailures.Add(1)
+		s.loginIPLimiter.fail(ip)
 		s.limiter.fail(username)
 		s.auditAs(r, nil, auditLoginFailed, username, map[string]any{"via": via})
 		writeErr(w, http.StatusUnauthorized, err.Error())

@@ -459,8 +459,7 @@ func (s *Server) handleNpmLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := strings.ToLower(strings.TrimSpace(body.Name))
-	if s.limiter.locked(username) {
-		writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 15 分钟后再试")
+	if s.usernameLocked(w, username) {
 		return
 	}
 	u, ok := s.login(w, r, username, body.Password, "npm")

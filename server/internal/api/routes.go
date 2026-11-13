@@ -84,6 +84,8 @@ func (s *Server) routes() []route {
 		pub("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, map[string]string{"status": "ok", "version": s.opts.Version})
 		}),
+		// 监控抓取用，默认关闭且只允许本机 / 内网来源，见 metrics.go
+		pub("GET /metrics", s.handleMetrics),
 
 		// 示例内容里的演示差旅系统，只认示例连接带的密钥
 		pub("GET /demo/travel/summary", s.handleDemoSummary),

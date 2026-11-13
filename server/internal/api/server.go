@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/kb"
@@ -64,6 +65,13 @@ type Options struct {
 	DemoSite *DemoSite
 	// 轮换 ee_jwt 密钥时，新钥匙过多久开始签名；0 用默认的 10 分钟（测试里调短）
 	EEKeyDelay time.Duration
+	// 登录失败按客户端 IP 限流：窗口内失败多少次后返回 429。0 用默认值（15 分钟 50 次），
+	// 小于 0 关闭；配置里 DSH_EE_LOGIN_IP_LIMIT=0/off 会传 -1。
+	LoginIPLimit int
+	// 上面限流窗口的长度；0 用默认的 15 分钟。
+	LoginIPWindow time.Duration
+	// 是否开放 GET /metrics（给监控抓取）。默认关闭。见 metrics.go。
+	Metrics bool
 	// 协议面（/v1/* 与 /mcp）每令牌每分钟的请求数；0 表示关闭。
 	// 线上默认由 config 的 DSH_EE_RATE_LIMIT 给 60，测试里按需设置。
 	RateLimitPerMinute int
@@ -92,8 +100,14 @@ type Server struct {
 	opts            Options
 	log             *slog.Logger
 	limiter         *loginLimiter
+	loginIPLimiter  *loginIPLimiter
 	deviceCodeRate  *ipRate
 	deviceTokenRate *ipRate
+	// 启动时间与登录计数，只给 /metrics 用
+	startedAt            time.Time
+	loginFailures        atomic.Uint64
+	loginIPLimited       atomic.Uint64
+	loginUsernameLimited atomic.Uint64
 	// 可信反向代理网段；只有这些对端的 X-Forwarded-* 会被采信（见 proxy.go）
 	trustedProxies []netip.Prefix
 	upstream       *http.Client
@@ -177,6 +191,8 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}
+	s.loginIPLimiter = newLoginIPLimiter(opts.LoginIPLimit, opts.LoginIPWindow)
+	s.startedAt = time.Now()
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()

@@ -47,6 +47,11 @@ dsh-ee 本身只提供 HTTP，放在企业的反向代理 / 负载均衡后面�
   `DSH_EE_TRUSTED_PROXIES`（如 docker 默认网桥 `172.17.0.0/16`），否则审计与按 IP 限流记录的客户端地址是代理地址。
 - 允许较大的请求体（npm publish 与离线包导入，至少 200 MB），并关闭对 `/api/admin/upstream/import` 的读超时或调大。
 
+### 登录限流与监控
+
+- 登录失败先按用户名锁（15 分钟 5 次），再按客户端 IP 固定窗口限流：默认 15 分钟 50 次，只统计用户名或密码错误，触发后返回 429 并带 `Retry-After`。公司很多人共用一个出口 IP 时可调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭；窗口长度用 `DSH_EE_LOGIN_IP_WINDOW` 调整。
+- 需要接 Prometheus 时设 `DSH_EE_METRICS=true`，从本机或内网抓 `GET /metrics`；指标只有进程运行信息与登录失败 / 限流计数，不含账号、IP 或具体请求内容。
+
 ## 不用 docker
 
 ```bash
