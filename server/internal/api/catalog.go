@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -566,6 +565,12 @@ func (s *Server) handleUploadPackage(w http.ResponseWriter, r *http.Request) {
 	if !s.registryReady(w) {
 		return
 	}
+	release, ok := beginPackageUpload()
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "同时上传/预检的包太多，请稍后重试")
+		return
+	}
+	defer release()
 	raw, info, m, ok := s.readPackageTarball(w, r)
 	if !ok {
 		return
@@ -579,13 +584,10 @@ func (s *Server) handleUploadPackage(w http.ResponseWriter, r *http.Request) {
 		DistTags: map[string]string{tag: m.Version},
 		Versions: map[string]json.RawMessage{m.Version: info.PackageJSON},
 	}
-	doc.Attachments = map[string]struct {
-		ContentType string `json:"content_type"`
-		Data        string `json:"data"`
-		Length      int64  `json:"length"`
-	}{registry.TarballFile(m.Name, m.Version): {ContentType: "application/octet-stream", Data: base64.StdEncoding.EncodeToString(raw), Length: int64(len(raw))}}
 	u, a := currentUser(r), currentAccess(r)
-	res, err := s.registry.Publish(r.Context(), registry.Publisher{UserID: u.ID, Username: u.Username, Manager: a.Has(rbac.PluginsManage)}, doc)
+	// 请求体已经是 tarball，直接交给 PublishTarball：不再把 100 MB 的包做一遍
+	// base64 编码再解码（那是两份额外的大内存）。
+	res, err := s.registry.PublishTarball(r.Context(), registry.Publisher{UserID: u.ID, Username: u.Username, Manager: a.Has(rbac.PluginsManage)}, doc, raw)
 	if err != nil {
 		s.registryErr(w, r, err)
 		return
