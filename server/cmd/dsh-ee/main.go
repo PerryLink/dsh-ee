@@ -239,14 +239,22 @@ func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 	}
 }
 
-// sweepEmbed 启动时清理一次、之后每分钟清理过期的一次性 embed code 与限流窗口。
-// code TTL 只有 60 秒，靠每小时的总清理太慢；多实例各自跑一遍是幂等的（DELETE 条件相同）。
+// sweepEmbed 启动时清理一次、之后每分钟清理过期的一次性状态（embed code、网页登录链接、
+// 开始使用接入码、OIDC state）与限流窗口。
+// 这些状态 TTL 最短只有 60 秒，靠每小时的总清理太慢；多实例各自跑一遍是幂等的
+// （DELETE 条件相同，过期判断本身在读取/消费时做，清理只回收空间）。
 func sweepEmbed(ctx context.Context, st *store.Store, log *slog.Logger) {
 	clean := func() {
 		if n, err := st.DeleteExpiredEmbedCodes(ctx); err != nil {
 			log.Warn("清理过期嵌入 code 失败", "err", err)
 		} else if n > 0 {
 			log.Info("已清理过期嵌入 code", "count", n)
+		}
+		// 多实例共享的一次性状态（web link / 接入码 / OIDC state），见 store/ephemeral.go。
+		if n, err := st.PurgeExpiredEphemeralStates(ctx); err != nil {
+			log.Warn("清理过期一次性状态失败", "err", err)
+		} else if n > 0 {
+			log.Info("已清理过期一次性状态", "count", n)
 		}
 		// 只保留当前及以后的窗口；上一分钟的限流行已经没用了。
 		if n, err := st.DeleteOldEmbedRates(ctx, time.Now().UTC().Truncate(time.Minute)); err != nil {

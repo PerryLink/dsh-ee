@@ -153,19 +153,15 @@ type Server struct {
 	releaseKick   chan struct{}
 	releaseMu     sync.Mutex
 	releaseJobs   map[string]bool
-	// 「开始使用」页的接入码
-	setupCodes setupCodes
 	// 全部路由；Agent 工具也从这里取处理函数
 	routeTable []route
 	// 由路由表生成的 Agent 工具
 	agentTools []*agentTool
 	// 知识库的内存关键词索引
 	kb kbIndex
-	// OIDC 登录：发现配置与公钥缓存、进行中的登录请求
+	// OIDC 登录：发现配置与公钥缓存（一次性 state/PKCE 在共享表 ephemeral_states 里）
 	oidcOnce   sync.Once
 	oidcClient *oidc.Client
-	oidcStates oidcStates
-	webLinks   webLinks
 }
 
 func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Server {

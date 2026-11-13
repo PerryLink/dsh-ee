@@ -262,7 +262,9 @@ cp /path/to/当前目录/.env .
 
 ### 9.2 单实例边界（当前实现）
 
+- **一次性状态已多实例安全**：从 DSH 打开网页的 handoff code、开始使用接入码、OIDC state/PKCE 存在数据库表 `ephemeral_states`，多个实例共享：A 实例生成，B 实例打开链接、收回调或轮询接入进度都能用。一次性由 `UPDATE … SET consumed_at=now() WHERE consumed_at IS NULL AND expires_at>now()` 的 affected rows 保证；过期状态由 `sweepEmbed` 每分钟清理一次（清理只回收空间，有效性判断不依赖它）。要求所有实例连同一个数据库、使用同一个 `DSH_EE_SECRET_KEY`（OIDC state 的 nonce/PKCE verifier 加密后落库）、系统时钟同步（TTL 按应用时间判断）。数据库不可用时这些功能直接失败（fail closed），**不会**回退到进程内存。
 - 登录限流、上游 packument 内存缓存、预载/导入任务、知识库索引都在进程内存里；**多实例会行为不一致**。
+- 后台任务与进程内锁（LDAP/飞书同步、知识源同步、上游新版本检查、DSH 安装包下载、`oauthLocks`/`connectMu` 等）还没有跨实例租约或分布式锁；多实例会重复执行或互相打断。
 - tarball 在本地磁盘；多实例需要共享存储（NFS 等）或对象存储——对象存储是设计，没有实现。
 - 多个实例同时首次启动会争抢数据库迁移：先起一个完成迁移，再起其余实例。
 - 没有 `/mcp`、`/v1` 的每令牌限流；没有独立的队列/worker 进程。
@@ -328,7 +330,7 @@ cp /path/to/当前目录/.env .
 | 指标（Prometheus）、链路追踪、慢请求日志、请求 ID | 没有；只有文本日志与 `/healthz` |
 | 日志级别/轮转/syslog/Webhook | 没有；在外部日志设施处理 |
 | 审计导出、保留期、外发 | 没有；只有 `/admin/audit` 页面查询 |
-| 多实例/共享存储/对象存储 | 没有；单实例、本地磁盘 |
+| 多实例/共享存储/对象存储 | 部分：一次性状态已入数据库 `ephemeral_states`（§9.2）；后台任务租约、限流、缓存、预载任务仍在进程内存，tarball 在本地磁盘 |
 | 零停机升级、滚动升级 | 没有；升级期间服务不可用 |
 | 容量/限流面板、每令牌限流 | 没有；见 [architecture.md](./architecture.md) §7 |
 | 备份一致性编排（数据库 + blobs 同一快照） | 没有；靠运维窗口与流程约束 |

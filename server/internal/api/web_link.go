@@ -1,58 +1,39 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
+	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
 // 从 DSH 打开网页免登录（第一版 M12，docs/product-v1.md §10.6）。
 //
-// 接入插件凭设备令牌换一个一次性 code（只放内存，60 秒有效，用一次即作废），浏览器打开
+// 接入插件凭设备令牌换一个一次性 code（60 秒有效，用一次即作废），浏览器打开
 // /api/auth/handoff?code=… 时换成网页会话再跳到目标页。这样换来的会话标记为 limited：
 // 只带员工权限，不能确认设备登录、不能生成接入码和令牌；管理功能要输入密码重新登录。
 // 带 agent 范围的设备令牌本来就能以员工身份调接口，换成网页会话不会多出任何权限；
 // 不带 agent 范围的令牌换不了。
+//
+// 多实例：一次性 code 放共享表 ephemeral_states（只存 sha256），一次性的 CAS 在
+// store.ConsumeEphemeralState 里；A 实例生成、B 实例打开 handoff 也能成功。
+// 数据库不可用时直接失败（返回 500），不回退到进程内存。
 
-const webLinkTTL = 60 * time.Second
+const (
+	webLinkTTL  = 60 * time.Second
+	webLinkKind = "web_link"
+)
 
-type webLinkPending struct {
-	userID int64
-	next   string
-	exp    time.Time
-}
-
-type webLinks struct {
-	mu sync.Mutex
-	m  map[string]webLinkPending
-}
-
-func (l *webLinks) put(hash string, p webLinkPending) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.m == nil {
-		l.m = map[string]webLinkPending{}
-	}
-	now := time.Now()
-	for k, v := range l.m {
-		if now.After(v.exp) {
-			delete(l.m, k)
-		}
-	}
-	l.m[hash] = p
-}
-
-func (l *webLinks) take(hash string) (webLinkPending, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	p, ok := l.m[hash]
-	delete(l.m, hash)
-	return p, ok && time.Now().Before(p.exp)
+// webLinkPayload 是 handoff code 绑定的内容：谁、成功后跳到哪个站内路径。
+type webLinkPayload struct {
+	UserID int64  `json:"user_id"`
+	Next   string `json:"next"`
 }
 
 // limitedAccess 是从 DSH 打开的网页会话的权限：员工权限，去掉「我的令牌」（令牌不能用来再造令牌）。
@@ -122,7 +103,21 @@ func (s *Server) handleDshWebLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := secret.Token()
-	s.webLinks.put(secret.Hash(code), webLinkPending{userID: p.User.ID, next: next, exp: time.Now().Add(webLinkTTL)})
+	payload, err := json.Marshal(webLinkPayload{UserID: p.User.ID, Next: next})
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	if err := s.store.PutEphemeralState(r.Context(), store.EphemeralState{
+		Kind:      webLinkKind,
+		StateHash: secret.Hash(code),
+		Payload:   payload,
+		ExpiresAt: time.Now().Add(webLinkTTL),
+	}); err != nil {
+		// 没有内存回退：多实例下回退会导致「A 实例生成的链接 B 实例用不了」。
+		s.internalErr(w, r, err)
+		return
+	}
 	q := url.Values{"code": {code}, "next": {next}}
 	writeJSON(w, http.StatusOK, map[string]any{"url": base + "/api/auth/handoff?" + q.Encode(), "expires_in": int(webLinkTTL.Seconds())})
 }
@@ -133,25 +128,40 @@ func (s *Server) handleAuthHandoff(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
 	q := r.URL.Query()
-	pending, ok := s.webLinks.take(secret.Hash(q.Get("code")))
-	if !ok {
+	consumeFailed := func() {
 		fallback := webNext(q.Get("next"))
 		if fallback == "" {
 			fallback = "/go"
 		}
 		http.Redirect(w, r, "/login?handoff=expired&next="+url.QueryEscape(fallback), http.StatusSeeOther)
+	}
+	st, err := s.store.ConsumeEphemeralState(r.Context(), webLinkKind, secret.Hash(q.Get("code")))
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrEphemeralStateExpired):
+			consumeFailed()
+		default:
+			// 数据库不可用：不能凭内存里的副本继续，否则多实例下行为不一致。
+			s.internalErr(w, r, err)
+		}
+		return
+	}
+	var pending webLinkPayload
+	if err := json.Unmarshal(st.Payload, &pending); err != nil {
+		s.log.Warn("网页登录链接的 payload 无法解析", "err", err)
+		consumeFailed()
 		return
 	}
 	// 浏览器里已经有这个人的会话（不管是不是完整的）就直接用，不把完整会话降级
 	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
-		if u, _, err := s.store.SessionInfo(r.Context(), secret.Hash(c.Value)); err == nil && u.ID == pending.userID {
-			http.Redirect(w, r, pending.next, http.StatusSeeOther)
+		if u, _, err := s.store.SessionInfo(r.Context(), secret.Hash(c.Value)); err == nil && u.ID == pending.UserID {
+			http.Redirect(w, r, pending.Next, http.StatusSeeOther)
 			return
 		}
 	}
-	u, err := s.store.GetUser(r.Context(), pending.userID)
+	u, err := s.store.GetUser(r.Context(), pending.UserID)
 	if notFound(err) || (err == nil && (u.Disabled || u.AccountType != "human")) {
-		http.Redirect(w, r, "/login?next="+url.QueryEscape(pending.next), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(pending.Next), http.StatusSeeOther)
 		return
 	}
 	if err != nil {
@@ -165,5 +175,5 @@ func (s *Server) handleAuthHandoff(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditAs(r, u, auditLogin, u.Username, map[string]any{"via": "dsh", "source": u.AuthSource, "limited": true})
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", MaxAge: int(s.opts.SessionTTL.Seconds()), HttpOnly: true, Secure: s.opts.CookieSecure, SameSite: http.SameSiteLaxMode})
-	http.Redirect(w, r, pending.next, http.StatusSeeOther)
+	http.Redirect(w, r, pending.Next, http.StatusSeeOther)
 }
