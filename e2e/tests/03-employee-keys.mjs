@@ -46,6 +46,8 @@ export default async function (t) {
     await login(page, emp, "li-na-password-1");
     await page.goto(`${BASE}/tokens`);
     await page.getByRole("button", { name: "生成令牌" }).first().click();
+    // 新表单默认按第三方 Harness 处理；DSH 用户可显式改成 DSH 接入
+    assertEq(await page.getByLabel("客户端类型", { exact: true }).inputValue(), "third_party", "令牌默认客户端类型");
     await page.getByLabel("名称", { exact: true }).fill("李娜的 DSH");
     await page.locator("form").getByRole("button", { name: "生成令牌" }).click();
     const pre = page.locator("pre").filter({ hasText: /^\s*ee_at_\S+\s*$/ }).first();
@@ -70,7 +72,23 @@ export default async function (t) {
     const mine = await api(page, "GET", "/api/me/tokens");
     const current = mine.data.tokens.find((item) => item.prefix === key.slice(0, 12));
     assertEq(current.month_used, 2000, "统一令牌本月用量");
-    step("令牌本月已用 2000 token");
+    assertEq(current.client_kind, "third_party", "网页新建令牌默认第三方 Harness");
+    step("令牌本月已用 2000 token，客户端类型为第三方 Harness");
+
+    // 显式选 DSH 接入：给不用设备码登录、手工填进 DSH 的令牌
+    await page.getByRole("button", { name: "生成令牌" }).first().click();
+    await page.getByLabel("名称", { exact: true }).fill("李娜的 DSH 手工");
+    await page.getByLabel("客户端类型", { exact: true }).selectOption("dsh");
+    await page.locator("form").getByRole("button", { name: "生成令牌" }).click();
+    await page.getByText("令牌已生成").waitFor();
+    const mine2 = await api(page, "GET", "/api/me/tokens");
+    const dshManual = mine2.data.tokens.find((item) => item.name === "李娜的 DSH 手工");
+    assertEq(dshManual?.client_kind, "dsh", "可显式选择 DSH 接入");
+    // 列表里能看出两类客户端
+    await page.getByText("第三方 Harness").first().waitFor();
+    await page.getByText("DSH 接入").first().waitFor();
+    await shot(page, "keys-client-kind");
+    step("网页可选 DSH / 第三方 Harness，列表显示客户端类型");
     await shot(page, "keys-mine");
 
     await page.goto(`${BASE}/admin/users`);

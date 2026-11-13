@@ -114,8 +114,16 @@ DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES=1
 
 没有默认收窄的原因：旧 npm 令牌 / API key 仍在不少现有部署里被 DSH 与脚本使用，默认收窄会让这些客户端直接 403/401；因此选「可配置的兼容收敛」，由管理员确认现有客户端都迁走后再打开。
 
-## 5. 相关测试
+## 5. 网页端
+
+- 员工「我的令牌」与管理员「令牌管理」的新建表单都有「客户端类型」选择：`DSH 接入`（dsh）/ `第三方 Harness`（third_party），**默认 third_party**；给不用设备码登录的 DSH 手工令牌时显式选 `DSH 接入`。
+- 表单下方按选择给出作用说明：`dsh` 只用于 DSH 接入，写操作先在 DSH 审批卡确认；`third_party` 用于其它 Harness/脚本，写操作始终要员工在网页上人工确认。
+- 两个列表都显示 `client_kind` 徽标，能直接看出某把令牌是给 DSH 还是给第三方客户端的；旧版 npm/key 令牌由服务端按 `dsh` 兼容显示。
+- 后端 `TokenInput.client_kind` 与 `TokenView.client_kind` 已在前几节说明，网页只负责选择与展示，不改签发规则。
+
+## 6. 相关测试
 
 - `server/internal/api/introspect_test.go`：无凭据/无效令牌 401、越权 403、self 与管理员查询、过期/吊销/不存在、管理员 Bearer、旧 npm/key 自省、scope 收敛开关。
 - `server/internal/api/tokens_test.go`、`device_test.go`：签发默认 `client_kind` 与 whoami。
 - `server/internal/store/tokens_test.go`、`migrations_test.go`：`client_kind` 迁移与默认值、令牌归属字段。
+- 网页端：`pnpm build`（tsc）覆盖 i18n 与类型；e2e `03-employee-keys` 断言新建默认 third_party、可显式选 dsh、列表显示客户端类型，`10-tokens` 断言管理员签发默认 third_party。
