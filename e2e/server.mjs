@@ -83,17 +83,35 @@ function dropDatabases(dsnBase, db) {
   }
 }
 
+/** 找一个空闲端口（给需要额外隔离实例的测试用，例如低限流实例）。 */
+export async function findFreePort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
 /**
  * 启动一个隔离的服务端。调用方必须在测试结束后 await stop()。
- * 端口沿用 E2E_BASE（默认 8080）；每个测试串行启动，所以不会冲突。
+ * 默认端口沿用 E2E_BASE（默认 8080）；每个测试串行启动，所以不会冲突。
+ *
+ * 可选参数（35-harness-sdk 的 429 用例需要低限流实例）：
+ *   port  指定端口（默认取 E2E_BASE 的端口；传 findFreePort() 的结果可起第二个实例）
+ *   env   额外环境变量，例如 { DSH_EE_RATE_LIMIT: "3" }
  */
-export async function startManagedServer() {
+export async function startManagedServer({ port: portOption = 0, env: extraEnv = {} } = {}) {
   const dsnBase = baseDsn();
   const bin = binary();
   const db = `dsh_ee_e2e_${process.pid.toString(36)}_${crypto.randomBytes(3).toString("hex")}`;
   const dsn = dsnBase + db;
   const base = baseUrl();
-  const port = portOf(base);
+  const basePort = portOf(base);
+  const port = portOption || basePort;
+  const url = port === basePort ? base : `http://127.0.0.1:${port}`;
   await assertPortFree(port);
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-ee-e2e-"));
   const cleanup = () => {
@@ -102,6 +120,7 @@ export async function startManagedServer() {
   };
   const env = {
     ...process.env,
+    ...extraEnv,
     DSH_EE_ADDR: `127.0.0.1:${port}`,
     DSH_EE_DSN: dsn,
     DSH_EE_SECRET_KEY: crypto.randomBytes(32).toString("base64"),
@@ -121,13 +140,13 @@ export async function startManagedServer() {
       throw new Error(`服务端启动即退出（code=${child.exitCode}）：\n${output.slice(-4000)}`);
     }
     try {
-      const r = await fetch(`${base}/healthz`);
+      const r = await fetch(`${url}/healthz`);
       if (r.ok) {
         return {
           dsn: dsnBase,
           db,
           dataDir,
-          url: base,
+          url,
           logs: () => output.slice(-8000),
           stop: async () => {
             if (child.exitCode === null) {
@@ -149,5 +168,5 @@ export async function startManagedServer() {
   child.kill("SIGKILL");
   await waitExit(child, 2000);
   cleanup();
-  throw new Error(`服务端 30s 内没有就绪：${base}\n${output.slice(-4000)}`);
+  throw new Error(`服务端 30s 内没有就绪：${url}\n${output.slice(-4000)}`);
 }
