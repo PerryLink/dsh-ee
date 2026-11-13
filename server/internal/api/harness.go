@@ -228,7 +228,7 @@ func (s *Server) harnessPrincipal(w http.ResponseWriter, r *http.Request) (*Prin
 		writeHarnessErr(w, r, http.StatusUnauthorized, harnessErrAuthentication, tokenInvalid, "缺少 Authorization: Bearer 令牌")
 		return nil, false
 	}
-	p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 	if err != nil {
 		s.harnessAuthErr(w, r, err)
 		return nil, false
@@ -248,7 +248,7 @@ func (s *Server) harnessOptionalPrincipal(w http.ResponseWriter, r *http.Request
 		writeHarnessErr(w, r, http.StatusUnauthorized, harnessErrAuthentication, tokenInvalid, "Authorization 必须是 Bearer 令牌")
 		return nil, false
 	}
-	p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 	if err != nil {
 		s.harnessAuthErr(w, r, err)
 		return nil, false

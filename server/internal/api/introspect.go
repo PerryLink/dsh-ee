@@ -199,7 +199,7 @@ func (s *Server) handleIntrospect(w http.ResponseWriter, r *http.Request) {
 	var caller *Principal
 	var sessionAccess *rbac.Access
 	if hasBearer && bearer != "" {
-		p, err := s.resolveBearer(r.Context(), bearer, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+		p, err := s.resolveBearer(r.Context(), bearer, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 		if err != nil {
 			var be bearerError
 			if errors.As(err, &be) {
