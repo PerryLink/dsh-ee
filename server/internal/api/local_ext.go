@@ -39,7 +39,8 @@ type localCallReq struct {
 	Version   string          `json:"version"`
 	Tool      string          `json:"tool"`
 	Args      json.RawMessage `json:"args"`
-	// 调用方是哪个 harness：dsh 自己有审批卡，write_confirm 为 non_dsh 时不用再确认（和 X-DshEE-Client 一样，防的是「被设成自动同意」，不防恶意）
+	// 调用方是哪个 harness：dsh 自己有审批卡，write_confirm 为 non_dsh 时不用再确认。
+	// 但只认令牌属性（client_kind=dsh），third_party 令牌即使自报 dsh 也要人工确认（和 /mcp 一致）。
 	Harness string `json:"harness"`
 	// 回报用
 	OK         *bool  `json:"ok"`
@@ -77,7 +78,7 @@ func (s *Server) handleLocalConfirm(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	u := currentUser(r)
 	switch mode := s.writeConfirmMode(ctx); {
-	case mode == confirmOff, mode == confirmNonDSH && q.Harness == "dsh":
+	case mode == confirmOff, mode == confirmNonDSH && q.Harness == "dsh" && currentClientKind(r) == store.ClientKindDSH:
 		writeJSON(w, http.StatusOK, map[string]any{"approved": true})
 		return
 	}
@@ -122,7 +123,7 @@ func (s *Server) handleLocalConfirm(w http.ResponseWriter, r *http.Request) {
 	if q.Version != "" {
 		client += "@" + q.Version
 	}
-	c := &store.WriteConfirmation{UserID: u.ID, Tool: tool, ArgsHash: hash, Args: text, Client: cutUTF8(client, 120)}
+	c := &store.WriteConfirmation{UserID: u.ID, Tool: tool, ArgsHash: hash, Args: text, TokenID: currentTokenID(r), Client: cutUTF8(client, 120)}
 	if err := s.store.CreateWriteConfirmation(ctx, c, secret.Hash(secret.Token()), confirmPendingTTL); err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -173,7 +174,7 @@ func (s *Server) requireToken(next http.HandlerFunc) http.HandlerFunc {
 			}
 			return
 		}
-		next(w, r.WithContext(withUser(r.Context(), p.User, p.Access)))
+		next(w, r.WithContext(withTokenUser(r.Context(), p.User, p.Access, p.TokenID, p.ClientKind)))
 	}
 }
 

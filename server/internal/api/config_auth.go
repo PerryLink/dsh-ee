@@ -30,6 +30,6 @@ func (s *Server) requireConfig(next http.Handler) http.Handler {
 			writeErr(w, http.StatusForbidden, "这个令牌没有 config 范围：在「我的令牌」里建一个带 config 范围的令牌")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), p.User, p.Access)))
+		next.ServeHTTP(w, r.WithContext(withTokenUser(r.Context(), p.User, p.Access, p.TokenID, p.ClientKind)))
 	})
 }

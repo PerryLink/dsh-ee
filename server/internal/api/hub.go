@@ -263,7 +263,14 @@ type viewer struct {
 	canAdmin, adminLive bool
 	// 账号本身的权限（令牌范围收窄之前）；只用来决定下发哪些系统技能
 	account *rbac.Access
+	// 经由接入令牌发起的请求：令牌 id 与客户端类型（dsh / third_party）；网页会话为零值
+	tokenID    int64
+	clientKind string
 }
+
+// isDSHToken 表示这次调用用的是签发给 DSH 的令牌。写确认只认令牌属性，
+// 不认可伪造的 X-DshEE-Client 请求头；网页会话与未知一律按非 DSH 处理。
+func (v viewer) isDSHToken() bool { return v.clientKind == store.ClientKindDSH }
 
 // accountHas：账号本身有没有这个权限点（不看令牌范围）。没有记录时退回到这次请求的权限。
 func (v viewer) accountHas(code string) bool {
@@ -273,7 +280,14 @@ func (v viewer) accountHas(code string) bool {
 	return v.access != nil && v.access.Has(code)
 }
 
-func viewerOf(r *http.Request) viewer { return viewer{user: currentUser(r), access: currentAccess(r)} }
+func viewerOf(r *http.Request) viewer {
+	v := viewer{user: currentUser(r), access: currentAccess(r), tokenID: currentTokenID(r), clientKind: currentClientKind(r)}
+	// Agent 工具转发出来的内部请求：令牌属性在 agent 信息里
+	if info, ok := agentFrom(r.Context()); ok && info.Principal != nil {
+		v.tokenID, v.clientKind = info.Principal.TokenID, info.Principal.ClientKind
+	}
+	return v
+}
 
 func (v viewer) inScope(sc store.Scope) bool {
 	return sc.Allows(v.user.ID, v.user.Department, v.access.RoleIDs)

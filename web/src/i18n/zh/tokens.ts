@@ -9,6 +9,15 @@ export default {
     owner: "账号",
     chooseOwner: "选择账号",
     source: "来源",
+    clientKind: "客户端类型",
+    clientKinds: {
+      dsh: "DSH 接入",
+      third_party: "第三方 Harness",
+    },
+    clientKindHints: {
+      dsh: "只用于 DSH 接入：DSH 自己有审批卡，写操作先在 DSH 里确认；不要给其它 Harness 或脚本用。",
+      third_party: "用于 Claude Code、Codex 等其它 Harness 或脚本：写操作始终要员工在网页上人工确认。",
+    },
     scopesTitle: "能力范围",
     usage: "本月用量 / 额度",
     lastUsed: "最近使用",

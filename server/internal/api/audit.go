@@ -16,6 +16,11 @@ const (
 	auditLoginFailed    = "auth.login_failed"
 	auditPasswordChange = "auth.password_change"
 
+	// 跨站嵌入 v1（embed.go）：签发一次性 code、撤销 ee_emb_ 会话、拒绝来源/应用等
+	auditEmbedCreate = "embed.session_create"
+	auditEmbedRevoke = "embed.revoke"
+	auditEmbedDeny   = "embed.deny"
+
 	auditUserCreate = "user.create"
 	auditUserUpdate = "user.update"
 	auditUserRoles  = "user.roles"
@@ -40,6 +45,7 @@ const (
 	auditLDAPUpdate     = "ldap.update"
 	auditLDAPSync       = "ldap.sync"
 	auditOIDCUpdate     = "oidc.update"
+	auditOIDCBind       = "oidc.bind"
 	auditFeishuSync     = "oidc.feishu_sync"
 
 	auditPackagePublish         = "package.publish"

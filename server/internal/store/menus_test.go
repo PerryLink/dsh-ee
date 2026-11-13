@@ -225,3 +225,121 @@ func TestDefaultMenusAdminGroups(t *testing.T) {
 		}
 	}
 }
+
+// 0032：已有部署补「开发」组（开发文档 / 开发样例两项），重复迁移不重复插入。
+func TestMigrateMenusDev(t *testing.T) {
+	ctx := context.Background()
+	// 0032 之前的默认菜单：去掉「开发」组
+	before0032 := make([]rbac.Menu, 0, len(rbac.DefaultMenus))
+	for _, g := range rbac.DefaultMenus {
+		if g.Title != "开发" {
+			before0032 = append(before0032, g)
+		}
+	}
+	st := openTokenTestStore(t)
+	if err := st.ResetMenus(ctx, before0032); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 0013 之后的旧库排序（造 13、接入 16），验证「开发」插在 19、排在接入之后
+	for _, q := range []string{
+		"UPDATE menus SET sort = 13 WHERE kind = 'group' AND title = '造'",
+		"UPDATE menus SET sort = 16 WHERE kind = 'group' AND title = '接入'",
+	} {
+		if _, err := st.DB().ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0032_dev_menus'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]*Menu{}
+	var dev, jieru *Menu
+	for _, m := range ms {
+		if m.Kind == "group" {
+			switch m.Title {
+			case "开发":
+				dev = m
+			case "接入":
+				jieru = m
+			}
+			continue
+		}
+		byKey[m.PageKey] = m
+	}
+	if dev == nil || jieru == nil {
+		t.Fatalf("缺少分组：开发=%v 接入=%v", dev, jieru)
+	}
+	if dev.Sort <= jieru.Sort {
+		t.Fatalf("「开发」应排在「接入」之后：%d <= %d", dev.Sort, jieru.Sort)
+	}
+	for key, want := range map[string]struct {
+		title string
+		path  string
+		icon  string
+		sort  int
+	}{
+		"dev-docs":     {"开发文档", "/docs", "BookMarked", 10},
+		"dev-examples": {"开发样例", "/examples", "FlaskConical", 20},
+	} {
+		m := byKey[key]
+		if m == nil {
+			t.Fatalf("缺少页面 %s", key)
+		}
+		if m.ParentID == nil || *m.ParentID != dev.ID {
+			t.Fatalf("%s 应挂在「开发」下：%+v", key, m)
+		}
+		if m.Kind != "page" || m.Title != want.title || m.Path != want.path || m.Icon != want.icon || m.Sort != want.sort {
+			t.Fatalf("%s 字段不对：%+v", key, m)
+		}
+		if m.Permission != rbac.PortalView || !m.Visible {
+			t.Fatalf("%s 权限/可见性不对：%+v", key, m)
+		}
+	}
+	// 再跑一次不会重复插入
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0032_dev_menus'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != len(ms) {
+		t.Fatalf("重复迁移后菜单数 %d → %d", len(ms), len(again))
+	}
+}
+
+// 全新部署的默认菜单：「开发」组紧跟在「接入」之后，两项都是前端固定路由。
+func TestDefaultMenusIncludesDev(t *testing.T) {
+	var titles []string
+	var dev *rbac.Menu
+	for i := range rbac.DefaultMenus {
+		g := &rbac.DefaultMenus[i]
+		titles = append(titles, g.Title)
+		if g.Title == "开发" {
+			dev = g
+		}
+	}
+	idx := func(title string) int { return slices.Index(titles, title) }
+	if idx("开发") != idx("接入")+1 {
+		t.Fatalf("「开发」应紧跟「接入」：%v", titles)
+	}
+	if dev == nil || len(dev.Children) != 2 {
+		t.Fatalf("「开发」组内容不对：%+v", dev)
+	}
+	want := map[string]string{"dev-docs": "/docs", "dev-examples": "/examples"}
+	for _, c := range dev.Children {
+		if want[c.PageKey] != c.Path || c.Permission != rbac.PortalView || c.Kind != "page" {
+			t.Fatalf("%+v", c)
+		}
+	}
+}

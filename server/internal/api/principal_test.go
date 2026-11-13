@@ -26,6 +26,11 @@ type principalFixture struct {
 }
 
 func newPrincipalFixture(t *testing.T) *principalFixture {
+	return newPrincipalFixtureWith(t, nil)
+}
+
+// newPrincipalFixtureWith 允许测试调整 api.Options（例如旧令牌 scope 收敛开关）。
+func newPrincipalFixtureWith(t *testing.T, mutate func(*api.Options)) *principalFixture {
 	t.Helper()
 	st := openTestStore(t)
 	ctx := context.Background()
@@ -38,7 +43,11 @@ func newPrincipalFixture(t *testing.T) *principalFixture {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	box, _ := secret.NewBox(key)
-	srv := api.New(st, box, api.Options{DataDir: t.TempDir(), Upstream: up.Client()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	opts := api.Options{DataDir: t.TempDir(), Upstream: up.Client()}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	srv := api.New(st, box, opts, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	f := &principalFixture{st: st, srv: srv, ts: ts, admin: newClient(t, ts.URL)}
