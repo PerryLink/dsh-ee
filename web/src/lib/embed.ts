@@ -2,7 +2,7 @@
  * 同站嵌入（v0）的前端参数与 postMessage 协议。
  *
  * 宿主用 iframe 打开微应用网页版：
- *   /a/<标识>?embed=1&host=<宿主 origin>[&fit=auto][&theme=light|dark]
+ *   /a/<标识>?embed=1&host=<宿主 origin>[&fit=auto][&theme=light|dark|system]
  *
  * 约定：
  * - 消息只发给 URL 里的 host origin，绝不使用 "*"；
@@ -19,22 +19,52 @@ export const EMBED_PROTOCOL_V2 = 2;
 /** fit=auto 上报内容高度的上限：宿主按消息设高度时，避免异常页面把宿主布局撑爆。 */
 export const EMBED_MAX_HEIGHT = 4000;
 
+/**
+ * iframe 自身握手超时（ready 发出后等 connect/session）：超时即进入失败态并发 `dsh-ee:error`。
+ * 宿主侧建议 8 秒没有 ready/error 就显示手动的「在浏览器打开」兜底（不自动顶层打开），
+ * 两者关系见 docs/embedding.md §5；`dsh-ee:hello` 的 timeouts 会带上这两个数字。
+ */
+export const EMBED_HANDSHAKE_TIMEOUT_MS = 10_000;
+export const EMBED_HOST_FALLBACK_MS = 8_000;
+
+/** 移动端判定阈值：窄屏（<640px，Tailwind sm 断点以下）或移动 UA 都算移动端。 */
+export const EMBED_MOBILE_MAX_WIDTH = 640;
+
 export type EmbedTheme = "light" | "dark";
+/** URL 上的主题偏好：`light`/`dark` 固定，`system` 跟随 prefers-color-scheme。 */
+export type EmbedThemePreference = EmbedTheme | "system";
 export type EmbedFit = "fill" | "auto";
 export type EmbedErrorCode = "auth_required" | "forbidden" | "load_failed";
+
+/**
+ * 失败的阶段，宿主/支持按它判断问题出在哪一层：
+ * - `load`：页面/接口加载（应用不存在、无权限、网络错误等）；
+ * - `session`：未登录、会话过期、握手超时（对齐服务端 v1 错误体的 `stage: "session"`）；
+ * - `exchange`：跨站一次性 code 交换失败（对齐服务端 v1 错误体的 `stage: "exchange"`）。
+ */
+export type EmbedErrorStage = "load" | "session" | "exchange";
 
 export interface EmbedOptions {
   embed: boolean;
   /** 宿主 origin（校验后的 `scheme://host[:port]`）；缺省或非法时为 null。 */
   host: string | null;
   fit: EmbedFit;
-  theme: EmbedTheme | null;
+  /** URL 上的主题偏好；`system` 跟随系统且不写 localStorage。 */
+  theme: EmbedThemePreference | null;
+}
+
+export interface EmbedViewport {
+  /** 窄屏（<640px）或移动 UA：iframe 内显示「在浏览器打开」常驻兜底，但不自动顶层跳转。 */
+  mobile: boolean;
+  width: number;
+  height: number;
 }
 
 export interface EmbedError {
   code: EmbedErrorCode;
   message: string;
   retryable?: boolean;
+  stage: EmbedErrorStage;
 }
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
@@ -54,8 +84,8 @@ export function parseEmbedOptions(search: string): EmbedOptions {
   };
 }
 
-function parseTheme(raw: string | null): EmbedTheme | null {
-  return raw === "light" || raw === "dark" ? raw : null;
+function parseTheme(raw: string | null): EmbedThemePreference | null {
+  return raw === "light" || raw === "dark" || raw === "system" ? raw : null;
 }
 
 /** host 必须是完整 origin：https，或回环地址上的 http（本地联调）。 */
@@ -121,6 +151,8 @@ export class EmbedExchangeError extends Error {
     /** embed_code_invalid / embed_code_expired / embed_disabled / rate_limited */
     public code: string,
     message: string,
+    /** 服务端 v1 错误体的 stage（exchange 阶段固定为 `exchange`，缺省按 exchange 处理）。 */
+    public stage: string = "exchange",
   ) {
     super(message);
   }
@@ -149,9 +181,9 @@ export async function exchangeEmbedCode(code: string): Promise<EmbedExchangeResu
   } catch {
     // 代理错误页之类的纯文本
   }
-  const body = (data ?? {}) as { code?: string; error?: string };
+  const body = (data ?? {}) as { code?: string; error?: string; stage?: string };
   if (!res.ok) {
-    throw new EmbedExchangeError(body.code || "embed_code_invalid", body.error || "登录码无效");
+    throw new EmbedExchangeError(body.code || "embed_code_invalid", body.error || "登录码无效", body.stage || "exchange");
   }
   return data as EmbedExchangeResult;
 }
@@ -196,6 +228,40 @@ export function capEmbedHeight(height: number, max = EMBED_MAX_HEIGHT): number {
   return Math.max(0, Math.min(Math.round(height), max));
 }
 
+/** 移动 UA 判定（只用于显示兜底提示，不影响内容与认证）。 */
+export function isMobileUserAgent(ua: string): boolean {
+  return /Android|iPhone|iPad|iPod|Mobile|HarmonyOS|Silk/i.test(ua);
+}
+
+/** 当前 iframe 视口是否算移动端：窄屏或移动 UA。 */
+export function isMobileEmbedViewport(width: number, ua: string): boolean {
+  return width > 0 && width < EMBED_MOBILE_MAX_WIDTH ? true : isMobileUserAgent(ua);
+}
+
+/** `ready`/`hello` 里上报的视口信息与 `dsh-ee:resize` 共用同一套尺寸口径。 */
+export function embedViewport(): EmbedViewport {
+  const width = typeof window === "undefined" ? 0 : window.innerWidth || document.documentElement.clientWidth || 0;
+  const height = typeof window === "undefined" ? 0 : window.innerHeight || document.documentElement.clientHeight || 0;
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  return { mobile: isMobileEmbedViewport(width, ua), width, height };
+}
+
+/**
+ * fit=auto 上报的内容高度：量页面根节点（`#root`）的内容高度，而不是
+ * `document.documentElement.scrollHeight`——后者至少等于 iframe 视口高度，
+ * 宿主按它撑高后内容变少时高度再也缩不回来。`min-h-screen` 只保留在 fill 模式，
+ * 嵌入 + auto 时页面改为内容驱动，见 app-web.tsx。
+ */
+export function embedContentHeight(root: HTMLElement | null = typeof document === "undefined" ? null : document.getElementById("root")): number {
+  if (!root) {
+    const html = typeof document === "undefined" ? null : document.documentElement;
+    return capEmbedHeight(html ? html.scrollHeight : 0);
+  }
+  // 向上取整：宿主按上报值设 iframe 高度时不会因小数差 1px 出现内部滚动条。
+  const measured = Math.ceil(Math.max(root.getBoundingClientRect().height, root.scrollHeight));
+  return capEmbedHeight(measured || root.clientHeight);
+}
+
 /** 当前实际渲染的主题：嵌入页只改 DOM，不写 localStorage。 */
 export function resolvedDocumentTheme(): EmbedTheme {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
@@ -214,9 +280,9 @@ export function nonEmbedURL(): string {
   return `${u.pathname}${u.search}${u.hash}`;
 }
 
-/** 接口错误 → 宿主可判断的失败码。 */
+/** 接口错误 → 宿主可判断的失败码；stage 固定为 `load`（页面/接口加载阶段）。 */
 export function embedErrorForStatus(status: number | null, message: string): EmbedError {
-  if (status === 401) return { code: "auth_required", message, retryable: false };
-  if (status === 403 || status === 404) return { code: "forbidden", message, retryable: false };
-  return { code: "load_failed", message, retryable: true };
+  if (status === 401) return { code: "auth_required", message, retryable: false, stage: "load" };
+  if (status === 403 || status === 404) return { code: "forbidden", message, retryable: false, stage: "load" };
+  return { code: "load_failed", message, retryable: true, stage: "load" };
 }

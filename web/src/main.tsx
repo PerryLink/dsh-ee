@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useParams, useSearchParams } fr
 import "./index.css";
 import "./i18n";
 import { initTheme } from "./lib/theme";
+import { isEmbedSearch } from "./lib/embed";
 import { StoreProvider } from "./lib/store";
 import { AuthProvider, RequireAuth, useAuth } from "./lib/auth";
 import { EmbedProvider } from "./lib/embed-provider";
@@ -214,8 +215,10 @@ function AppRoutes() {
   );
 }
 
-// 首屏的 .dark 类已由 index.html 的内联脚本加好，这里接着做运行时切换与「跟随系统」
-initTheme();
+// 首屏的 .dark 类已由 index.html 的内联脚本加好，这里接着做运行时切换与「跟随系统」。
+// 嵌入页的主题由 URL（theme=light|dark|system）与宿主 dsh-ee:theme 消息决定（EmbedProvider 处理），
+// 不要再用本机 localStorage 偏好覆盖首屏，否则 iframe 会先闪一下别的主题。
+if (!isEmbedSearch(window.location.search) || !window.location.pathname.startsWith("/a/")) initTheme();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
