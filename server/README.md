@@ -144,6 +144,7 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_EMBED_CROSS_SITE` | 跨站 iframe 嵌入 v1 总开关，默认关闭。开启后 `POST /api/embed/sessions`、`POST /api/auth/embed/exchange` 才可用，且必须同时设置 `DSH_EE_EMBED_ORIGINS`（否则启动失败）。管理端「系统设置 → 跨站嵌入」可显式覆盖（数据库值优先） |
 | `DSH_EE_EMBED_SESSION_TTL` | `ee_emb_` 嵌入会话有效期，默认 `2h`，允许 `1m`–`8h`；过期后宿主重新 mint 即可，不提供 refresh。管理端设置（分钟）非 0 时覆盖 |
 | `DSH_EE_EXTENSION_TRUSTED_KEYS` | 受信任的扩展签名公钥（PEM 文件，可以放多把；公钥、证书、私钥文件都认）。**这是启动时读的只读兼容来源**：主要的信任根在库里（表 `trusted_signing_keys`，管理员用 `/api/admin/signing-keys` 增 / 换下 / 撤销，撤销后新装拒绝，历史保留）；同一个 key id 以库里的状态为准。不配时签了名的扩展也显示「不受信任」。改这个变量要重启，改库里立即生效 |
+| `DSH_EE_DIRECTORY_TARBALL_HOSTS` | 企业目录 tarball 来源的主机白名单，逗号分隔，支持 `*.example.com`。为空时目录里的 tarball 只接受公网 https 地址（拒绝 localhost / 内网 / 链路本地地址，防 SSRF）；企业自己的内网对象存储要显式列进来。目录 v1 只登记来源、不下载 tarball。见 [docs/plugin-signing.md](../docs/plugin-signing.md) §8 |
 | `DSH_EE_EXTENSION_REQUIRE_SIGNATURE` | 设为 `1` 时，没签名或签名无效的扩展不让安装（fail closed）；库里或 `DSH_EE_EXTENSION_TRUSTED_KEYS` 至少要有受信任的公钥，一把都没有时启动只警告、所有扩展都装不了。撤销的签名在任何策略下都不让新装。默认只在安装计划里提示，不阻断。见 [docs/plugins.md](../docs/plugins.md) §9.3 |
 | `DSH_EE_EMBED_MINT_PER_MINUTE` | `POST /api/embed/sessions` 的限流：每 IP 每分钟次数，默认 `30`，允许 1–100000。计数在数据库 `embed_rates` 表里，多实例部署时是合计额度 |
 | `DSH_EE_EMBED_EXCHANGE_PER_MINUTE` | `POST /api/auth/embed/exchange` 的限流：每 IP 每分钟次数，默认 `60`，允许 1–100000。同样跨实例合计；超限返回 `429` + `Retry-After: 60` |

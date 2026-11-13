@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,8 +24,15 @@ const (
 	auditSigningKeyRevoke = "signing_key.revoke"
 )
 
-// 现在只支持扩展签名；字段留给以后别的签名用途。
-const signingKeyPurposeExtension = "extension"
+const (
+	// 扩展签名（作者对清单/接口文档签名）用的公钥
+	signingKeyPurposeExtension = "extension"
+	// 企业目录整体签名用的公钥；目录验签时也接受 extension 用途的钥匙（复用 #134 的信任根）
+	signingKeyPurposeDirectory = "directory"
+)
+
+// 管理 API 支持的用途。新增用途时同步这里和目录/验签的取用逻辑。
+var signingKeyPurposes = []string{signingKeyPurposeExtension, signingKeyPurposeDirectory}
 
 // signingKeyPending 是还没到 valid_from 的公钥：记录在，但验签时先不用。
 const signingKeyPending = "pending"
@@ -50,18 +58,33 @@ func (s *Server) trustedExtensionKeys(ctx context.Context) ([]extension.TrustedK
 	if err != nil {
 		return nil, err
 	}
-	return mergeTrustedExtensionKeys(rows, s.opts.ExtensionTrustedKeys, time.Now().UTC()), nil
+	return mergeTrustedSigningKeys(rows, s.opts.ExtensionTrustedKeys, time.Now().UTC(), signingKeyPurposeExtension), nil
 }
 
-// mergeTrustedExtensionKeys 合并两份信任来源。
+// trustedDirectoryKeys 合并库里的信任根和环境变量里的公钥，给企业目录验签用。
+// 目录签名复用 #134 的信任根：purpose=directory 的钥匙优先，purpose=extension 的也接受
+// （企业只有一套签名钥匙时不用再加一遍）；env 里的公钥同样作为只读兼容来源。
+func (s *Server) trustedDirectoryKeys(ctx context.Context) ([]extension.TrustedKey, error) {
+	rows, err := s.store.ListTrustedSigningKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mergeTrustedSigningKeys(rows, s.opts.ExtensionTrustedKeys, time.Now().UTC(), signingKeyPurposeExtension, signingKeyPurposeDirectory), nil
+}
+
+// mergeTrustedSigningKeys 合并两份信任来源，只取列出的用途。
 // 环境变量是只读的兼容来源；同一个 key id 以库里的状态为准——不然撤销一把同时写在 env 里的
 // 公钥不会生效。库里的记录坏掉（不是 PEM、key id 对不上）时跳过它，不影响其它公钥；
 // 还没到 valid_from 的钥匙先不用。
-func mergeTrustedExtensionKeys(rows []store.TrustedSigningKey, env []ed25519.PublicKey, now time.Time) []extension.TrustedKey {
+func mergeTrustedSigningKeys(rows []store.TrustedSigningKey, env []ed25519.PublicKey, now time.Time, purposes ...string) []extension.TrustedKey {
+	allowed := map[string]bool{}
+	for _, p := range purposes {
+		allowed[p] = true
+	}
 	out := make([]extension.TrustedKey, 0, len(rows)+len(env))
 	seen := map[string]bool{}
 	for _, r := range rows {
-		if r.Purpose != "" && r.Purpose != signingKeyPurposeExtension {
+		if r.Purpose != "" && !allowed[r.Purpose] {
 			continue
 		}
 		state := signingKeyState(r, now)
@@ -123,7 +146,7 @@ func (s *Server) handleListSigningKeys(w http.ResponseWriter, r *http.Request) {
 		"states":            counts,
 		"env_keys":          env,
 		"require_signature": s.opts.ExtensionRequireSignature,
-		"purpose":           signingKeyPurposeExtension,
+		"purposes":          signingKeyPurposes,
 	})
 }
 
@@ -158,8 +181,8 @@ func (s *Server) handleAddSigningKey(w http.ResponseWriter, r *http.Request) {
 	if purpose == "" {
 		purpose = signingKeyPurposeExtension
 	}
-	if purpose != signingKeyPurposeExtension {
-		writeErr(w, http.StatusBadRequest, "现在只支持扩展签名（purpose 只能是 extension）")
+	if !slices.Contains(signingKeyPurposes, purpose) {
+		writeErr(w, http.StatusBadRequest, "purpose 只能是 extension（扩展签名）或 directory（企业目录签名）")
 		return
 	}
 	note := strings.TrimSpace(req.Note)

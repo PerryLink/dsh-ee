@@ -97,20 +97,30 @@ func TestMergeTrustedExtensionKeys(t *testing.T) {
 		// 别的用途不参与扩展验签
 		{KeyID: "fedcba9876543210", PublicKey: pemOf(pub), Purpose: "npm", ValidFrom: t1},
 	}
-	keys := mergeTrustedExtensionKeys(rows, []ed25519.PublicKey{pub}, now)
+	keys := mergeTrustedSigningKeys(rows, []ed25519.PublicKey{pub}, now, signingKeyPurposeExtension)
 	if len(keys) != 1 || extension.KeyID(keys[0].Public) != extension.KeyID(pub) || keys[0].State != extension.KeyStateRevoked {
 		t.Fatalf("库里的撤销状态应压过 env、其它记录跳过：%+v", keys)
 	}
 	// 没有库记录时 env 的钥匙是 active
-	keys = mergeTrustedExtensionKeys(nil, []ed25519.PublicKey{pub}, now)
+	keys = mergeTrustedSigningKeys(nil, []ed25519.PublicKey{pub}, now, signingKeyPurposeExtension)
 	if len(keys) != 1 || keys[0].State != extension.KeyStateActive {
 		t.Fatalf("env 的钥匙应是 active：%+v", keys)
 	}
 	// 换下的状态会带到验签里
 	rows[0].RevokedAt = nil
 	rows[0].RetiredAt = &t2
-	keys = mergeTrustedExtensionKeys(rows[:1], nil, now)
+	keys = mergeTrustedSigningKeys(rows[:1], nil, now, signingKeyPurposeExtension)
 	if len(keys) != 1 || keys[0].State != extension.KeyStateRetired {
 		t.Fatalf("换下的钥匙状态：%+v", keys)
+	}
+	// 企业目录验签：purpose=directory 和 extension 的钥匙都接受（复用 #134 的信任根）
+	dirRow := store.TrustedSigningKey{KeyID: extension.KeyID(otherPub), PublicKey: pemOf(otherPub), Purpose: signingKeyPurposeDirectory, ValidFrom: t1}
+	keys = mergeTrustedSigningKeys([]store.TrustedSigningKey{dirRow}, nil, now, signingKeyPurposeExtension, signingKeyPurposeDirectory)
+	if len(keys) != 1 || keys[0].State != extension.KeyStateActive {
+		t.Fatalf("目录用途的钥匙应参与目录验签：%+v", keys)
+	}
+	keys = mergeTrustedSigningKeys([]store.TrustedSigningKey{dirRow}, nil, now, signingKeyPurposeExtension)
+	if len(keys) != 0 {
+		t.Fatalf("扩展验签不该用 directory 用途的钥匙：%+v", keys)
 	}
 }

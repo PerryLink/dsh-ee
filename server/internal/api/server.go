@@ -99,6 +99,8 @@ type Options struct {
 	EmbedExchangePerMinute int
 	// 每用户同时有效的嵌入会话上限；0 用默认 5，超过时撤销最旧的会话。
 	EmbedMaxSessionsPerUser int
+	// 企业目录（directory.go）：tarball 来源的主机白名单；空表示只接受公网 https 地址。
+	DirectoryTarballHosts []string
 }
 
 type Server struct {

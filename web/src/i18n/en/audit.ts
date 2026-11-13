@@ -34,6 +34,7 @@ export default {
       kb: "Knowledge base",
       app_data: "App data",
       data: "Data hub",
+      directory: "Enterprise directory",
     },
     colTime: "Time",
     colActor: "Actor",
@@ -80,6 +81,7 @@ export default {
       app_data: { insert: "Add app data", update: "Edit app data", delete: "Delete app data", export: "Export app data" },
       kb: { create: "Create knowledge base", edit: "Edit knowledge base", delete: "Delete knowledge base", doc_create: "Add document", doc_edit: "Edit document", doc_delete: "Delete document" },
       embed: { session_create: "Issued embed code", revoke: "Revoked embed session", deny: "Denied embed request" },
+      directory: { apply: "Registered enterprise directory" },
     },
   },
 } satisfies Messages<typeof zh>;

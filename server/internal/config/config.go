@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-sql-driver/mysql"
+	"github.com/hikariming/dsh-ee/server/internal/directory"
 	"net/netip"
 	"net/url"
 	"os"
@@ -65,6 +66,9 @@ type Config struct {
 	// 强制验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1）：没签名或签名验不过的扩展不让安装。
 	// 默认只在安装计划里提示，不阻断。
 	ExtensionRequireSignature bool
+	// 企业目录（docs/plugin-signing.md §2.2）：tarball 来源的主机白名单（DSH_EE_DIRECTORY_TARBALL_HOSTS，
+	// 逗号分隔，支持 *.example.com）。为空时只接受公网 https 地址；名单里的主机允许是内网地址。
+	DirectoryTarballHosts []string
 	// 数据中台的库（DSH_EE_DATA_DSN）。默认和主库同一个服务器、库名加 _data；设成 off 关闭。
 	DataDSN string
 	// 数据中台的只读账号（DSH_EE_DATA_READ_DSN）；不填时用 DataDSN 的账号自动建一个只有 SELECT 权限的账号。
@@ -150,6 +154,13 @@ func Load() (*Config, error) {
 		c.ExtensionRequireSignature = b
 	}
 	cookieSecureSet := false
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_DIRECTORY_TARBALL_HOSTS")); v != "" {
+		hosts, err := directory.ParseTarballHosts(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_DIRECTORY_TARBALL_HOSTS: %w", err)
+		}
+		c.DirectoryTarballHosts = hosts
+	}
 	if v := os.Getenv("DSH_EE_COOKIE_SECURE"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {

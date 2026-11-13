@@ -254,6 +254,10 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/signing-keys", s.handleAddSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/signing-keys/{key_id}/retire", s.handleRetireSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/signing-keys/{key_id}/revoke", s.handleRevokeSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
+		// 企业目录 v1（directory.go）：验签 + 逐条校验后登记来源，只登记不安装
+		prm("GET /api/admin/directory", s.handleListDirectory, rbac.ConnectionsManage, rbac.SettingsManage),
+		prm("POST /api/admin/directory/check", s.handleDirectoryCheck, rbac.ConnectionsManage, rbac.SettingsManage),
+		prm("POST /api/admin/directory/apply", s.handleDirectoryApply, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("GET /api/admin/fields", s.handleListFields, rbac.FieldsManage, rbac.UsersView),
 		prm("POST /api/admin/fields", s.handleCreateField, rbac.FieldsManage),
 		prm("PATCH /api/admin/fields/{id}", s.handlePatchField, rbac.FieldsManage),
