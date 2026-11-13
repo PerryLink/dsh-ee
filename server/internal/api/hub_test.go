@@ -356,6 +356,24 @@ func TestHub(t *testing.T) {
 		t.Fatalf("应同步到 3 个工具且不回显凭据：%s", body)
 	}
 	crmID := decodeAs[struct{ Asset store.Asset }](t, body).Asset.ID
+
+	// 复用已存凭据试连时，只能测这个连接自己：不能把企业凭据发到请求里换的地址
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("不应把已保存的连接凭据发到别的地址")
+	}))
+	defer attacker.Close()
+	badSpec := map[string]any{"title": "CRM", "type": "mcp", "url": attacker.URL, "auth": map[string]any{"type": "bearer"}}
+	code, body = admin.do("POST", "/api/admin/connections/test", map[string]any{"id": crmID, "spec": badSpec}, nil)
+	expect(t, "复用已存凭据试连别的地址", code, 200, body)
+	if decodeAs[struct{ OK bool }](t, body).OK || !strings.Contains(string(body), "已保存的凭据只能用于原来的地址") {
+		t.Fatalf("已存凭据不应能发到别的地址：%s", body)
+	}
+	code, body = admin.do("POST", "/api/admin/connections/test", map[string]any{"id": crmID, "spec": connSpec}, nil)
+	expect(t, "复用已存凭据试连原地址", code, 200, body)
+	if !decodeAs[struct{ OK bool }](t, body).OK {
+		t.Fatalf("原地址应能复用已存凭据：%s", body)
+	}
+
 	init := dsh["bob"].rpc("initialize", map[string]any{"protocolVersion": "2025-11-25"})
 	if init["result"].(map[string]any)["protocolVersion"] != "2025-11-25" || !strings.Contains(fmt.Sprint(init), "CRM") {
 		t.Fatalf("initialize：%v", init)

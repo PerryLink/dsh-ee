@@ -204,7 +204,7 @@ func (s *Server) handlePutOIDC(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
-	s.audit(r, auditOIDCUpdate, cfg.Issuer, map[string]any{"enabled": cfg.Enabled, "mappings": len(cfg.RoleMappings), "secret_changed": in.ClientSecret != nil})
+	s.audit(r, auditOIDCUpdate, cfg.Issuer, map[string]any{"enabled": cfg.Enabled, "mappings": len(cfg.RoleMappings), "secret_changed": in.ClientSecret != nil, "require_email_verified": cfg.RequireEmailVerified})
 	s.handleGetOIDC(w, r)
 }
 
@@ -359,9 +359,15 @@ func (s *Server) finishOIDCLogin(w http.ResponseWriter, r *http.Request, cfg *oi
 	if cfg.Preset == "feishu" && !strings.HasPrefix(id.Subject, "feishu:") {
 		id.Subject = feishu.ExternalSubject(id.Subject)
 	}
-	u, err := s.provisionOIDC(r.Context(), cfg, id)
+	// 严格身份绑定：只认 IdP 明确说已验证的邮箱。默认关闭，避免不返回 email_verified 的企业 IdP 登不进来。
+	if cfg.RequireEmailVerified && !id.EmailVerified {
+		s.auditAs(r, nil, auditLoginFailed, id.Username, map[string]any{"via": "oidc", "reason": errOIDCEmailUnverified.Error()})
+		loginError(w, r, errOIDCEmailUnverified.Error())
+		return
+	}
+	u, bound, err := s.provisionOIDC(r.Context(), cfg, id)
 	switch {
-	case errors.Is(err, errNotProvisioned), errors.Is(err, errBadCredentials), errors.Is(err, errOIDCConflict), errors.Is(err, errOIDCIdentity), errors.Is(err, errOIDCNoSubject):
+	case errors.Is(err, errNotProvisioned), errors.Is(err, errBadCredentials), errors.Is(err, errOIDCConflict), errors.Is(err, errOIDCIdentity), errors.Is(err, errOIDCNoSubject), errors.Is(err, errOIDCEmailMismatch):
 		s.auditAs(r, nil, auditLoginFailed, id.Username, map[string]any{"via": "oidc", "reason": err.Error()})
 		loginError(w, r, err.Error())
 		return
@@ -369,6 +375,10 @@ func (s *Server) finishOIDCLogin(w http.ResponseWriter, r *http.Request, cfg *oi
 		s.log.Error("OIDC 建号失败", "err", err)
 		loginError(w, r, "登录失败，请联系管理员")
 		return
+	}
+	// 新账号自动建号、预建账号首次登录、管理员解除绑定后重新绑定：记一条身份绑定审计。
+	if bound {
+		s.auditAs(r, u, auditOIDCBind, u.Username, map[string]any{"via": "oidc", "source": u.AuthSource, "subject": u.ExternalDN})
 	}
 	if err := s.store.TouchLogin(r.Context(), u.ID); err != nil {
 		s.log.Warn("记录登录时间失败", "err", err)
@@ -387,6 +397,10 @@ var (
 	errOIDCConflict  = errors.New("dsh-ee 里已有同名的本地或 LDAP 账号，不能用企业统一登录；请联系管理员")
 	errOIDCIdentity  = errors.New("这个用户名在 dsh-ee 里已绑定另一个企业身份；如果是你的账号在统一登录里重建过，请联系管理员解除绑定")
 	errOIDCNoSubject = errors.New("企业统一登录没有返回用户标识（sub），不能登录；请联系管理员")
+	// 开启「要求邮箱已验证」时，IdP 没有声明 email_verified=true 的账号不能登录
+	errOIDCEmailUnverified = errors.New("企业统一登录没有声明邮箱已验证（email_verified），当前配置不允许登录；请联系管理员")
+	// 开启「要求邮箱已验证」时，预建账号填了邮箱的，只允许邮箱一致的 IdP 身份绑定
+	errOIDCEmailMismatch = errors.New("这个预建账号的邮箱与企业统一登录的声明不一致，不能绑定；请联系管理员核对账号资料")
 )
 
 // oidcUsername 把声明里的用户名变成 dsh-ee 的用户名；邮箱形式的取 @ 前面一段。
@@ -405,20 +419,21 @@ func oidcUsername(raw string) string {
 
 // provisionOIDC 找到或建好账号，同步资料与映射的角色。规则与 LDAP 一致：
 // 本地账号、LDAP 账号与机器人不能借 OIDC 登录；没开自动建号时只有预先建好的 OIDC 账号能登录。
-func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Identity) (*store.User, error) {
+// 第二个返回值表示这次是否新建立/写入了 sub 绑定（用于记身份绑定审计）。
+func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Identity) (*store.User, bool, error) {
 	if id.Subject == "" {
-		return nil, errOIDCNoSubject
+		return nil, false, errOIDCNoSubject
 	}
 	name := oidcUsername(id.Username)
 	if name == "" {
 		s.log.Warn("OIDC 声明里没有可用的用户名", "claim", cfg.UsernameClaim, "value", id.Username)
-		return nil, errNotProvisioned
+		return nil, false, errNotProvisioned
 	}
 	// 先按 sub 认人：用户名声明会变（改名、域名迁移），sub 不变就不应该新建第二个账号。
 	var u *store.User
 	if bySub, err := s.store.GetUserByExternalDN(ctx, store.AuthOIDC, id.Subject); err != nil {
 		if !notFound(err) {
-			return nil, err
+			return nil, false, err
 		}
 	} else if bySub != nil {
 		u = bySub
@@ -430,25 +445,30 @@ func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Id
 		var err error
 		u, err = s.store.GetUserByUsername(ctx, name)
 		if err != nil && !notFound(err) {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	if u != nil && (u.AccountType != store.AccountHuman || u.AuthSource != store.AuthOIDC) {
-		return nil, errOIDCConflict
+		return nil, false, errOIDCConflict
 	}
 	if u == nil {
 		if !cfg.AutoCreate {
-			return nil, errNotProvisioned
+			return nil, false, errNotProvisioned
 		}
 		zero := int64(0)
 		u = &store.User{Username: name, DisplayName: id.DisplayName, Department: id.Department, Email: id.Email,
 			AuthSource: store.AuthOIDC, ExternalDN: id.Subject, MonthlyTokenLimit: &zero}
 		if err := s.store.CreateUser(ctx, u); err != nil {
 			if !errors.Is(err, store.ErrDuplicate) {
-				return nil, err
+				return nil, false, err
 			}
 			if u, err = s.store.GetUserByUsername(ctx, name); err != nil {
-				return nil, err
+				return nil, false, err
+			}
+			// 并发建号时抢输了一次：刚被别的请求建出来的账号也必须还是 OIDC 员工账号，
+			// 不能顺势把同名的本地 / LDAP 账号绑到这次的 sub 上。
+			if u.AccountType != store.AccountHuman || u.AuthSource != store.AuthOIDC {
+				return nil, false, errOIDCConflict
 			}
 		} else {
 			roles := s.mappedRoles(ctx, cfg.ManagedRoles(), cfg.MatchRoles(id.Groups), nil)
@@ -456,21 +476,30 @@ func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Id
 				roles = dedupe(append(roles, member.ID))
 			}
 			if err := s.store.SetUserRoles(ctx, u.ID, roles); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			s.log.Info("OIDC 用户首次登录，已创建账号", "user", name, "roles", roles)
-			return s.store.GetUser(ctx, u.ID)
+			created, err := s.store.GetUser(ctx, u.ID)
+			return created, true, err
 		}
 	}
 	// 账号按用户名找，认的却是 sub：用户名声明会变也会重名（邮箱前缀在另一个域重名、工号回收再分配），
 	// 只按用户名认，后来的人会直接登进前一个人的账号。预先建好的账号还没有 sub，第一次登录时绑定。
 	if u.ExternalDN != "" && u.ExternalDN != id.Subject {
 		s.log.Warn("OIDC 用户名已绑定另一个 sub，拒绝登录", "user", name)
-		return nil, errOIDCIdentity
+		return nil, false, errOIDCIdentity
 	}
 	if u.Disabled {
-		return nil, errBadCredentials
+		return nil, false, errBadCredentials
 	}
+	// 严格身份绑定：预建账号第一次绑定时，若账号填了邮箱，要求 IdP 声明的邮箱与之一致。
+	// 用户名常常是邮箱前缀，不同域的同名用户不能借用户名认领别人的预建账号。
+	if cfg.RequireEmailVerified && u.ExternalDN == "" && u.Email != "" &&
+		!strings.EqualFold(strings.TrimSpace(u.Email), strings.TrimSpace(id.Email)) {
+		s.log.Warn("预建账号的邮箱与 OIDC 声明不一致，拒绝绑定", "user", u.Username)
+		return nil, false, errOIDCEmailMismatch
+	}
+	bound := u.ExternalDN == ""
 	var p store.UserPatch
 	changed := false
 	set := func(dst **string, cur, next string) {
@@ -485,13 +514,13 @@ func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Id
 	set(&p.ExternalDN, u.ExternalDN, id.Subject)
 	if changed {
 		if err := s.store.UpdateUser(ctx, u.ID, p); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	if len(cfg.RoleMappings) > 0 {
 		a, err := s.store.UserAccess(ctx, u.ID)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		next := s.mappedRoles(ctx, cfg.ManagedRoles(), cfg.MatchRoles(id.Groups), a.RoleIDs)
 		cur := dedupe(append([]int64{}, a.RoleIDs...))
@@ -499,11 +528,12 @@ func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Id
 		slices.Sort(next)
 		if !slices.Equal(cur, next) {
 			if err := s.store.SetUserRoles(ctx, u.ID, next); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 	}
-	return s.store.GetUser(ctx, u.ID)
+	u, err := s.store.GetUser(ctx, u.ID)
+	return u, bound, err
 }
 
 // mappedRoles：保留不由映射管理的角色，映射管理的按这次的组重新决定；已删除的角色跳过。

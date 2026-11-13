@@ -1,0 +1,66 @@
+package store
+
+import (
+	"io/fs"
+	"strings"
+	"testing"
+)
+
+// 迁移文件是按行尾分号切分后逐条执行的（Migrate 里用 splitStatements）；
+// 这里不连数据库，先保证每个文件都能被完整解析成可执行语句，
+// 并且 token client_kind 这次改动落在预期的表和列上。
+func TestMigrationsParse(t *testing.T) {
+	files, err := fs.Glob(migrationFS, "migrations/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("没有迁移文件")
+	}
+	for _, f := range files {
+		body, err := migrationFS.ReadFile(f)
+		if err != nil {
+			t.Fatalf("读 %s: %v", f, err)
+		}
+		stmts := splitStatements(string(body))
+		if len(stmts) == 0 {
+			t.Fatalf("%s 解析出 0 条语句", f)
+		}
+		for _, stmt := range stmts {
+			trimmed := strings.TrimSpace(stmt)
+			if trimmed == "" {
+				t.Fatalf("%s 解析出了空语句", f)
+			}
+			// 切分器不处理字符串里的分号；迁移里只允许注释和语句，不允许残留的注释行混进语句
+			for _, line := range strings.Split(stmt, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "--") {
+					t.Fatalf("%s 有注释混进了语句：%q", f, stmt)
+				}
+			}
+		}
+	}
+}
+
+// 0032：令牌客户端类型与调用/确认记录里的令牌归属。
+func TestTokenClientKindMigration(t *testing.T) {
+	body, err := migrationFS.ReadFile("migrations/0032_token_client_kind.sql")
+	if err != nil {
+		t.Fatalf("读 0032 迁移: %v", err)
+	}
+	stmts := splitStatements(string(body))
+	if len(stmts) == 0 {
+		t.Fatal("0032 迁移没有可执行语句")
+	}
+	joined := strings.Join(stmts, "\n")
+	for _, want := range []string{
+		"ALTER TABLE access_tokens",
+		"client_kind VARCHAR(16) NOT NULL DEFAULT 'dsh'",
+		"ALTER TABLE connection_calls",
+		"token_id BIGINT NULL",
+		"ALTER TABLE write_confirmations",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("0032 迁移缺少 %q：\n%s", want, joined)
+		}
+	}
+}

@@ -103,7 +103,7 @@ export function useMenuTitle() {
   };
 }
 
-const DEFAULT_GROUPS = { 用: 1, 造: 1, 接入: 1, 工作台: 1, 账号与模型: 1, 管理: 1, 运营: 1, 账号与权限: 1, 模型与额度: 1, 能力与连接: 1, 分发与源: 1, 系统: 1 };
+const DEFAULT_GROUPS = { 用: 1, 造: 1, 接入: 1, 开发: 1, 工作台: 1, 账号与模型: 1, 管理: 1, 运营: 1, 账号与权限: 1, 模型与额度: 1, 能力与连接: 1, 分发与源: 1, 系统: 1 };
 
 /** 按 page_key 链接站内页面；suffix 用于带查询参数等，例如 "?tab=x"。 */
 export function PageLink({ page, suffix = "", ...rest }: Omit<LinkProps, "to"> & { page: string; suffix?: string }) {

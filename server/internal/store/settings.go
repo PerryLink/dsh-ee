@@ -87,6 +87,18 @@ type AppSettings struct {
 		// 安装也要令牌；关闭后匿名可读，发布仍要令牌
 		RequireToken bool `json:"requireToken"`
 	} `json:"registry"`
+	// 跨站嵌入 v1 的管理端设置（E1）：与环境变量合并成有效配置。
+	// 环境变量是部署基线、只读；这里显式设置的值覆盖它（allowed_origins 取并集）。
+	Embed struct {
+		// 是否允许宿主后端 mint 跨站嵌入 code；nil = 跟随 DSH_EE_EMBED_CROSS_SITE
+		CrossSite *bool `json:"crossSite,omitempty"`
+		// 额外允许的宿主 origin（追加在 DSH_EE_EMBED_ORIGINS 之后，只读环境变量不变）
+		AllowedOrigins []string `json:"allowedOrigins"`
+		// 允许嵌入的应用 slug；空 = 所有开放了网页版的应用
+		Apps []string `json:"apps"`
+		// ee_emb_ 会话有效期（分钟）；0 = 跟随部署配置/默认 2h
+		SessionMinutes int `json:"sessionMinutes"`
+	} `json:"embed"`
 }
 
 // BrandTheme 是 DSH 界面的配色。Colors 是几个常用位置（主色、侧栏等），
@@ -142,6 +154,8 @@ func DefaultSettings() *AppSettings {
 	s.Registry.ProxyMode = "cache"
 	s.Registry.ExtraScopes = []string{}
 	s.Registry.RequireToken = true
+	s.Embed.AllowedOrigins = []string{}
+	s.Embed.Apps = []string{}
 	return s
 }
 
@@ -160,6 +174,12 @@ func (s *AppSettings) CompanyScopes() []string {
 func (s *AppSettings) Clone() *AppSettings {
 	c := *s
 	c.Registry.ExtraScopes = append([]string{}, s.Registry.ExtraScopes...)
+	c.Embed.AllowedOrigins = append([]string{}, s.Embed.AllowedOrigins...)
+	c.Embed.Apps = append([]string{}, s.Embed.Apps...)
+	if s.Embed.CrossSite != nil {
+		b := *s.Embed.CrossSite
+		c.Embed.CrossSite = &b
+	}
 	c.Knowledge.QAStarters = append([]string{}, s.Knowledge.QAStarters...)
 	c.Brand.Theme.Colors = maps.Clone(s.Brand.Theme.Colors)
 	c.Brand.Theme.Tokens = maps.Clone(s.Brand.Theme.Tokens)

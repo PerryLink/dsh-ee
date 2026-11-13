@@ -1,0 +1,77 @@
+/**
+ * /docs/:slug：开发文档详情（固定路由）。
+ *
+ * 正文是静态中文导读，渲染见 components/docs-markdown.tsx。
+ * 地址里的 #锚点 会在标题渲染出来后滚动定位；英文界面显示「正文为中文」的提示，不做机器翻译。
+ */
+import { Link, useParams } from "react-router";
+import { useTranslation } from "react-i18next";
+import { ArrowLeft, ExternalLink } from "lucide-react";
+import { readMinutes, findDevDoc } from "../data/dev-docs";
+import { isZh } from "../i18n";
+import { DocsMarkdown } from "../components/docs-markdown";
+import { Badge, Button, Card, Empty, backLinkCls } from "../components/ui";
+
+export default function DevDocDetail() {
+  const { t } = useTranslation();
+  const { slug = "" } = useParams();
+  const doc = findDevDoc(slug);
+  const zh = isZh();
+
+  if (!doc) {
+    return (
+      <div className="max-w-4xl" data-dev-page="docs">
+        <Empty
+          title={t("devdocs.notFoundTitle")}
+          action={
+            <Link to="/docs" className="text-sm font-medium text-brand-600 hover:underline dark:text-brand-300">
+              {t("devdocs.backToList")}
+            </Link>
+          }
+        >
+          {t("devdocs.notFoundHint")}
+        </Empty>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-4xl" data-dev-page="docs" data-dev-doc={doc.slug}>
+      <Link to="/docs" className={backLinkCls}>
+        <ArrowLeft size={14} />
+        {t("devdocs.backToList")}
+      </Link>
+
+      <div className="mb-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="brand">{t(`devdocs.categories.${doc.category}`)}</Badge>
+          <span className="text-xs text-neutral-500 tabular-nums">{t("devdocs.updated", { date: doc.updatedAt })}</span>
+          <span className="text-xs text-neutral-500">{t("devdocs.readMinutes", { count: readMinutes(doc.body) })}</span>
+          {!zh && <Badge tone="amber">{t("devdocs.zhOnly")}</Badge>}
+        </div>
+        <h1 className="mt-2 text-2xl leading-8 font-bold tracking-[-0.02em] text-neutral-900 sm:text-[28px] sm:leading-9">
+          {zh ? doc.title.zh : doc.title.en}
+        </h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">{zh ? doc.summary.zh : doc.summary.en}</p>
+      </div>
+
+      <DocsMarkdown markdown={doc.body} />
+
+      <Card className="mt-8 p-5">
+        <div className="text-sm leading-6 text-neutral-600">{t("devdocs.disclaimer")}</div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+            {t("devdocs.backToTop")}
+          </Button>
+          <Link
+            to="/examples"
+            className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:underline dark:text-brand-300"
+          >
+            {t("devdocs.goExamples")}
+            <ExternalLink size={13} />
+          </Link>
+        </div>
+      </Card>
+    </div>
+  );
+}

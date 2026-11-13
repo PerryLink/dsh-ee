@@ -17,29 +17,35 @@ const (
 )
 
 type WriteConfirmation struct {
-	ID        int64      `json:"id"`
-	UserID    int64      `json:"user_id"`
-	AssetID   int64      `json:"asset_id"`
-	Tool      string     `json:"tool"`
-	ArgsHash  string     `json:"-"`
-	Args      string     `json:"args"`
-	Status    string     `json:"status"`
-	Client    string     `json:"client"`
+	ID       int64  `json:"id"`
+	UserID   int64  `json:"user_id"`
+	AssetID  int64  `json:"asset_id"`
+	Tool     string `json:"tool"`
+	ArgsHash string `json:"-"`
+	Args     string `json:"args"`
+	Status   string `json:"status"`
+	Client   string `json:"client"`
+	// 发起这次确认的接入令牌；0 表示没有令牌（旧记录）
+	TokenID   int64      `json:"token_id,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	DecidedAt *time.Time `json:"decided_at"`
 }
 
-const confirmCols = "id, user_id, asset_id, tool, args_hash, args, status, client, created_at, expires_at, decided_at"
+const confirmCols = "id, user_id, asset_id, tool, args_hash, args, status, client, token_id, created_at, expires_at, decided_at"
 
 func scanConfirm(row interface{ Scan(...any) error }) (*WriteConfirmation, error) {
 	var c WriteConfirmation
 	var decided sql.NullTime
-	if err := row.Scan(&c.ID, &c.UserID, &c.AssetID, &c.Tool, &c.ArgsHash, &c.Args, &c.Status, &c.Client, &c.CreatedAt, &c.ExpiresAt, &decided); err != nil {
+	var tokenID sql.NullInt64
+	if err := row.Scan(&c.ID, &c.UserID, &c.AssetID, &c.Tool, &c.ArgsHash, &c.Args, &c.Status, &c.Client, &tokenID, &c.CreatedAt, &c.ExpiresAt, &decided); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	if tokenID.Valid {
+		c.TokenID = tokenID.Int64
 	}
 	if decided.Valid {
 		t := decided.Time
@@ -51,9 +57,13 @@ func scanConfirm(row interface{ Scan(...any) error }) (*WriteConfirmation, error
 func (s *Store) CreateWriteConfirmation(ctx context.Context, c *WriteConfirmation, tokenHash string, ttl time.Duration) error {
 	t := now()
 	c.CreatedAt, c.ExpiresAt, c.Status = t, t.Add(ttl), ConfirmPending
+	var tokenID any
+	if c.TokenID > 0 {
+		tokenID = c.TokenID
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO write_confirmations (token_hash, user_id, asset_id, tool, args_hash, args, status, client, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		tokenHash, c.UserID, c.AssetID, c.Tool, c.ArgsHash, c.Args, c.Status, c.Client, c.CreatedAt, c.ExpiresAt)
+		`INSERT INTO write_confirmations (token_hash, user_id, asset_id, tool, args_hash, args, status, client, token_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		tokenHash, c.UserID, c.AssetID, c.Tool, c.ArgsHash, c.Args, c.Status, c.Client, tokenID, c.CreatedAt, c.ExpiresAt)
 	if err != nil {
 		return err
 	}
