@@ -1,0 +1,149 @@
+# dsh-ee 发布：push `v*` tag 触发。
+#
+# 只做「校验 → 构建 → 校验和 / release notes / docs 版本快照 → GitHub Release」；
+# 不向任何包 registry / 容器 registry 发布。镜像与离线安装包仍按 docs/RELEASING.md
+# 由发布负责人手工执行（make image / make bundle），推内部 registry 也留在流水线之外。
+#
+# PR 上只跑同一套脚本的只读校验（脚本测试 + 已提交的 docs 版本快照 + 文档链接），
+# 不打 tag、不构建发布产物。
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/release/**"
+      - "scripts/docs/version-snapshot.mjs"
+      - "scripts/docs/version-snapshot.test.mjs"
+      - "docs/versions/**"
+      - "docs/RELEASING.md"
+      - "docs/VERSIONING.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # PR 只读校验：脚本自测 + 已提交快照的索引/哈希 + docs 链接。
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: 脚本测试（tag 校验 / docs 版本快照 / workflow YAML）
+        run: |
+          node --test \
+            scripts/release/verify-tag.test.mjs \
+            scripts/release/release-workflow.test.mjs \
+            scripts/docs/version-snapshot.test.mjs
+      - name: 只读校验已提交的 docs 版本快照
+        run: node scripts/docs/version-snapshot.mjs --check
+      - name: 文档链接与锚点（含 docs/versions 下的快照副本）
+        run: node scripts/check-docs.mjs
+
+  # tag 发布：构建 Linux 静态二进制、校验和、docs 快照与 GitHub Release。
+  release:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: 检出 tag 与完整历史（校验 mainline / 生成 release notes 需要）
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: 启用 corepack（构建前端需要 pnpm）
+        run: corepack enable
+      - name: 校验 tag 与版本 / 主干一致（只读，不创建 tag）
+        run: |
+          node scripts/release/verify-tag.mjs \
+            --tag "$GITHUB_REF_NAME" \
+            --sha "$GITHUB_SHA" \
+            --ref origin/main
+      - name: 构建 Linux 静态二进制（前端嵌入，版本由 tag 注入）
+        run: make release VERSION="$GITHUB_REF_NAME"
+      - name: 校验二进制内嵌版本与 tag 一致
+        run: |
+          got="$(./dist/dsh-ee-linux-amd64 version)"
+          echo "dist/dsh-ee-linux-amd64 version = ${got}"
+          test "${got}" = "$GITHUB_REF_NAME"
+      - name: 生成 docs 版本快照（静态目录 + 索引，来自本 tag）
+        run: node scripts/docs/version-snapshot.mjs --tag "$GITHUB_REF_NAME" --out dist/docs-versions
+      - name: 只读校验刚生成的 docs 版本快照（对照本地 tag）
+        run: node scripts/docs/version-snapshot.mjs --check --out dist/docs-versions --check-git
+      - name: 生成发布产物（版本化文件名 + SHA256SUMS + 快照包）
+        run: |
+          set -euo pipefail
+          cd dist
+          for arch in amd64 arm64; do
+            cp "dsh-ee-linux-${arch}" "dsh-ee-${GITHUB_REF_NAME}-linux-${arch}"
+          done
+          tar -czf "docs-versions-${GITHUB_REF_NAME}.tar.gz" docs-versions
+          sha256sum dsh-ee-"${GITHUB_REF_NAME}"-linux-* "docs-versions-${GITHUB_REF_NAME}.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+      - name: 生成 release notes
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          prev="$(git describe --tags --abbrev=0 --match 'v*' "${tag}^" 2>/dev/null || true)"
+          {
+            echo "# dsh-ee ${tag}"
+            echo
+            echo "Linux 静态二进制（amd64 / arm64），单文件、前端已嵌入；版本由 tag 注入，校验和见 \`SHA256SUMS\`。"
+            echo
+            echo "docs 版本快照：\`docs-versions-${tag}.tar.gz\`（scripts/docs/version-snapshot.mjs 从本 tag 生成，站内 /docs 仍以 main 为准）。"
+            echo "版本策略与迁移窗口：docs/VERSIONING.md；发布与回滚：docs/RELEASING.md、docs/operations.md §5。"
+            echo
+            if [ -n "${prev}" ]; then
+              echo "## 变更（${prev}..${tag}）"
+              git log --no-merges --max-count=200 --pretty=format:'- %s (%h)' "${prev}..${tag}"
+            else
+              echo "## 变更（首个版本，最多列最近 200 条）"
+              git log --no-merges --max-count=200 --pretty=format:'- %s (%h)' "${tag}"
+            fi
+            echo
+          } > dist/release-notes.md
+          cat dist/release-notes.md
+      - name: 上传 workflow artifact（保留 14 天）
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/
+          retention-days: 14
+      - name: 创建 GitHub Release（不推任何 registry）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          extra=()
+          case "$GITHUB_REF_NAME" in
+            *-*) extra+=("--prerelease") ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/dsh-ee-${GITHUB_REF_NAME}-linux-amd64" \
+            "dist/dsh-ee-${GITHUB_REF_NAME}-linux-arm64" \
+            dist/SHA256SUMS \
+            dist/release-notes.md \
+            "dist/docs-versions-${GITHUB_REF_NAME}.tar.gz" \
+            --title "dsh-ee ${GITHUB_REF_NAME}" \
+            --notes-file dist/release-notes.md \
+            --verify-tag \
+            "${extra[@]}"
