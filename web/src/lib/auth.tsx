@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { Navigate, useLocation } from "react-router";
 import { api, ApiError, setUnauthorizedHandler, type Me } from "./api";
 import { useTranslation } from "react-i18next";
+import { isEmbedSearch } from "./embed";
+import { EmbedGate } from "../components/embed";
 
 interface Auth {
   user: Me | null;
@@ -81,7 +83,7 @@ export function useAuth() {
   return a;
 }
 
-/** 未登录跳到登录页，登录后回到原地址。 */
+/** 未登录跳到登录页，登录后回到原地址；嵌入模式交给宿主处理。 */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading, loggedOut } = useAuth();
   const loc = useLocation();
@@ -90,6 +92,8 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     return <div className="flex min-h-screen items-center justify-center bg-neutral-50 text-sm text-neutral-600">{t("shell.loadingAuth")}</div>;
   }
   if (!user) {
+    // 跨站 iframe 里不能跳登录页：由 EmbedProvider 与宿主握手（v0 同站 cookie 会话不走到这里）
+    if (isEmbedSearch(loc.search) && loc.pathname.startsWith("/a/")) return <EmbedGate />;
     if (loggedOut) return <Navigate to="/login" replace />;
     // 带上 #L5-8：从 DSH 里点知识库出处进来、登录后还要高亮那几行
     const next = encodeURIComponent(loc.pathname + loc.search + loc.hash);

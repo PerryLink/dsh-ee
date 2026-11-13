@@ -17,15 +17,17 @@ import (
 const accessTokenPrefix = "ee_at_"
 
 type tokenView struct {
-	ID                string     `json:"id"`
-	Kind              string     `json:"kind"`
-	UserID            int64      `json:"user_id,omitempty"`
-	Username          string     `json:"username,omitempty"`
-	Department        string     `json:"department,omitempty"`
-	AccountType       string     `json:"account_type,omitempty"`
-	Name              string     `json:"name"`
-	Prefix            string     `json:"prefix"`
-	Source            string     `json:"source"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	UserID      int64  `json:"user_id,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Department  string `json:"department,omitempty"`
+	AccountType string `json:"account_type,omitempty"`
+	Name        string `json:"name"`
+	Prefix      string `json:"prefix"`
+	Source      string `json:"source"`
+	// 令牌签发给哪类客户端：dsh / third_party
+	ClientKind        string     `json:"client_kind"`
 	Scopes            []string   `json:"scopes"`
 	ClientName        string     `json:"client_name"`
 	ClientOS          string     `json:"client_os"`
@@ -49,7 +51,7 @@ func accessView(t *store.AccessToken, used int64) tokenView {
 	return tokenView{AdminUntil: adminUntil,
 		ID: "at:" + strconv.FormatInt(t.ID, 10), Kind: "access", Name: t.Name, Prefix: t.Prefix,
 		UserID: t.UserID, Username: t.Username, Department: t.Department, AccountType: t.AccountType,
-		Source: t.Source, Scopes: nonNil(t.Scopes), ClientName: t.ClientName, ClientOS: t.ClientOS,
+		Source: t.Source, ClientKind: store.NormalizeClientKind(t.ClientKind), Scopes: nonNil(t.Scopes), ClientName: t.ClientName, ClientOS: t.ClientOS,
 		MonthlyTokenLimit: t.MonthlyTokenLimit, MonthUsed: used, AllowedModels: nonNil(t.AllowedModels),
 		ExpiresAt: t.ExpiresAt, LastUsedAt: t.LastUsedAt, LastIP: t.LastIP, RevokedAt: t.RevokedAt, CreatedAt: t.CreatedAt,
 	}
@@ -78,7 +80,7 @@ func (s *Server) tokenViews(ctx context.Context, userID int64) ([]tokenView, err
 			scopes = append(scopes, rbac.ScopeRegistryPublish)
 		}
 		out = append(out, tokenView{ID: "npm:" + strconv.FormatInt(t.ID, 10), Kind: "npm", Name: t.Name, Prefix: t.Prefix,
-			Source: "legacy", Scopes: scopes, LastUsedAt: t.LastUsedAt, RevokedAt: t.RevokedAt, CreatedAt: t.CreatedAt})
+			Source: "legacy", ClientKind: store.ClientKindDSH, Scopes: scopes, LastUsedAt: t.LastUsedAt, RevokedAt: t.RevokedAt, CreatedAt: t.CreatedAt})
 	}
 	keys, err := s.store.ListAPIKeys(ctx, userID)
 	if err != nil {
@@ -86,7 +88,7 @@ func (s *Server) tokenViews(ctx context.Context, userID int64) ([]tokenView, err
 	}
 	for _, k := range keys {
 		out = append(out, tokenView{ID: "key:" + strconv.FormatInt(k.ID, 10), Kind: "key", Name: k.Name, Prefix: k.Prefix,
-			Source: "legacy", Scopes: []string{rbac.ScopeModels, rbac.ScopeHub, rbac.ScopeConnections}, MonthlyTokenLimit: k.MonthlyTokenLimit,
+			Source: "legacy", ClientKind: store.ClientKindDSH, Scopes: []string{rbac.ScopeModels, rbac.ScopeHub, rbac.ScopeConnections}, MonthlyTokenLimit: k.MonthlyTokenLimit,
 			MonthUsed: k.MonthTokens, AllowedModels: nonNil(k.AllowedModels), ExpiresAt: k.ExpiresAt, LastUsedAt: k.LastUsedAt,
 			RevokedAt: k.RevokedAt, CreatedAt: k.CreatedAt})
 	}
@@ -109,6 +111,10 @@ type tokenInput struct {
 	AllowedModels     []string `json:"allowed_models"`
 	ExpiresInDays     int      `json:"expires_in_days"`
 	UserID            int64    `json:"user_id"`
+	// 令牌签发给哪类客户端；不填按签发入口的默认值：设备码是 dsh，手工/管理员签发是 third_party
+	ClientKind string `json:"client_kind"`
+	// 可选的客户端名字（复用令牌的设备名/client_name 列），第三方 Harness 可以填自己的名字
+	ClientName string `json:"client_name"`
 }
 
 func validTokenScopes(a *rbac.Access, scopes []string) ([]string, bool) {
@@ -152,10 +158,34 @@ func validTokenScopes(a *rbac.Access, scopes []string) ([]string, bool) {
 	return out, true
 }
 
+// issueClientKind 决定新令牌的客户端类型。
+// 默认值按签发入口区分：设备码是 DSH 的登录方式（dsh，见 store.ApproveDevice）；
+// 网页手工创建与管理员签发主要给第三方 Harness / 机器人用（third_party）。
+// 允许显式指定，例如给不用设备码登录的 DSH 手工建一个 dsh 令牌；不认别的值。
+func issueClientKind(source, requested string) (string, bool) {
+	if requested != "" {
+		switch requested {
+		case store.ClientKindDSH, store.ClientKindThirdParty:
+			return requested, true
+		default:
+			return "", false
+		}
+	}
+	if source == "device" {
+		return store.ClientKindDSH, true
+	}
+	return store.ClientKindThirdParty, true
+}
+
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request, owner *store.User, source string, req tokenInput) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || len([]rune(req.Name)) > 128 {
 		writeErr(w, http.StatusBadRequest, "令牌名称必填，且不能超过 128 个字符")
+		return
+	}
+	clientKind, ok := issueClientKind(source, strings.TrimSpace(req.ClientKind))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "client_kind 只能是 dsh 或 third_party")
 		return
 	}
 	if req.MonthlyTokenLimit != nil && *req.MonthlyTokenLimit < 0 {
@@ -184,9 +214,10 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, owner *stor
 		return
 	}
 	plain := accessTokenPrefix + secret.Token()
+	clientName := cleanClientField(req.ClientName, 128)
 	t := &store.AccessToken{
-		UserID: owner.ID, Name: req.Name, Prefix: plain[:12], Source: source, Scopes: scopes,
-		MonthlyTokenLimit: req.MonthlyTokenLimit, AllowedModels: req.AllowedModels, CreatedBy: currentUser(r).ID,
+		UserID: owner.ID, Name: req.Name, Prefix: plain[:12], Source: source, ClientKind: clientKind, Scopes: scopes,
+		MonthlyTokenLimit: req.MonthlyTokenLimit, AllowedModels: req.AllowedModels, ClientName: clientName, CreatedBy: currentUser(r).ID,
 	}
 	if req.ExpiresInDays > 0 {
 		expires := time.Now().UTC().AddDate(0, 0, req.ExpiresInDays).Truncate(time.Millisecond)
@@ -200,7 +231,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, owner *stor
 	if source == "issued" {
 		action = "token.issue"
 	}
-	s.audit(r, action, plain[:12], map[string]any{"id": t.ID, "user_id": owner.ID, "scopes": scopes})
+	s.audit(r, action, plain[:12], map[string]any{"id": t.ID, "user_id": owner.ID, "scopes": scopes, "client_kind": clientKind, "client_name": t.ClientName})
 	writeJSON(w, http.StatusCreated, map[string]any{"token": plain, "info": accessView(t, 0)})
 }
 

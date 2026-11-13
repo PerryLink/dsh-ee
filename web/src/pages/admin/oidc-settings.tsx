@@ -216,6 +216,7 @@ export default function OidcSettings() {
         </div>
 
         <ToggleRow label={t("oidcAdmin.autoCreate")} desc={t("oidcAdmin.autoCreateDesc")} checked={form.autoCreate} onChange={(v) => set({ autoCreate: v })} />
+        <ToggleRow label={t("oidcAdmin.requireEmailVerified")} desc={t("oidcAdmin.requireEmailVerifiedDesc")} checked={form.requireEmailVerified} onChange={(v) => set({ requireEmailVerified: v })} />
         {form.preset === "feishu" && (
           <section className="space-y-4" data-feishu-sync>
             <SubHeading>{t("oidcAdmin.feishu.title")}</SubHeading>

@@ -31,12 +31,15 @@ export function LivePane({
   pane: raw,
   load: loadSource,
   mode,
+  embed = false,
   requestHref,
 }: {
   slug: string;
   pane: WorkbenchPane;
   load: LoadSource;
   mode: "web" | "preview";
+  /** 同站 iframe 嵌入模式：隐藏「打开 DSH」这类会跳出宿主上下文的入口。 */
+  embed?: boolean;
   requestHref?: (connection: string) => string | undefined;
 }) {
   const { t } = useTranslation();
@@ -210,7 +213,7 @@ export function LivePane({
           {handoff && (
             <>
               <code className="mt-1 block overflow-x-auto rounded bg-card px-2 py-1 font-mono text-xs whitespace-pre-wrap">{handoff}</code>
-              {mode === "web" && <a href="dsh://open" className="mt-1 inline-block font-medium text-brand-600 hover:underline dark:text-brand-300">{t("appWeb.openDSH")}</a>}
+              {mode === "web" && !embed && <a href="dsh://open" className="mt-1 inline-block font-medium text-brand-600 hover:underline dark:text-brand-300">{t("appWeb.openDSH")}</a>}
             </>
           )}
         </div>

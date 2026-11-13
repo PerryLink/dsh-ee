@@ -30,7 +30,7 @@ export default async function (t) {
     const sideText = await page.locator("aside").innerText();
     for (const g of ["用", "造", "接入", "企业应用", "知识问答", "新建应用", "我的应用", "从样板复制", "原料"]) assert(sideText.includes(g), `侧边栏缺少「${g}」：${sideText}`);
     for (const no of ["管理", "插件", "能力中心", "待审核"]) assert(!sideText.includes(no), `员工侧边栏不应出现「${no}」：${sideText}`);
-    step("员工侧边栏只有「用 / 造 / 接入」，没有管理入口，也没有「插件」");
+    step("员工侧边栏只有「用 / 造 / 接入 / 开发」，没有管理入口，也没有「插件」");
     await shot(page, "build-nav");
     const tok = await api(page, "POST", "/api/me/tokens", { name: "dsh", scopes: ["models", "registry:read", "hub", "connections"] });
     assertEq(tok.status, 201, "接入令牌");

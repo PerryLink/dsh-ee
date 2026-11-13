@@ -1,0 +1,55 @@
+{
+  "name": "@dsh-ee/harness-client",
+  "version": "0.1.0",
+  "description": "dsh-ee third-party Harness client: discovery, device code login, model gateway, MCP tools (fetch-based, no runtime deps)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hikariming/dsh-ee.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/hikariming/dsh-ee/tree/main/sdk/typescript#readme",
+  "bugs": {
+    "url": "https://github.com/hikariming/dsh-ee/issues"
+  },
+  "keywords": [
+    "dsh-ee",
+    "harness",
+    "mcp",
+    "openai-compatible",
+    "sdk"
+  ],
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "COMPATIBILITY.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"test/*.test.mjs\"",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
