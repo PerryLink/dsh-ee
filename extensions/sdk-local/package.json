@@ -2,25 +2,64 @@
   "name": "@dsh-ee/extension-local",
   "version": "0.1.0",
   "description": "dsh-ee 端侧扩展 SDK：在员工电脑上跑的扩展（本机 MCP 服务、写操作确认、审计回报、webSignIn）",
+  "keywords": [
+    "dsh-ee",
+    "extension",
+    "sdk",
+    "mcp",
+    "mcp-server",
+    "stdio",
+    "local"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
-  "bin": { "dsh-ee-local": "dist/cli.js" },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "dsh-ee-local": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hikariming/dsh-ee.git",
+    "directory": "extensions/sdk-local"
+  },
+  "homepage": "https://github.com/hikariming/dsh-ee/tree/main/extensions/sdk-local#readme",
+  "bugs": {
+    "url": "https://github.com/hikariming/dsh-ee/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test test/*.test.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "prepack": "npm run build"
   },
   "peerDependencies": {
     "playwright": ">=1.40"
   },
   "peerDependenciesMeta": {
-    "playwright": { "optional": true }
+    "playwright": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

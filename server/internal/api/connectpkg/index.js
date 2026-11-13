@@ -214,7 +214,7 @@ var HttpClient = class {
   constructor(tokens) {
     this.tokens = tokens;
   }
-  async fetch(path8, init = {}, timeoutMs = 3e4) {
+  async fetch(path9, init = {}, timeoutMs = 3e4) {
     const current = await this.tokens.resolve();
     const headers = new Headers(init.headers);
     if (current?.value) headers.set("Authorization", `Bearer ${current.value}`);
@@ -223,15 +223,15 @@ var HttpClient = class {
     if (!headers.has("X-DshEE-Host")) headers.set("X-DshEE-Host", dshHost());
     const timeout = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : void 0;
     const signal = init.signal && timeout ? AbortSignal.any([init.signal, timeout]) : timeout ?? init.signal ?? void 0;
-    const response = await fetch(`${config.base}${path8}`, { ...init, headers, signal });
+    const response = await fetch(`${config.base}${path9}`, { ...init, headers, signal });
     if (response.status === 401 && current?.value) {
       const body = await response.clone().json().catch(() => null);
       if (body?.code?.startsWith("token_")) await this.tokens.invalidate(current.value);
     }
     return response;
   }
-  async json(path8, init) {
-    const response = await this.fetch(path8, init);
+  async json(path9, init) {
+    const response = await this.fetch(path9, init);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   }
@@ -3777,6 +3777,360 @@ function registerWorkbenchTool(ctx, deps) {
   });
 }
 
+// src/local-mcp.ts
+import fs7 from "node:fs";
+import path8 from "node:path";
+var PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+var VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]*$/;
+var EXTENSION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,60}$/;
+var SERVER_NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
+function localMcpStorePath() {
+  return path8.join(dshHome(), "dsh-ee", "local-mcp.json");
+}
+function parsePackageSpec(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return { error: "\u8981\u5E26 npm \u5305\u540D\uFF0C\u4F8B\u5982 /ee-local add @acme/legacy-oa-local@0.1.0" };
+  if (/[\s:]/.test(text)) return { error: `\u300C${text}\u300D\u4E0D\u662F npm \u5305\u540D\uFF1A\u7AEF\u4FA7\u6269\u5C55\u53EA\u4ECE\u4F01\u4E1A npm \u6E90\u5B89\u88C5\uFF0C\u4E0D\u5199 URL\u3001\u672C\u5730\u8DEF\u5F84\u6216 git \u5730\u5740` };
+  const at = text.lastIndexOf("@");
+  const hasVersion = at > 0;
+  const pkg = hasVersion ? text.slice(0, at) : text;
+  const version = hasVersion ? text.slice(at + 1) : "";
+  if (!PACKAGE_RE.test(pkg)) return { error: `\u300C${pkg}\u300D\u4E0D\u662F\u5408\u6CD5\u7684 npm \u5305\u540D\uFF08\u5E94\u5F62\u5982 @scope/name \u6216 name\uFF09` };
+  if (hasVersion && !VERSION_RE.test(version)) return { error: `\u300C${version}\u300D\u4E0D\u662F\u5408\u6CD5\u7684\u7248\u672C\u53F7` };
+  return { package: pkg, version };
+}
+function parseExtensionId(raw) {
+  const text = String(raw ?? "").trim();
+  return EXTENSION_ID_RE.test(text) ? text : void 0;
+}
+function localServerName(extensionId, packageName) {
+  const base = (extensionId ?? packageName.replace(/^@/, "")).replace(/[^A-Za-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const clipped = base.slice(0, 32).replace(/-$/, "");
+  const name2 = clipped || "ee-local";
+  return SERVER_NAME_RE.test(name2) ? name2 : "ee-local";
+}
+function deriveExtensionId(packageName) {
+  const scoped = /^@([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)$/.exec(packageName);
+  if (scoped) return `${scoped[1]}/${scoped[2]}`.slice(0, 102);
+  return `local/${packageName}`.slice(0, 102);
+}
+function npxCommand(platform) {
+  return platform === "win32" ? "npx.cmd" : "npx";
+}
+function localMcpEntry(config, extension, options = { npmrc: "" }) {
+  const spec = extension.version ? `${extension.package}@${extension.version}` : extension.package;
+  const env = {
+    DSH_EE_URL: config.base,
+    // 令牌留在 DSH 凭据库里，由 mcp-client 的 ${credential:…} 模板在连接时解析；注册项里不落明文。
+    DSH_EE_TOKEN: `\${credential:${config.tokenRef}}`,
+    DSH_EE_HARNESS: "dsh"
+  };
+  if (options.npmrc) env.NPM_CONFIG_USERCONFIG = options.npmrc;
+  return {
+    transport: "stdio",
+    command: npxCommand(options.platform ?? process.platform),
+    args: ["-y", spec],
+    env,
+    startupTimeoutMs: 6e4
+  };
+}
+function localMcpSnippet(config, extension, npmrc = "") {
+  const spec = extension.version ? `${extension.package}@${extension.version}` : extension.package;
+  const q = (value) => `'${value.replace(/'/g, "''")}'`;
+  const env = [
+    `      DSH_EE_URL: ${q(config.base)}`,
+    `      DSH_EE_TOKEN: ${q(`\${credential:${config.tokenRef}}`)}`,
+    "      DSH_EE_HARNESS: dsh"
+  ];
+  if (npmrc) env.push(`      NPM_CONFIG_USERCONFIG: ${q(npmrc)}`);
+  return [
+    `- id: ${q(`dsh-ee-local-${extension.serverName}`)}`,
+    `  name: '@deepseek-ai/dsh-mcp-client'`,
+    `  config:`,
+    `    serverName: ${q(extension.serverName)}`,
+    `    transport: stdio`,
+    `    command: ${q(npxCommand(process.platform))}`,
+    `    args: [${q("-y")}, ${q(spec)}]`,
+    `    env:`,
+    ...env,
+    `    expandTemplates: true`,
+    `    startupTimeoutMs: 60000`
+  ].join("\n");
+}
+function validExtension(value) {
+  if (!value || typeof value !== "object") return false;
+  const item = value;
+  return typeof item.id === "string" && EXTENSION_ID_RE.test(item.id) && typeof item.package === "string" && PACKAGE_RE.test(item.package) && typeof item.version === "string" && (item.version === "" || VERSION_RE.test(item.version)) && typeof item.serverName === "string" && SERVER_NAME_RE.test(item.serverName) && typeof item.addedAt === "string";
+}
+function readLocalExtensions(file = localMcpStorePath()) {
+  try {
+    const data = JSON.parse(fs7.readFileSync(file, "utf8"));
+    return Array.isArray(data.extensions) ? data.extensions.filter(validExtension) : [];
+  } catch {
+    return [];
+  }
+}
+function writeLocalExtensions(extensions, file = localMcpStorePath()) {
+  fs7.mkdirSync(path8.dirname(file), { recursive: true, mode: 448 });
+  const tmp = `${file}.tmp`;
+  fs7.writeFileSync(tmp, `${JSON.stringify({ version: 1, extensions }, null, 2)}
+`, { mode: 384 });
+  fs7.renameSync(tmp, file);
+}
+function parseLocalCommand(rawInput) {
+  const tokens = String(rawInput ?? "").trim().split(/\s+/).filter(Boolean);
+  const [action, ...rest] = tokens;
+  const args = { action: "list", target: "", yes: false };
+  if (!action) return args;
+  if (action === "help") return { ...args, action: "help" };
+  if (!["list", "add", "remove", "snippet"].includes(action)) {
+    return { ...args, error: `\u5B50\u547D\u4EE4\u53EA\u80FD\u662F list / add / remove / snippet\uFF1B\u6536\u5230\u300C${action}\u300D` };
+  }
+  args.action = action;
+  const positional = [];
+  for (let i = 0; i < rest.length; i++) {
+    const token = rest[i];
+    if (token === "--yes" || token === "-y") args.yes = true;
+    else if (token === "--id") {
+      const value = rest[++i];
+      if (value === void 0) return { ...args, error: "--id \u540E\u9762\u8981\u8DDF\u6269\u5C55 id\uFF0C\u4F8B\u5982 acme/legacy-oa" };
+      const id = parseExtensionId(value);
+      if (!id) return { ...args, error: `\u300C${value}\u300D\u4E0D\u662F\u5408\u6CD5\u6269\u5C55 id\uFF08\u5E94\u5F62\u5982 acme/legacy-oa\uFF09` };
+      args.id = id;
+    } else if (token.startsWith("-")) return { ...args, error: `\u4E0D\u8BA4\u8BC6\u7684\u53C2\u6570\u300C${token}\u300D` };
+    else positional.push(token);
+  }
+  if ((args.action === "add" || args.action === "remove" || args.action === "snippet") && positional.length === 0) {
+    return { ...args, error: `${args.action} \u540E\u9762\u8981\u8DDF\u5305\u540D\u6216\u6269\u5C55 id` };
+  }
+  if (positional.length > 1) return { ...args, error: `\u5E26\u4E86\u591A\u4F59\u53C2\u6570\u300C${positional.slice(1).join(" ")}\u300D` };
+  args.target = positional[0] ?? "";
+  return args;
+}
+function createLocalMcp(ctx, config, options = {}) {
+  const store = options.store ?? localMcpStorePath();
+  const npmrc = options.npmrc ?? npmrcPath(ctx);
+  const platform = options.platform ?? process.platform;
+  const disposers = /* @__PURE__ */ new Map();
+  const manager = () => {
+    const service = ctx.get("mcpManager");
+    return service && typeof service.register === "function" && typeof service.list === "function" ? service : void 0;
+  };
+  const names = async () => {
+    const service = manager();
+    if (!service) return /* @__PURE__ */ new Set();
+    try {
+      const list = await service.list();
+      return new Set(list.map((item) => item.name));
+    } catch {
+      return /* @__PURE__ */ new Set();
+    }
+  };
+  const register = (extension) => {
+    const service = manager();
+    if (!service) return;
+    if (disposers.has(extension.id)) return;
+    const dispose = service.register(extension.serverName, localMcpEntry(config, extension, { npmrc, platform }));
+    disposers.set(extension.id, () => {
+      try {
+        dispose();
+      } catch {
+      }
+    });
+  };
+  const unregister = (id) => {
+    const dispose = disposers.get(id);
+    if (!dispose) return;
+    dispose();
+    disposers.delete(id);
+  };
+  const describe = (extension, state) => `  ${extension.id}  ${extension.package}${extension.version ? `@${extension.version}` : ""}  serverName=${extension.serverName}  ${state}`;
+  return {
+    get available() {
+      return manager() !== void 0;
+    },
+    async start() {
+      const service = manager();
+      if (!service) return { registered: [], skipped: [] };
+      const extensions = readLocalExtensions(store);
+      const taken = await names();
+      const registered = [];
+      const skipped = [];
+      for (const extension of extensions) {
+        if (taken.has(extension.serverName)) {
+          skipped.push({ name: extension.id, reason: `\u5DF2\u6709\u540C\u540D MCP \u670D\u52A1 ${extension.serverName}\uFF0C\u4E0D\u8986\u76D6` });
+          continue;
+        }
+        try {
+          register(extension);
+          taken.add(extension.serverName);
+          registered.push(extension.id);
+        } catch (error) {
+          skipped.push({ name: extension.id, reason: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return { registered, skipped };
+    },
+    stop() {
+      for (const dispose of disposers.values()) dispose();
+      disposers.clear();
+    },
+    async refresh() {
+      for (const id of [...disposers.keys()]) unregister(id);
+      return this.start();
+    },
+    list() {
+      const extensions = readLocalExtensions(store);
+      const hint = this.available ? "" : "\n\u8FD9\u53F0 DSH \u6CA1\u6709 MCP \u7BA1\u7406\u63A5\u53E3\uFF08@deepseek-ai/dsh-mcp-manager\uFF09\uFF0C\u4E0D\u80FD\u81EA\u52A8\u6CE8\u518C\uFF1B\u7528 /ee-local snippet <\u5305\u540D> \u751F\u6210\u914D\u7F6E\u7247\u6BB5\u3002\n";
+      if (!extensions.length) {
+        return { kind: "success", text: `\u8FD8\u6CA1\u6709\u6DFB\u52A0\u672C\u673A\u6269\u5C55\u3002
+\u7528\u6CD5\uFF1A/ee-local add <\u5305\u540D>[@\u7248\u672C] [--id \u4F5C\u8005/\u540D\u5B57]
+${hint}` };
+      }
+      const state = /* @__PURE__ */ new Map();
+      const service = manager();
+      if (service) {
+        try {
+          const rows = service.list();
+          if (Array.isArray(rows)) for (const row of rows) state.set(row.name, row.status?.state ?? "\u5DF2\u6CE8\u518C");
+        } catch {
+        }
+      }
+      const lines = extensions.map((extension) => describe(extension, state.get(extension.serverName) ?? (this.available ? "\u672A\u6CE8\u518C" : "\u672A\u6CE8\u518C\uFF08\u6CA1\u6709 MCP \u7BA1\u7406\u63A5\u53E3\uFF09")));
+      return { kind: "success", text: `\u672C\u673A\u6269\u5C55\uFF08${extensions.length} \u4E2A\uFF09\uFF1A
+${lines.join("\n")}
+${hint}
+\u79FB\u9664\uFF1A/ee-local remove <\u6269\u5C55 id \u6216\u5305\u540D>` };
+    },
+    async add(parsed) {
+      const spec = parsePackageSpec(parsed.target);
+      if ("error" in spec) return { kind: "error", text: spec.error };
+      const id = parsed.id ?? deriveExtensionId(spec.package);
+      const extension = {
+        id,
+        package: spec.package,
+        version: spec.version,
+        serverName: localServerName(parsed.id ? id : void 0, spec.package),
+        addedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      const stored = readLocalExtensions(store);
+      const sameId = stored.find((item) => item.id === extension.id);
+      const samePackage = stored.find((item) => item.package === extension.package);
+      if (sameId ? sameId.package === extension.package && sameId.version === extension.version : samePackage && samePackage.version === extension.version) {
+        return { kind: "success", text: `\u5DF2\u7ECF\u6DFB\u52A0\u8FC7 ${extension.package}${extension.version ? `@${extension.version}` : ""}\uFF1B\u8981\u6539 id \u6216\u7248\u672C\u5148 /ee-local remove\u3002` };
+      }
+      if (sameId && sameId.package !== extension.package) {
+        return { kind: "error", text: `\u6269\u5C55 id ${extension.id} \u5DF2\u7ECF\u7528\u5728 ${sameId.package} \u4E0A\uFF1B\u5148 /ee-local remove ${extension.id}\uFF0C\u6216\u6362\u4E00\u4E2A --id\u3002` };
+      }
+      if (!sameId && samePackage) {
+        return { kind: "error", text: `\u8FD9\u4E2A\u5305\u5DF2\u7ECF\u4EE5\u6269\u5C55 id ${samePackage.id} \u6DFB\u52A0\u8FC7\uFF1B\u8981\u6362 id \u5148 /ee-local remove ${samePackage.id}\u3002` };
+      }
+      if (!this.available) {
+        return {
+          kind: "error",
+          text: `\u8FD9\u53F0 DSH \u6CA1\u6709 MCP \u7BA1\u7406\u63A5\u53E3\uFF08@deepseek-ai/dsh-mcp-manager \u6CA1\u6709\u6302\u8F7D\uFF0C\u65E7\u7248 DSH \u6216\u7CBE\u7B80\u7EC4\u5408\u6CA1\u6709\u5B83\uFF09\uFF0C\u4E0D\u80FD\u81EA\u52A8\u6CE8\u518C\u3002
+\u628A\u4E0B\u9762\u8FD9\u6BB5\u52A0\u8FDB profile \u7684 cordis.patch.yml\uFF08\u6216\u628A DSH \u5347\u7EA7\u5230 0.2.2 \u518D\u8BD5\uFF09\uFF1A
+
+${localMcpSnippet(config, extension, npmrc)}
+`
+        };
+      }
+      const taken = await names();
+      const ours = sameId !== void 0 && disposers.has(sameId.id);
+      if (!ours && taken.has(extension.serverName)) {
+        return { kind: "error", text: `\u8FD9\u91CC\u5DF2\u7ECF\u6709\u540D\u4E3A ${extension.serverName} \u7684 MCP \u670D\u52A1\uFF08\u5458\u5DE5\u81EA\u5DF1\u914D\u7684\u3001\u522B\u7684\u63D2\u4EF6\u6CE8\u518C\u7684\uFF0C\u6216\u4E4B\u524D\u52A0\u7684\uFF09\uFF0C\u4E0D\u8986\u76D6\u3002
+\u6362\u4E2A --id \u4F1A\u5F97\u5230\u53E6\u4E00\u4E2A\u670D\u52A1\u540D\uFF0C\u4F8B\u5982\uFF1A/ee-local add ${extension.package}${extension.version ? `@${extension.version}` : ""} --id ${id.split("/")[0]}/<\u53E6\u4E00\u4E2A\u540D\u5B57>
+` };
+      }
+      if (!parsed.yes) {
+        return {
+          kind: "success",
+          text: `\u51C6\u5907\u628A\u7AEF\u4FA7\u6269\u5C55${sameId ? "\u66F4\u65B0\u4E3A\u65B0\u7684\u7248\u672C\u5E76" : ""}\u6CE8\u518C\u6210\u672C\u673A MCP \u670D\u52A1\uFF08\u53EA\u5199\u8FD9\u53F0\u7535\u8111\uFF0C\u4E0D\u6539 dsh-ee\uFF0C\u4E0D\u8986\u76D6\u5DF2\u6709\u670D\u52A1\uFF09\uFF1A
+  \u6269\u5C55      ${extension.id}
+  \u5305        ${extension.package}${extension.version ? `@${extension.version}` : "\uFF08\u6700\u65B0\u7248\u672C\uFF09"}
+  MCP \u670D\u52A1  ${extension.serverName}\uFF08\u5DE5\u5177\u540D mcp__${extension.serverName}__<\u5DE5\u5177>\uFF09
+  env       DSH_EE_URL\u3001DSH_EE_TOKEN\uFF08\u8D70 DSH \u51ED\u636E\u5E93\uFF09\u3001DSH_EE_HARNESS=dsh\u3001\u4F01\u4E1A npm \u6E90
+
+\u786E\u8BA4\u540E\u6267\u884C\uFF1A/ee-local add ${extension.package}${extension.version ? `@${extension.version}` : ""}${parsed.id ? ` --id ${parsed.id}` : ""} --yes
+`
+        };
+      }
+      try {
+        unregister(extension.id);
+        register(extension);
+      } catch (error) {
+        return { kind: "error", text: `\u6CE8\u518C\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}` };
+      }
+      writeLocalExtensions([...stored.filter((item) => item.id !== extension.id), extension], store);
+      return {
+        kind: "success",
+        text: `\u5DF2\u6CE8\u518C\uFF08\u4E0B\u6B21\u542F\u52A8 DSH \u81EA\u52A8\u6062\u590D\uFF09\uFF1A
+  ${extension.id} \u2192 ${extension.package}${extension.version ? `@${extension.version}` : ""}\uFF0C\u670D\u52A1\u540D ${extension.serverName}
+\u5DE5\u5177\u540D\u4EE5 mcp__${extension.serverName}__ \u5F00\u5934\uFF1B\u7B2C\u4E00\u6B21\u8C03\u7528\u5982\u679C\u6269\u5C55\u8981\u6C42\u767B\u5F55\uFF0C\u4F1A\u5F39\u51FA\u7CFB\u7EDF\u81EA\u5DF1\u7684\u767B\u5F55\u7A97\u53E3\u3002
+\u79FB\u9664\uFF1A/ee-local remove ${extension.id}
+`
+      };
+    },
+    async remove(parsed) {
+      const stored = readLocalExtensions(store);
+      const target = parsed.target;
+      const hit = stored.find((item) => item.package === target || item.id === target || item.serverName === target || `${item.package}@${item.version}` === target);
+      if (!hit) return { kind: "error", text: `\u6CA1\u6709\u627E\u5230\u300C${target}\u300D\uFF1B/ee-local list \u770B\u5DF2\u6DFB\u52A0\u7684\u6269\u5C55\u3002` };
+      unregister(hit.id);
+      writeLocalExtensions(stored.filter((item) => item !== hit), store);
+      return { kind: "success", text: `\u5DF2\u79FB\u9664 ${hit.id}\uFF08${hit.package}\uFF09\uFF0CMCP \u670D\u52A1 ${hit.serverName} \u5DF2\u6CE8\u9500\u3002` };
+    },
+    snippet(parsed) {
+      const spec = parsePackageSpec(parsed.target);
+      if ("error" in spec) return { kind: "error", text: spec.error };
+      const id = parsed.id ?? deriveExtensionId(spec.package);
+      const extension = {
+        id,
+        package: spec.package,
+        version: spec.version,
+        serverName: localServerName(parsed.id ? id : void 0, spec.package)
+      };
+      return {
+        kind: "success",
+        text: `\u628A\u4E0B\u9762\u8FD9\u6BB5\u52A0\u8FDB\u5BF9\u5E94 profile \u7684 cordis.patch.yml \u672B\u5C3E\uFF08DSH \u6CA1\u6709 mcpServers \u914D\u7F6E\u6587\u4EF6\uFF0C\u8FD9\u662F\u5B98\u65B9\u7684\u914D\u7F6E\u65B9\u5F0F\uFF09\uFF1A
+
+${localMcpSnippet(config, extension, npmrc)}
+
+${this.available ? "\u8FD9\u53F0 DSH \u6709 MCP \u7BA1\u7406\u63A5\u53E3\uFF0C\u4E5F\u53EF\u4EE5\u7528 /ee-local add \u81EA\u52A8\u6CE8\u518C\u3002" : ""}
+`
+      };
+    }
+  };
+}
+function registerLocalMcpCommand(ctx, local) {
+  const commands = ctx.get("commands");
+  if (!commands) return;
+  try {
+    const dispose = commands.register({
+      name: "ee-local",
+      description: "\u672C\u673A\u6269\u5C55\uFF1A\u6CE8\u518C / \u67E5\u770B / \u79FB\u9664\u7AEF\u4FA7\u6269\u5C55\u7684 MCP \u670D\u52A1\uFF08\u53EA\u5199\u8FD9\u53F0\u7535\u8111\uFF09",
+      input: { hint: "[list|add|remove|snippet] [\u5305\u540D[@\u7248\u672C]] [--id \u4F5C\u8005/\u540D\u5B57] [--yes]" },
+      handler: async (invocation) => {
+        let parsed = parseLocalCommand(invocation?.rawInput);
+        if (parsed.error) return { kind: "error", text: parsed.error };
+        if (parsed.action === "help") parsed = { ...parsed, action: "list" };
+        switch (parsed.action) {
+          case "add":
+            return local.add(parsed);
+          case "remove":
+            return local.remove(parsed);
+          case "snippet":
+            return local.snippet(parsed);
+          default:
+            return local.list();
+        }
+      }
+    });
+    ctx.effect(() => dispose);
+  } catch {
+  }
+}
+
 // src/index.ts
 var name = "dsh-ee-connect";
 var inject = {
@@ -3784,13 +4138,16 @@ var inject = {
   tools: { required: true },
   credentials: { required: false },
   commands: { required: false },
-  pluginManager: { required: false }
+  pluginManager: { required: false },
+  // DSH 0.2.2 给插件注册本机 MCP 服务的接口（@deepseek-ai/dsh-mcp-manager）；旧版 DSH 没有，用配置片段兜底
+  mcpManager: { required: false }
 };
 function apply(ctx, input) {
   const config = normalizeConfig(input);
   const tokens = new TokenManager(ctx, config);
   const http = new HttpClient(tokens);
   const bridge = new McpBridge(ctx, config, http);
+  const localMcp = createLocalMcp(ctx, config);
   const writes = new WriteLog();
   bridge.onWrite = (sessionId, record) => writes.record(sessionId, record);
   let refreshSkills;
@@ -3798,6 +4155,7 @@ function apply(ctx, input) {
     const current = await tokens.resolve();
     if (current?.value) await tokens.syncNpmrc(current.value).catch(() => false);
     await bridge.restart();
+    await localMcp.refresh().catch(() => void 0);
     await refreshSkills?.().catch(() => void 0);
   });
   bridge.registerLocal("ee_plugins.upload", (args) => uploadPackage(http, args));
@@ -3811,6 +4169,7 @@ function apply(ctx, input) {
       bridge.wake();
       await Promise.all([bridge.sync().catch(() => void 0), skills?.refreshNow()]);
     });
+    registerLocalMcpCommand(ctx, localMcp);
     const appBindings = new AppBindings();
     const boards = new BoardStore();
     const checklists = new ChecklistStore();
@@ -3880,7 +4239,9 @@ function apply(ctx, input) {
     });
     await skillsReady;
     await bridge.start();
+    await localMcp.start().catch(() => void 0);
     return () => {
+      localMcp.stop();
       disposeWorkbenchTool();
       bridge.stop();
     };

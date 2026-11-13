@@ -193,3 +193,13 @@ test("webSignIn 等到要的 cookie 出现后存下，关窗口", async () => {
     (e: any) => e instanceof ExtError && e.code === "authorize",
   );
 });
+
+test("dsh-ee-local 命令入口：npm 的 bin 符号链接调用也能执行（不被当成被 import 的模块）", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-ee-local-bin-"));
+  const link = path.join(dir, "dsh-ee-local");
+  fs.symlinkSync(path.resolve("src/bin.ts"), link);
+  const out = execFileSync(process.execPath, [path.resolve("node_modules/tsx/dist/cli.mjs"), link, "help"], { encoding: "utf8" });
+  assert.match(out, /dsh-ee-local manifest/);
+  assert.match(out, /dsh-ee-local tools/);
+});

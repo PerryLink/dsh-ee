@@ -17,6 +17,7 @@ import { exchangeWebLink } from "./web-link.js";
 import { BoardStore, ChecklistStore, insertFormRow, writeTableRow, readKBDoc, readWidgetData, registerWorkbenchTool } from "./workbench-host.js";
 import { registerVotes } from "./votes.js";
 import { WriteLog } from "./write-log.js";
+import { createLocalMcp, registerLocalMcpCommand } from "./local-mcp.js";
 import type { DshContext, PluginConfig } from "./dsh.js";
 
 export const name = "dsh-ee-connect";
@@ -26,6 +27,8 @@ export const inject = {
   credentials: { required: false },
   commands: { required: false },
   pluginManager: { required: false },
+  // DSH 0.2.2 给插件注册本机 MCP 服务的接口（@deepseek-ai/dsh-mcp-manager）；旧版 DSH 没有，用配置片段兜底
+  mcpManager: { required: false },
 };
 
 export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
@@ -33,6 +36,7 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
   const tokens = new TokenManager(ctx, config);
   const http = new HttpClient(tokens);
   const bridge = new McpBridge(ctx, config, http);
+  const localMcp = createLocalMcp(ctx, config);
   const writes = new WriteLog();
   bridge.onWrite = (sessionId, record) => writes.record(sessionId, record);
   let refreshSkills: (() => Promise<void>) | undefined;
@@ -41,6 +45,8 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
     const current = await tokens.resolve();
     if (current?.value) await tokens.syncNpmrc(current.value).catch(() => false);
     await bridge.restart();
+    // 本机扩展注册项里的 DSH_EE_URL 跟着新地址走（令牌走凭据模板，不用重建）
+    await localMcp.refresh().catch(() => undefined);
     await refreshSkills?.().catch(() => undefined);
   });
   bridge.registerLocal("ee_plugins.upload", (args) => uploadPackage(http, args));
@@ -56,6 +62,8 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
       bridge.wake();
       await Promise.all([bridge.sync().catch(() => undefined), skills?.refreshNow()]);
     });
+    // 本机扩展（docs/plugins.md §8）：员工确认过的端侧扩展注册成本机 MCP 服务，只写这台电脑
+    registerLocalMcpCommand(ctx, localMcp);
     const appBindings = new AppBindings();
     const boards = new BoardStore();
     const checklists = new ChecklistStore();
@@ -125,7 +133,10 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
     });
     await skillsReady;
     await bridge.start();
+    // 按员工确认过的记录恢复本机扩展的 MCP 注册；没有 mcpManager 的 DSH 上什么也不做
+    await localMcp.start().catch(() => undefined);
     return () => {
+      localMcp.stop();
       disposeWorkbenchTool();
       bridge.stop();
     };
