@@ -1,0 +1,38 @@
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+本目录（docs/plugin-dev/standards/）中改编自 PerryLink/dsh-standards 的
+文本，按 CC BY 4.0 使用：
+
+  License: CC BY 4.0
+  SPDX: CC-BY-4.0
+  Full legal code: https://creativecommons.org/licenses/by/4.0/legalcode
+
+上游版权：© 2026 PerryLink（dsh-standards 文本）。
+上游对“标注修改”的要求见（同一许可下的具体格式，不额外限制）：
+
+  https://github.com/PerryLink/dsh-standards/blob/19c410bd261d942c360386334d4841543a646579/MODIFICATION-POLICY.md
+
+本目录每一篇文档的文首都带有该格式要求的 Change Notice：
+Source、License、© 2026 PerryLink、Changes、Date、Modified version
+以及“非官方 · 非认证 · 非安全审计”。
+
+使用本目录文本时，你必须：
+
+- 署名（本目录已给出上游来源与作者）；
+- 链接到 CC BY 4.0 许可；
+- 标注是否做了修改、修改了什么；
+- 不暗示 PerryLink 或上游项目为你的使用背书。
+
+范围说明：
+
+- 本文件只覆盖文本。本目录**没有**复制 dsh-standards 的 Apache-2.0
+  代码、脚本、schema、vendor 或 `results/`、`governance/` 内容；
+  上游代码/脚本/schema 的许可见上游 LICENSE-APACHE 与 NOTICE。
+  若今后复制这些材料，必须按 Apache-2.0 附上 LICENSE-APACHE 与
+  NOTICE（Copyright 2026 PerryLink）并标注修改，不能沿用本文件的
+  CC BY 声明。
+- 本目录中 dsh-ee 侧新增/改写文字属于 dsh-ee 仓库，按仓库根 LICENSE
+  （Apache-2.0）提供；上游原文仍是 © 2026 PerryLink，按 CC BY 4.0 使用。
+- “DSH-ENTRY / DSH-FLOW / DSH-BOOST”名称与徽标不在上述两个许可内；
+  本目录只作说明与引用，不作等级、认证或排名使用。
+- 本目录不是法律意见；对外发布前由维护者复核措辞。

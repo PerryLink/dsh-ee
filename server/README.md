@@ -38,6 +38,7 @@ Go 写的 dsh-ee 服务端。目前实现：
 设计依据与取舍见 [docs/capability-hub.md](../docs/capability-hub.md)。
 
 - **统一接入令牌**：`ee_at_…` 同时用于 npm 源、模型网关（`/v1`）、技能目录（`/api/dsh/*`）与企业连接（`/mcp`）。每次请求按账号 RBAC 与令牌 scope 求交集，可配置令牌级月度额度、模型范围和有效期；明文只显示一次，服务端只存 sha256。旧 `ee_npm_…`、`sk-ee-…` 保持原有权限与额度行为。
+- **接入限流与请求 ID**：`/v1/*` 与 `/mcp` 按令牌做固定窗口限流（同一令牌共用一份额度），默认每分钟 60 次，可用 `DSH_EE_RATE_LIMIT` 调整，`0` 或 `off` 关闭。超限返回 429，带 `Retry-After` 与 `X-RateLimit-Limit/Remaining/Reset`；正常响应也带 `X-RateLimit-*`，便于客户端提前退避。所有响应带 `X-Request-Id`：请求里已有合法值时原样沿用（不覆盖），否则服务端生成；同一个 id 会写进访问日志，方便和客户端 / 反向代理对账。限流只影响错误头，不改 `/v1` 的 OpenAI 错误体与 `/mcp` 的 JSON-RPC 错误体形状。
 - **设备登录**：`POST /api/device/code` 发起 RFC 8628 设备码流程，员工在 `/device` 登录并确认；设备令牌只能领取一次，默认滑动有效 90 天，同账号同设备再次登录会吊销旧令牌。机器人账号由管理员创建并指定负责人，不能会话登录。
 - **技能、提示词、微应用**：存在 `assets` / `asset_versions`；员工提交的版本在白名单模式下要审核。DSH 通过 `GET /api/dsh/catalog`（带 ETag，没变化回 304）拿到自己此刻应有的目录，`GET /api/dsh/skills/{name}` 取正文。提示词与微应用以「只给人调用」的 skill 下发（DSH 里输入 `/名字`）。
 - **企业连接（MCP 网关）**：`/mcp` 是一个 Streamable HTTP MCP 服务，聚合员工有权使用的全部连接，工具名 `<连接>__<工具>`。上游可以是 MCP 服务，也可以是导入的 OpenAPI 文档（每个操作一个工具，写操作默认关闭）。凭据用主密钥加密存在 dsh-ee，按员工逐次校验后带上凭据转发，调用记入 `connection_calls`。同一连接可有多份命名共享凭据，`spec.auth.shared_name` 选择实际使用的一份，空值继续用原来的默认凭据；最近调用记录所选名称。详见 [docs/named-shared-credentials.md](../docs/named-shared-credentials.md)。GET `/mcp` 打开事件流，能力目录变化时推 `notifications/tools/list_changed`。
@@ -128,7 +129,8 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_SECRET_KEY` | 必填。32 字节 base64 主密钥，加密上游 key |
 | `DSH_EE_ADDR` | 监听地址，默认 `127.0.0.1:8080` |
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | 用户表为空时创建的管理员，默认用户名 `admin` |
-| `DSH_EE_COOKIE_SECURE` | 部署在 HTTPS 后面时设为 `true` |
+| `DSH_EE_COOKIE_SECURE` | 会话 cookie 是否加 `Secure`；不填时 `DSH_EE_PUBLIC_URL` 是 https 就自动开启，显式设置覆盖 |
+| `DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES` | 设为 `true` 时收敛旧 `ee_npm_` / `sk-ee_` 令牌的 scope（npm 令牌只剩 registry、API key 只剩模型网关）；默认关闭，见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) |
 | `DSH_EE_SESSION_TTL` | 会话有效期，默认 `168h` |
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、上游缓存），默认 `./data`；容器里是 `/data` |
 | `DSH_EE_PUBLIC_URL` | 对外地址，如 `https://dsh.acme.internal`；npm 的 tarball 地址按它生成，不填时按请求的 Host / `X-Forwarded-*` 推断 |
@@ -136,6 +138,13 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_LOGIN_IP_LIMIT` | 同一客户端 IP 在窗口内允许的登录失败次数，默认 `50`；设为 `0` / `off` 关闭 |
 | `DSH_EE_LOGIN_IP_WINDOW` | 按 IP 统计登录失败的固定窗口，默认 `15m`，取值 `1m`～`24h` |
 | `DSH_EE_METRICS` | 设为 `true` 时开放 `GET /metrics`（Prometheus 文本格式，只允许本机 / 内网抓取）；默认关闭 |
+| `DSH_EE_RATE_LIMIT` | `/v1/*` 与 `/mcp` 的每令牌限流，单位「次/分钟」，默认 `60`；`0` 或 `off` 关闭 |
+| `DSH_EE_TRUSTED_PROXIES` | 可信反向代理的地址 / CIDR（逗号分隔）。只有来自这些对端的 `X-Forwarded-For`、`X-Forwarded-Host`、`X-Forwarded-Proto` 才会被采信；默认只有 `127.0.0.1/32` 与 `::1/128`。代理在别的机器、容器网络或云负载均衡后面时必须配置 |
+| `DSH_EE_EMBED_ORIGINS` | 允许用 iframe 嵌入微应用网页（`/a/*`）的宿主来源，逗号分隔的完整 origin，如 `https://harness.acme.internal,http://localhost:5173`；只接受 https（`http://localhost` 等回环地址例外），非法值启动失败；不设时只允许同站嵌入（`frame-ancestors 'self'`）。接入方式、embed 参数与 postMessage 协议见 [docs/embedding.md](../docs/embedding.md) |
+| `DSH_EE_EMBED_CROSS_SITE` | 跨站 iframe 嵌入 v1 总开关，默认关闭。开启后 `POST /api/embed/sessions`、`POST /api/auth/embed/exchange` 才可用，且必须同时设置 `DSH_EE_EMBED_ORIGINS`（否则启动失败）。管理端「系统设置 → 跨站嵌入」可显式覆盖（数据库值优先） |
+| `DSH_EE_EMBED_SESSION_TTL` | `ee_emb_` 嵌入会话有效期，默认 `2h`，允许 `1m`–`8h`；过期后宿主重新 mint 即可，不提供 refresh。管理端设置（分钟）非 0 时覆盖 |
+| `DSH_EE_EXTENSION_TRUSTED_KEYS` | 受信任的扩展签名公钥（PEM 文件，可以放多把；公钥、证书、私钥文件都认）。**这是启动时读的只读兼容来源**：主要的信任根在库里（表 `trusted_signing_keys`，管理员用 `/api/admin/signing-keys` 增 / 换下 / 撤销，撤销后新装拒绝，历史保留）；同一个 key id 以库里的状态为准。不配时签了名的扩展也显示「不受信任」。改这个变量要重启，改库里立即生效 |
+| `DSH_EE_EXTENSION_REQUIRE_SIGNATURE` | 设为 `1` 时，没签名或签名无效的扩展不让安装（fail closed）；库里或 `DSH_EE_EXTENSION_TRUSTED_KEYS` 至少要有受信任的公钥，一把都没有时启动只警告、所有扩展都装不了。撤销的签名在任何策略下都不让新装。默认只在安装计划里提示，不阻断。见 [docs/plugins.md](../docs/plugins.md) §9.3 |
 
 ## 接口
 
@@ -145,6 +154,11 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 |---|---|---|
 | POST | `/api/auth/login` | `{username, password}` |
 | POST | `/api/auth/logout` | |
+| POST | `/api/embed/sessions` | 宿主后端换一次性嵌入 code：`Authorization: Bearer ee_at_`（需 `agent` scope），`{app, host_origin, next?}`；需要开启 `DSH_EE_EMBED_CROSS_SITE`；60 秒一次性，绑定用户+应用+宿主 origin |
+| POST | `/api/auth/embed/exchange` | iframe 同源调用：`{code}` → `{token:"ee_emb_…", limited:true, expires_in}`；不 Set-Cookie |
+| POST | `/api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` 撤销本次嵌入会话；不影响网页会话 |
+| GET | `/api/admin/embed-settings` | 管理端嵌入设置页：部署基线（env，只读）+ 有效值 + 数据库设置；需要 `settings.manage` |
+| GET/PUT | `/api/settings`（embed 段） | `PUT /api/admin/settings` 的 `embed` 段：`crossSite`/`allowedOrigins`/`apps`/`sessionMinutes`；非管理员读不到该段 |
 | GET | `/api/auth/me` | 当前用户、角色、有效权限点、是否超级管理员 |
 | GET | `/api/me/menus` | 当前用户能访问的菜单（已按权限过滤，含隐藏页面） |
 | POST | `/api/auth/password` | `{old_password, new_password}`，成功后所有会话失效 |
@@ -203,6 +217,8 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | POST | `/v1/chat/completions` | 同上，OpenAI 格式，支持 `stream` |
 | GET | `/metrics` | 最小监控指标（Prometheus 文本格式）。需 `DSH_EE_METRICS=true`，且只允许本机 / 内网来源抓取 |
 
+协议面（`/v1/*` 与 `/mcp`）的限流与 `X-Request-Id` 见上面「能力中心与 DSH 接入」；成功和 429 响应都带 `X-RateLimit-*`，429 另带 `Retry-After`。
+
 ### 走一遍
 
 ```bash
@@ -234,6 +250,7 @@ curl localhost:8080/v1/chat/completions -H 'Authorization: Bearer sk-ee-…' -H 
 - 额度按 UTC 自然月重置，检查在请求前做，单次请求可能略微超出额度。
 - 登录限流在进程内存里，多实例部署时需改为共享存储。登录失败先按用户名锁（15 分钟 5 次），再按客户端 IP 固定窗口限流（默认 15 分钟 50 次，只统计用户名或密码错误），两者都在单实例内存里。
 - 按 IP 限流默认值取得比较宽，避免公司多人共用一个出口 IP 时把整个出口封死；如果出口 IP 背后人数很多，可以调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭。`/metrics` 的登录计数也是进程内累计，重启清零、多实例各自独立。
+- `/v1/*` 与 `/mcp` 的每令牌限流同样在进程内存里，多实例部署时按实例各自计数；需要全局一致限流时得改用共享存储。
 - 管理操作（建用户、分配额度、代发 / 吊销 key）尚未写审计日志；网关调用已逐条记录在 `usage_logs`。
 - 只支持本地账号；LDAP / OIDC 后续加。
 - 多实例部署：登录限流、上游 packument 的内存缓存、预载任务都在单个进程里；多个实例同时第一次启动时数据库迁移会互相冲突（先起一个再扩容）。tarball 存在本地磁盘，多实例需要共享存储（NFS 等）或以后改成对象存储。

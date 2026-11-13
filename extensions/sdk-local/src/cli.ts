@@ -69,13 +69,3 @@ export async function main(argv: string[], out: (s: string) => void = (s) => pro
   out(usage);
   return 2;
 }
-
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
-    (e) => {
-      process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
-      process.exit(1);
-    },
-  );
-}

@@ -62,7 +62,7 @@ func (s *Server) authKey(w http.ResponseWriter, r *http.Request) (*Principal, *s
 		writeGatewayError(w, r, http.StatusUnauthorized, "invalid_request_error", tokenInvalid, "缺少或无效的 API key")
 		return nil, nil, false
 	}
-	p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 	if err != nil {
 		var be bearerError
 		if errors.As(err, &be) {
@@ -152,6 +152,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, r, http.StatusForbidden, "permission_error", "model_not_allowed", "你的账号不能使用模型 "+model+"，可在 /ee-status 查看可用模型")
 		return
 	}
+	// 生成参数在转发前收口：超额输出、多候选会让单次请求的用量脱离额度约束。
+	if code, msg := completionLimitError(body); code != "" {
+		writeGatewayError(w, r, http.StatusBadRequest, "invalid_request_error", code, msg)
+		return
+	}
 	if quota.MonthlyTokenLimit != nil {
 		used, err := s.store.MonthTokensByUser(r.Context(), k.User.ID)
 		if err != nil {
@@ -209,6 +214,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	for i, c := range cands {
 		last := i == len(cands)-1
 		p = c.Provider
+		cooldownKey := providerCooldownKey{providerID: p.ID, model: c.UpstreamModel}
+		cooldown := s.providerCD.snapshot(cooldownKey, time.Now())
+		// 冷却中的线路直接跳过，免得冷却期内每个请求都先撞一次 429/超时；
+		// 全部冷却时仍会尝试最后一条兜底，不会因为冷却而直接失败。
+		if !last && cooldown.cooling() {
+			continue
+		}
 		upstreamKey, err := s.box.Open(p.APIKeyEnc)
 		if err != nil {
 			s.log.Error("decrypt provider key", "provider", p.Name, "err", err)
@@ -237,6 +249,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		resp, err = s.upstream.Do(req)
 		if err != nil {
+			if r.Context().Err() == nil {
+				s.providerCD.mark(providerCooldownKey{providerID: p.ID}, providerCooldownDefault, time.Now())
+			}
 			s.log.Warn("upstream request failed", "provider", p.Name, "err", err)
 			s.recordUsage(r.Context(), k, p, model, tokenUsage{}, http.StatusBadGateway, start)
 			if r.Context().Err() != nil {
@@ -248,12 +263,17 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		if !last && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) {
-			s.log.Warn("upstream failover", "provider", p.Name, "status", resp.StatusCode)
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-			resp.Body.Close()
-			s.recordUsage(r.Context(), k, p, model, tokenUsage{}, resp.StatusCode, start)
-			continue
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			s.providerCD.mark(cooldownKey, cooldownFor(resp.Header.Get("Retry-After")), time.Now())
+			if !last {
+				s.log.Warn("upstream failover", "provider", p.Name, "status", resp.StatusCode)
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+				resp.Body.Close()
+				s.recordUsage(r.Context(), k, p, model, tokenUsage{}, resp.StatusCode, start)
+				continue
+			}
+		} else if resp.StatusCode < http.StatusBadRequest {
+			s.providerCD.clear(cooldownKey, cooldown)
 		}
 		break
 	}

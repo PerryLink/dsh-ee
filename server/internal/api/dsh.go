@@ -32,7 +32,7 @@ func (s *Server) dshPrincipal(w http.ResponseWriter, r *http.Request) (*Principa
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "企业账号登录已失效，在对话框输入 /ee-login 重新登录", "code": tokenInvalid})
 		return nil, false
 	}
-	p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 	if err != nil {
 		var be bearerError
 		if errors.As(err, &be) {
@@ -65,7 +65,7 @@ func (s *Server) dshViewer(w http.ResponseWriter, r *http.Request) (viewer, *Pri
 	if !ok {
 		return viewer{}, nil, false
 	}
-	return viewer{user: p.User, access: p.Access, agent: s.agentOn(r.Context(), p), canAdmin: p.CanAdmin, adminLive: p.AdminLive, account: p.Account}, p, true
+	return viewer{user: p.User, access: p.Access, agent: s.agentOn(r.Context(), p), canAdmin: p.CanAdmin, adminLive: p.AdminLive, account: p.Account, tokenID: p.TokenID, clientKind: p.ClientKind}, p, true
 }
 
 var serverNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
@@ -377,8 +377,9 @@ func (s *Server) handleDshWhoami(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(scopes)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username": p.User.Username, "department": p.User.Department, "scopes": scopes,
-		"token_prefix": p.Prefix, "expires_at": p.ExpiresAt, "client_name": p.Client, "legacy": p.Legacy,
-		"agent": s.agentOn(r.Context(), p), "admin_live": p.AdminLive, "admin_until": p.AdminUntil,
+		"token_prefix": p.Prefix, "expires_at": p.ExpiresAt, "client_name": p.Client, "client_kind": p.ClientKind, "legacy": p.Legacy,
+		"legacy_scopes_restricted": s.opts.RestrictLegacyTokenScopes,
+		"agent":                    s.agentOn(r.Context(), p), "admin_live": p.AdminLive, "admin_until": p.AdminUntil,
 	})
 }
 
@@ -631,7 +632,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var msg rpcMsg
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&msg); err != nil || msg.Method == "" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxMCPRequestBody)).Decode(&msg); err != nil || msg.Method == "" {
 		writeRPC(w, json.RawMessage("null"), nil, &mcp.Error{Code: -32700, Message: "不是合法的 JSON-RPC 请求"})
 		return
 	}
@@ -699,7 +700,17 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		for _, def := range s.agentToolList(r.Context(), pr) {
 			tools = append(tools, def)
 		}
-		writeRPC(w, msg.ID, map[string]any{"tools": tools}, nil)
+		// 第三方 Harness 跟 cursor 翻页；DSH 接入插件一次要全量（mcp_tools_page.go）。
+		page, next, err := mcpToolsListPage(tools, msg.Params, dshConnect(r))
+		if err != nil {
+			writeRPC(w, msg.ID, nil, &mcp.Error{Code: -32602, Message: err.Error()})
+			return
+		}
+		result := map[string]any{"tools": page}
+		if next != "" {
+			result["nextCursor"] = next
+		}
+		writeRPC(w, msg.ID, result, nil)
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`

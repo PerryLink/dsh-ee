@@ -12,6 +12,7 @@ import { Badge, Button, Card, CardHeader, PluginIcon, Stat, StatStrip, buttonCls
 import { HoverArrow, Ribbon } from "../components/landing-graphics";
 import { BuildStateBadge } from "./build";
 import { AccessRequestsCard } from "../components/access-requests";
+import { DevCards } from "../components/dev-cards";
 import { PageLink } from "../lib/menus";
 import { useTranslation } from "react-i18next";
 import { copyText } from "../lib/clipboard";
@@ -104,6 +105,9 @@ export default function Workbench() {
       </StatStrip>
 
       <AccessRequestsCard className="mt-4" />
+
+      {/* 开发双卡：文档与样例的发现入口（位置在权限申请卡之后） */}
+      <DevCards className="mt-4" />
 
       <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <Card>

@@ -317,9 +317,12 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+// DeleteUserSessions 删掉用户的所有网页会话；跨站嵌入会话一并失效（改密码、禁用、解绑身份）。
 func (s *Store) DeleteUserSessions(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID)
-	return err
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
+		return err
+	}
+	return s.DeleteUserEmbedSessions(ctx, userID)
 }
 
 func (s *Store) DeleteExpiredSessions(ctx context.Context) (int64, error) {

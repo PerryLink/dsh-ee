@@ -72,6 +72,14 @@ func TestDeviceFlow(t *testing.T) {
 	expect(t, "设备令牌调模型", code, 200, body)
 	code, body = anonymous.do("GET", "/api/dsh/catalog", nil, bearer(granted.AccessToken))
 	expect(t, "设备令牌读目录", code, 200, body)
+	// 设备码是 DSH 的登录方式：签出的令牌默认 client_kind=dsh，写确认沿用 DSH 快捷语义
+	code, body = anonymous.do("GET", "/api/dsh/whoami", nil, bearer(granted.AccessToken))
+	expect(t, "设备令牌 whoami", code, 200, body)
+	if got := decodeAs[struct {
+		ClientKind string `json:"client_kind"`
+	}](t, body).ClientKind; got != "dsh" {
+		t.Fatalf("设备令牌的 client_kind 应为 dsh：%s", body)
+	}
 
 	code, body = anonymous.do("POST", "/api/device/code", map[string]any{"client_name": "MacBook"}, nil)
 	expect(t, "同设备再次登录", code, 200, body)

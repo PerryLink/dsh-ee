@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"github.com/hikariming/dsh-ee/server/internal/datahub"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hikariming/dsh-ee/server/internal/api"
 	"github.com/hikariming/dsh-ee/server/internal/config"
+	"github.com/hikariming/dsh-ee/server/internal/extension"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 	"github.com/hikariming/dsh-ee/server/internal/webui"
@@ -64,6 +66,10 @@ func run(log *slog.Logger) error {
 	} else if n, _ := st.CountUsers(ctx); n == 0 {
 		log.Warn("还没有任何用户：设置 DSH_EE_BOOTSTRAP_ADMIN_PASSWORD 后重启以创建管理员")
 	}
+	// 库里的设置（例如手工改库写进的非法嵌入来源）在启动时就校验；不合法直接拒绝启动。
+	if err := api.ValidateStoredSettings(ctx, st); err != nil {
+		return err
+	}
 
 	box, err := secret.NewBox(cfg.SecretKey)
 	if err != nil {
@@ -86,22 +92,64 @@ func run(log *slog.Logger) error {
 			log.Warn("数据中台的只读账号不可用，数据集暂时不能查", "reason", dataHub.ReadErr)
 		}
 	}
+	// 扩展签名：环境变量里的公钥只在启动时读（库里的信任根改完立即生效）。
+	// 配了强制签名却一把受信任公钥都没有时只警告、不拒绝启动：管理员可以先起服务，再用
+	// /api/admin/signing-keys 加公钥。
+	extKeys, err := extensionTrustedKeys(cfg)
+	if err != nil {
+		return err
+	}
+	dbKeys, err := st.ListTrustedSigningKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("读扩展签名信任根：%w", err)
+	}
+	// 只数现在能用的：撤销的、valid_from 还没到的不算
+	usable := 0
+	now := time.Now().UTC()
+	for _, k := range dbKeys {
+		if k.RevokedAt == nil && !now.Before(k.ValidFrom) {
+			usable++
+		}
+	}
+	if cfg.ExtensionRequireSignature || len(extKeys) > 0 || len(dbKeys) > 0 {
+		log.Info("扩展签名策略", "require_signature", cfg.ExtensionRequireSignature,
+			"env_keys", len(extKeys), "trusted_keys", usable)
+	}
+	if msg := extensionSigningWarning(cfg.ExtensionRequireSignature, len(extKeys), usable); msg != "" {
+		log.Warn(msg)
+	}
 	srv := api.New(st, box, api.Options{
-		CookieSecure:  cfg.CookieSecure,
-		SessionTTL:    cfg.SessionTTL,
-		Version:       version,
-		Web:           webui.Handler(),
-		DataDir:       cfg.DataDir,
-		PublicURL:     cfg.PublicURL,
-		Addr:          cfg.Addr,
-		AdminModeUnit: cfg.AdminModeUnit,
-		DataHub:       dataHub,
-		DataHubErr:    dataErr,
-		DemoSite:      demoSite(cfg),
-		LoginIPLimit:  cfg.LoginIPLimit,
-		LoginIPWindow: cfg.LoginIPWindow,
-		Metrics:       cfg.Metrics,
+		CookieSecure:   cfg.CookieSecure,
+		SessionTTL:     cfg.SessionTTL,
+		Version:        version,
+		Web:            webui.Handler(),
+		DataDir:        cfg.DataDir,
+		PublicURL:      cfg.PublicURL,
+		TrustedProxies: cfg.TrustedProxies,
+		CORSOrigins:    cfg.CORSOrigins,
+		Addr:           cfg.Addr,
+		AdminModeUnit:  cfg.AdminModeUnit,
+		// 旧令牌 scope 收敛（DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES）；默认关闭，不破坏现有客户端
+		RestrictLegacyTokenScopes: cfg.RestrictLegacyTokenScopes,
+		DataHub:                   dataHub,
+		DataHubErr:                dataErr,
+		DemoSite:                  demoSite(cfg),
+		ExtensionTrustedKeys:      extKeys,
+		ExtensionRequireSignature: cfg.ExtensionRequireSignature,
+		EmbedOrigins:              cfg.EmbedOrigins,
+		EmbedCrossSite:            cfg.EmbedCrossSite,
+		EmbedSessionTTL:           cfg.EmbedSessionTTL,
+		// 每令牌的 /v1 与 /mcp 请求数；默认 60，可用 DSH_EE_RATE_LIMIT 调整或关闭
+		RateLimitPerMinute: cfg.RateLimitPerMinute,
+		LoginIPLimit:       cfg.LoginIPLimit,
+		LoginIPWindow:      cfg.LoginIPWindow,
+		Metrics:            cfg.Metrics,
 	}, log)
+	if cfg.RateLimitPerMinute > 0 {
+		log.Info("已启用公开协议面限流", "per_minute_per_token", cfg.RateLimitPerMinute)
+	} else {
+		log.Warn("公开协议面限流已关闭", "reason", "DSH_EE_RATE_LIMIT=0/off")
+	}
 
 	go sweepSessions(ctx, st, log)
 	go srv.RunBackground(ctx)
@@ -168,6 +216,11 @@ func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 			} else if n > 0 {
 				log.Info("已清理过期会话", "count", n)
 			}
+			if n, err := st.DeleteExpiredEmbedSessions(ctx); err != nil {
+				log.Warn("清理过期嵌入会话失败", "err", err)
+			} else if n > 0 {
+				log.Info("已清理过期嵌入会话", "count", n)
+			}
 			if _, err := st.DeleteExpiredAgentConfirms(ctx); err != nil {
 				log.Warn("清理过期确认码失败", "err", err)
 			}
@@ -186,4 +239,26 @@ func demoSite(cfg *config.Config) *api.DemoSite {
 		return nil
 	}
 	return &api.DemoSite{Username: cfg.BootstrapAdmin, Password: cfg.BootstrapAdminPassword, Reset: cfg.DemoReset, ResetEvery: cfg.DemoResetEvery, VideoDir: cfg.DemoVideoDir, StatsFile: cfg.DemoStatsFile}
+}
+
+// extensionTrustedKeys 读环境变量里受信任的签名公钥（只读兼容来源）。
+// 主要来源是库里的信任根（/api/admin/signing-keys）；这里只负责启动时读一份 env 的。
+func extensionTrustedKeys(cfg *config.Config) ([]ed25519.PublicKey, error) {
+	if cfg.ExtensionTrustedKeys == "" {
+		return nil, nil
+	}
+	keys, err := extension.LoadPublicKeys(cfg.ExtensionTrustedKeys)
+	if err != nil {
+		return nil, fmt.Errorf("DSH_EE_EXTENSION_TRUSTED_KEYS: %w", err)
+	}
+	return keys, nil
+}
+
+// extensionSigningWarning 返回启动时要提醒的签名配置问题：配了强制验证签名，但库和
+// 环境变量里都还没有受信任公钥——这时任何扩展都装不了。不拒绝启动，先用管理 API 加公钥即可。
+func extensionSigningWarning(require bool, envKeys, dbKeys int) string {
+	if require && envKeys+dbKeys == 0 {
+		return "配了 DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1，但还没有受信任的签名公钥：现在所有扩展都会被拒绝安装；先用 /api/admin/signing-keys 加公钥，或设 DSH_EE_EXTENSION_TRUSTED_KEYS"
+	}
+	return ""
 }

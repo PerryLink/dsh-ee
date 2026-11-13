@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hikariming/dsh-ee/server/internal/embed"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/registry"
 	"github.com/hikariming/dsh-ee/server/internal/store"
@@ -46,7 +49,58 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
+	// 嵌入来源/应用白名单是管理端信息：没有 settings.manage 的人（含嵌入会话）看不到。
+	if !currentAccess(r).Has(rbac.SettingsManage) {
+		v.Embed = store.AppSettings{}.Embed
+	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+// GET /api/admin/embed-settings：管理端嵌入设置的「部署基线 + 有效值 + 数据库值」。
+// env 只读；页面里展示锁定项，保存仍走 PUT /api/admin/settings 的 embed 段。
+func (s *Server) handleAdminEmbedSettings(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.embedConfig(r.Context())
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	set, err := s.appSettings(r.Context())
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	envTTL := s.opts.EmbedSessionTTL
+	if envTTL <= 0 {
+		envTTL = defaultEmbedSessionTTL
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"env": map[string]any{
+			"crossSite":      s.opts.EmbedCrossSite,
+			"allowedOrigins": nonNilStrings(s.opts.EmbedOrigins),
+			"sessionSeconds": int(envTTL.Seconds()),
+		},
+		"effective": embedConfigView(cfg),
+		"settings":  set.Embed,
+	})
+}
+
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// ValidateStoredSettings 在启动时校验库里的设置：手工改库写入非法嵌入来源等值会让服务拒绝启动。
+func ValidateStoredSettings(ctx context.Context, st *store.Store) error {
+	v, err := st.GetSettings(ctx)
+	if err != nil {
+		return fmt.Errorf("读取系统设置: %w", err)
+	}
+	if msg := validateSettings(v); msg != "" {
+		return errors.New("系统设置无效：" + msg)
+	}
+	return nil
 }
 
 // 每一段设置由哪个权限点管：npm 源页面能改路由与上游，系统设置页能改全部。
@@ -203,6 +257,47 @@ func validateSettings(v *store.AppSettings) string {
 	v.Connect.DefaultModel = strings.TrimSpace(v.Connect.DefaultModel)
 	if v.Scoring.MinPreloadScore < 0 || v.Scoring.MinPreloadScore > 100 {
 		return "预载最低评分应在 0–100 之间"
+	}
+	// 嵌入来源：与管理端页面、环境变量同一套规则（完整 origin；非法值拒绝保存/启动）。
+	if len(v.Embed.AllowedOrigins) > 32 {
+		return "嵌入来源最多 32 个"
+	}
+	origins := make([]string, 0, len(v.Embed.AllowedOrigins))
+	seenOrigin := map[string]bool{}
+	for _, raw := range v.Embed.AllowedOrigins {
+		o, err := embed.NormalizeOrigin(raw)
+		if err != nil {
+			return "嵌入来源 " + raw + " 不合法：" + err.Error()
+		}
+		if seenOrigin[o] {
+			continue
+		}
+		seenOrigin[o] = true
+		origins = append(origins, o)
+	}
+	v.Embed.AllowedOrigins = origins
+	if len(v.Embed.Apps) > 100 {
+		return "嵌入应用白名单最多 100 个"
+	}
+	apps := make([]string, 0, len(v.Embed.Apps))
+	seenApp := map[string]bool{}
+	for _, raw := range v.Embed.Apps {
+		app := strings.TrimSpace(raw)
+		if app == "" {
+			continue
+		}
+		if !slugRe.MatchString(app) || len(app) > maxSlug {
+			return "嵌入应用标识 " + app + " 不合法：只能用小写字母、数字和连字符"
+		}
+		if seenApp[app] {
+			continue
+		}
+		seenApp[app] = true
+		apps = append(apps, app)
+	}
+	v.Embed.Apps = apps
+	if v.Embed.SessionMinutes != 0 && (v.Embed.SessionMinutes < 1 || v.Embed.SessionMinutes > 480) {
+		return "嵌入会话有效期应在 1–480 分钟之间（0 表示跟随部署配置）"
 	}
 	return ""
 }

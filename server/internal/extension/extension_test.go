@@ -107,6 +107,16 @@ func TestDotSlashRelativePaths(t *testing.T) {
 	}
 }
 
+func TestParseManifestCleansRelativePaths(t *testing.T) {
+	m, err := ParseManifest([]byte(`{"id":"acme/oa","version":"1.0.0","name":"OA","kind":"declarative","openapi":"./openapi.yaml","icon":"./icon.svg","apps":["./apps/hr.yaml"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.OpenAPI != "openapi.yaml" || m.Icon != "icon.svg" || len(m.Apps) != 1 || m.Apps[0] != "apps/hr.yaml" {
+		t.Fatalf("路径没有规范化：openapi=%q icon=%q apps=%v", m.OpenAPI, m.Icon, m.Apps)
+	}
+}
+
 func TestGoodManifest(t *testing.T) {
 	res := Check(files(good(), nil))
 	if !res.OK || len(res.Results) != 0 {

@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-sql-driver/mysql"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hikariming/dsh-ee/server/internal/embed"
 )
 
 type Config struct {
@@ -20,7 +23,8 @@ type Config struct {
 	DSN string
 	// 加密上游 API key 的 32 字节主密钥。
 	SecretKey []byte
-	// 部署在 HTTPS 后面时设为 true，会话 cookie 加 Secure。
+	// 会话 cookie 是否加 Secure。不显式设置时跟随 DSH_EE_PUBLIC_URL：
+	// 对外地址是 https 就默认开启；显式 DSH_EE_COOKIE_SECURE 覆盖这个默认。
 	CookieSecure bool
 	SessionTTL   time.Duration
 	// 同一客户端 IP 在窗口内允许的登录失败次数；达到后返回 429。默认 50；小于 0 表示关闭。
@@ -29,6 +33,12 @@ type Config struct {
 	LoginIPWindow time.Duration
 	// 是否开放 GET /metrics（Prometheus 文本格式，只允许本机 / 内网抓取）。默认关闭。
 	Metrics bool
+	// 公开协议面（/v1/* 与 /mcp）的每令牌限流，单位「次/分钟」；默认 60，0 或 off 关闭。
+	RateLimitPerMinute int
+	// 旧版 npm 令牌（ee_npm_）与 API key（sk-ee-）的 scope 收敛（docs/token-lifecycle.md）。
+	// true 时它们只保留原始用途的 scope：npm 令牌只剩 registry，key 只剩模型网关；
+	// 默认 false 不改变旧行为，避免现有客户端突然失效。
+	RestrictLegacyTokenScopes bool
 	// 首次启动、用户表为空时创建的管理员。
 	BootstrapAdmin         string
 	BootstrapAdminPassword string
@@ -37,10 +47,24 @@ type Config struct {
 	// 对外访问地址（如 https://dsh.acme.internal），用于生成 tarball 下载地址；
 	// 为空时按请求的 Host / X-Forwarded-* 推断。
 	PublicURL string
+	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单（DSH_EE_CORS_ORIGINS，逗号分隔）。
+	// 只接受完整 origin：https://host[:port]，http 只放行 localhost；为空时关闭 CORS。
+	CORSOrigins []string
+	// 可信反向代理的地址或网段（DSH_EE_TRUSTED_PROXIES，逗号分隔的 IP / CIDR）。
+	// 只有来自这些对端的 X-Forwarded-For/Host/Proto 才会被采信；不设置时只信任本机回环地址。
+	// 反向代理在别的机器、容器网络或云负载均衡后面时必须显式配置，否则客户端 IP 会记成
+	// 代理地址，HTTPS 代理下生成的绝对链接也可能退回 http。
+	TrustedProxies []netip.Prefix
 	// 启动时等待数据库就绪的最长时间（docker compose 里数据库常比服务晚起来）。
 	DBWait time.Duration
 	// 管理模式「1 小时 / 8 小时」里「小时」的长度，默认 1h；只给自动化测试缩短用，生产不要设
 	AdminModeUnit time.Duration
+	// 扩展签名（docs/plugins.md §9.3）：受信任的签名公钥（PEM 文件，可以有多把）。
+	// 安装计划里用它们核对扩展的签名；为空时签了名的扩展也只会显示「不受信任」。
+	ExtensionTrustedKeys string
+	// 强制验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1）：没签名或签名验不过的扩展不让安装。
+	// 默认只在安装计划里提示，不阻断。
+	ExtensionRequireSignature bool
 	// 数据中台的库（DSH_EE_DATA_DSN）。默认和主库同一个服务器、库名加 _data；设成 off 关闭。
 	DataDSN string
 	// 数据中台的只读账号（DSH_EE_DATA_READ_DSN）；不填时用 DataDSN 的账号自动建一个只有 SELECT 权限的账号。
@@ -56,6 +80,14 @@ type Config struct {
 	DemoVideoDir string
 	// DemoStatsFile：演示站的访问统计追加到这个文件（每行一个 JSON）；空则不记。
 	DemoStatsFile string
+	// 允许用 iframe 嵌入 dsh-ee 网页的宿主来源（DSH_EE_EMBED_ORIGINS，逗号分隔）。
+	// 只接受完整 origin：https://host[:port]，http 只放行回环地址；为空时只允许同站嵌入。
+	EmbedOrigins []string
+	// 跨站 iframe 嵌入 v1（DSH_EE_EMBED_CROSS_SITE）：默认关闭。
+	// 开启后 /api/embed/sessions 与 /api/auth/embed/exchange 才可用，且必须同时配置 EmbedOrigins。
+	EmbedCrossSite bool
+	// ee_emb_ 嵌入会话有效期（DSH_EE_EMBED_SESSION_TTL），默认 2h；设计建议 1h–8h。
+	EmbedSessionTTL time.Duration
 }
 
 func Load() (*Config, error) {
@@ -67,6 +99,7 @@ func Load() (*Config, error) {
 		SessionTTL:             7 * 24 * time.Hour,
 		LoginIPLimit:           50,
 		LoginIPWindow:          15 * time.Minute,
+		RateLimitPerMinute:     60,
 		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
 		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
 		DBWait:                 2 * time.Minute,
@@ -74,6 +107,11 @@ func Load() (*Config, error) {
 	if c.DSN == "" {
 		return nil, errors.New("缺少 DSH_EE_DSN，例如 root:@tcp(127.0.0.1:4000)/dsh_ee")
 	}
+	trusted, err := ParseTrustedProxies(os.Getenv("DSH_EE_TRUSTED_PROXIES"))
+	if err != nil {
+		return nil, err
+	}
+	c.TrustedProxies = trusted
 	c.DataReadDSN = os.Getenv("DSH_EE_DATA_READ_DSN")
 	switch v := os.Getenv("DSH_EE_DATA_DSN"); v {
 	case "off":
@@ -98,12 +136,29 @@ func Load() (*Config, error) {
 		return nil, errors.New("DSH_EE_SECRET_KEY 必须是 32 字节的 base64")
 	}
 	c.SecretKey = key
+	c.ExtensionTrustedKeys = strings.TrimSpace(os.Getenv("DSH_EE_EXTENSION_TRUSTED_KEYS"))
+	if v := os.Getenv("DSH_EE_EXTENSION_REQUIRE_SIGNATURE"); v != "" {
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return nil, errors.New("DSH_EE_EXTENSION_REQUIRE_SIGNATURE 要写成 true / false（或 1 / 0）")
+		}
+		c.ExtensionRequireSignature = b
+	}
+	cookieSecureSet := false
 	if v := os.Getenv("DSH_EE_COOKIE_SECURE"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
 			return nil, fmt.Errorf("DSH_EE_COOKIE_SECURE: %w", err)
 		}
 		c.CookieSecure = b
+		cookieSecureSet = true
+	}
+	if v := os.Getenv("DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES: %w", err)
+		}
+		c.RestrictLegacyTokenScopes = b
 	}
 	if v := os.Getenv("DSH_EE_DEMO_MODE"); v != "" {
 		b, err := strconv.ParseBool(v)
@@ -128,6 +183,18 @@ func Load() (*Config, error) {
 	if c.DemoMode && c.BootstrapAdminPassword == "" {
 		return nil, errors.New("DSH_EE_DEMO_MODE 需要同时设置 DSH_EE_BOOTSTRAP_ADMIN_PASSWORD：登录页要把演示账号显示出来")
 	}
+	if v := os.Getenv("DSH_EE_RATE_LIMIT"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "off", "false":
+			c.RateLimitPerMinute = 0
+		default:
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("DSH_EE_RATE_LIMIT 要是正整数（次/分钟），或 0/off 关闭")
+			}
+			c.RateLimitPerMinute = n
+		}
+	}
 	if v := os.Getenv("DSH_EE_SESSION_TTL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
@@ -148,6 +215,13 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("DSH_EE_DB_WAIT: %w", err)
 		}
 		c.DBWait = d
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_CORS_ORIGINS")); v != "" {
+		origins, err := parseCORSOrigins(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_CORS_ORIGINS: %w", err)
+		}
+		c.CORSOrigins = origins
 	}
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)
@@ -184,6 +258,39 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("DSH_EE_METRICS: %w", err)
 		}
 		c.Metrics = b
+	}
+	if !cookieSecureSet && strings.HasPrefix(c.PublicURL, "https://") {
+		// 生产部署最常见的配置是只填 PUBLIC_URL。对外是 HTTPS 时会话 cookie 默认加 Secure，
+		// 避免漏设 DSH_EE_COOKIE_SECURE 时 cookie 还能被同主机的 HTTP 请求带出去。
+		c.CookieSecure = true
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_EMBED_ORIGINS")); v != "" {
+		origins, err := embed.ParseOrigins(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_EMBED_ORIGINS: %w", err)
+		}
+		c.EmbedOrigins = origins
+	}
+	if v := os.Getenv("DSH_EE_EMBED_CROSS_SITE"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_EMBED_CROSS_SITE: %w", err)
+		}
+		c.EmbedCrossSite = b
+	}
+	c.EmbedSessionTTL = 2 * time.Hour
+	if v := os.Getenv("DSH_EE_EMBED_SESSION_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_EMBED_SESSION_TTL: %w", err)
+		}
+		if d < time.Minute || d > 8*time.Hour {
+			return nil, errors.New("DSH_EE_EMBED_SESSION_TTL 要在 1m 到 8h 之间")
+		}
+		c.EmbedSessionTTL = d
+	}
+	if c.EmbedCrossSite && len(c.EmbedOrigins) == 0 {
+		return nil, errors.New("DSH_EE_EMBED_CROSS_SITE 需要同时设置 DSH_EE_EMBED_ORIGINS：跨站嵌入只放行配置的宿主来源")
 	}
 	return c, nil
 }

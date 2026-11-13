@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { api, formatTime, formatTokens, type TokenScope, type TokenView } from "../lib/api";
+import { api, formatTime, formatTokens, type TokenClientKind, type TokenScope, type TokenView } from "../lib/api";
 import { useAction, useApi } from "../lib/use-api";
 import { useStore } from "../lib/store";
 import { useAuth } from "../lib/auth";
@@ -37,6 +37,8 @@ export default function MyTokens() {
   const [issued, setIssued] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<TokenScope[]>(["models", "registry:read", "hub", "connections"]);
+  // 默认按第三方 Harness 处理：写操作始终人工确认；DSH 用户可显式选 dsh
+  const [clientKind, setClientKind] = useState<TokenClientKind>("third_party");
   const [limit, setLimit] = useState("");
   const [days, setDays] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export default function MyTokens() {
     e.preventDefault();
     setFormError(null);
     const r = await run(() => api.createMyToken({
-      name: name.trim(), scopes,
+      name: name.trim(), scopes, client_kind: clientKind,
       ...(limit ? { monthly_token_limit: Number(limit) } : {}),
       ...(days ? { expires_in_days: Number(days) } : {}),
     }));
@@ -53,6 +55,7 @@ export default function MyTokens() {
     setIssued(r.value.token);
     setCreating(false);
     setName("");
+    setClientKind("third_party");
     reload();
   };
 
@@ -104,11 +107,17 @@ export default function MyTokens() {
       {creating && (
         <Card className="mb-4"><CardHeader title={t("tokens.create")} />
           <form onSubmit={submit} className="space-y-4 px-5 pb-5">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label={t("tokens.name")}><input className={inputCls} required value={name} onChange={(e) => setName(e.target.value)} /></Field>
+              <Field label={t("tokens.clientKind")}>
+                <select aria-label={t("tokens.clientKind")} className={inputCls} value={clientKind} onChange={(e) => setClientKind(e.target.value as TokenClientKind)}>
+                  {(["dsh", "third_party"] as const).map((kind) => <option key={kind} value={kind}>{t(`tokens.clientKinds.${kind}`)}</option>)}
+                </select>
+              </Field>
               <Field label={t("tokens.limit")}><input className={inputCls} type="number" min={0} value={limit} onChange={(e) => setLimit(e.target.value)} placeholder={t("tokens.unlimited")} /></Field>
               <Field label={t("tokens.days")}><input className={inputCls} type="number" min={0} max={3650} value={days} onChange={(e) => setDays(e.target.value)} placeholder={t("tokens.noExpiry")} /></Field>
             </div>
+            <p className="-mt-2 text-xs leading-5 text-neutral-600">{t(`tokens.clientKindHints.${clientKind}`)}</p>
             <div className="flex flex-wrap gap-4 text-sm">
               {scopeOptions.map((scope) => <label key={scope} className="flex items-center gap-1.5"><input type="checkbox" checked={scopes.includes(scope)} onChange={(e) => setScopes((cur) => e.target.checked ? [...cur, scope] : cur.filter((x) => x !== scope))} />{t(`tokens.scopes.${scope}`)}</label>)}
             </div>
@@ -139,13 +148,14 @@ export default function MyTokens() {
         <LoadState loading={loading && !data} error={error} onRetry={reload}>
           <div className="overflow-x-auto">
             <table className="tbl max-sm:min-w-[40rem]">
-              <thead><tr><th className="px-5 py-2">{t("tokens.name")}</th><th className="px-5 py-2">{t("tokens.source")}</th><th className="px-5 py-2">{t("tokens.scopesTitle")}</th><th className="px-5 py-2 text-right">{t("tokens.usage")}</th><th className="px-5 py-2 text-right">{t("tokens.lastUsed")}</th><th className="px-5 py-2">{t("tokens.status")}</th><th className="px-5 py-2" /></tr></thead>
+              <thead><tr><th className="px-5 py-2">{t("tokens.name")}</th><th className="px-5 py-2">{t("tokens.source")}</th><th className="px-5 py-2">{t("tokens.clientKind")}</th><th className="px-5 py-2">{t("tokens.scopesTitle")}</th><th className="px-5 py-2 text-right">{t("tokens.usage")}</th><th className="px-5 py-2 text-right">{t("tokens.lastUsed")}</th><th className="px-5 py-2">{t("tokens.status")}</th><th className="px-5 py-2" /></tr></thead>
               <tbody>
                 {(data ?? []).map((token) => {
                   const state = stateOf(token);
                   return <tr key={token.id} className="border-t border-neutral-100 align-top">
                     <td className="px-5 py-3"><div className="text-neutral-900">{token.name}</div><div className="font-mono text-xs text-neutral-600">{token.prefix}…</div>{token.client_name && <div className="text-xs text-neutral-600">{token.client_name}</div>}</td>
                     <td className="px-5 py-3 text-neutral-600">{t(`tokens.sources.${token.source}`)}</td>
+                    <td className="px-5 py-3"><Badge tone={token.client_kind === "dsh" ? "brand" : "slate"}>{t(`tokens.clientKinds.${token.client_kind ?? "third_party"}`)}</Badge></td>
                     <td className="max-w-72 px-5 py-3 text-xs text-neutral-600">{token.scopes.map((scope) => t(`tokens.scopes.${scope}`)).join(" · ") || "—"}</td>
                     <td className="px-5 py-3 text-right tabular-nums">{formatTokens(token.month_used)}{token.monthly_token_limit !== null && ` / ${formatTokens(token.monthly_token_limit)}`}</td>
                     <td className="px-5 py-3 text-right tabular-nums text-neutral-600">{formatTime(token.last_used_at)}</td>

@@ -119,8 +119,8 @@ func TestRetryAfterSeconds(t *testing.T) {
 	}
 }
 
-// 按 IP 限流依赖 clientIP：X-Forwarded-For 只能从本机 / 内网代理采信，公网直连时忽略。
-// 这里只固定两种在可信代理改动前后都成立的语义，避免和 #108 的信任边界收窄冲突。
+// 按 IP 限流依赖 s.clientIP：X-Forwarded-For 只从可信代理（默认只有本机回环）采信，
+// 其余直连对端（含内网地址）伪造的 X-Forwarded-For 一律忽略，换 IP 绕不过限流、也嫁祸不了别人。
 func TestClientIPForRateLimit(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -130,13 +130,15 @@ func TestClientIPForRateLimit(t *testing.T) {
 	}{
 		{"公网直连忽略 X-Forwarded-For", "203.0.113.9:5555", "198.51.100.7", "203.0.113.9"},
 		{"本机代理取 X-Forwarded-For 最后一跳", "127.0.0.1:5555", "198.51.100.1, 198.51.100.7", "198.51.100.7"},
+		{"内网直连不是可信代理，忽略伪造的 X-Forwarded-For", "10.0.0.5:5555", "10.0.0.99", "10.0.0.5"},
 	}
+	s := &Server{trustedProxies: defaultTrustedProxies()}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
 			r.RemoteAddr = c.remoteAddr
 			r.Header.Set("X-Forwarded-For", c.xff)
-			if got := clientIP(r); got != c.want {
+			if got := s.clientIP(r); got != c.want {
 				t.Fatalf("clientIP = %q，期望 %q", got, c.want)
 			}
 		})

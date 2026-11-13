@@ -42,7 +42,9 @@ DSH_EE_DSN='dsh_ee@your_tenant:password@tcp(ob-host:2881)/dsh_ee'
 dsh-ee 本身只提供 HTTP，放在企业的反向代理 / 负载均衡后面终止 TLS。代理后面需要：
 
 - `.env` 里设 `DSH_EE_PUBLIC_URL=https://dsh.example.internal`（npm 的 tarball 下载地址按它生成），`DSH_EE_COOKIE_SECURE=true`；
-- 或者让代理传 `X-Forwarded-Proto` 与 `X-Forwarded-Host`。
+- 或者让代理传 `X-Forwarded-Proto` 与 `X-Forwarded-Host`。只有来自可信代理的这些头才会被采信，默认只信任本机回环地址；
+  反向代理不在同一台机器（dsh-ee 在容器里由宿主机 nginx 转发、k8s ingress、云负载均衡）时，要把代理地址或网段填进
+  `DSH_EE_TRUSTED_PROXIES`（如 docker 默认网桥 `172.17.0.0/16`），否则审计与按 IP 限流记录的客户端地址是代理地址。
 - 允许较大的请求体（npm publish 与离线包导入，至少 200 MB），并关闭对 `/api/admin/upstream/import` 的读超时或调大。
 
 ### 登录限流与监控

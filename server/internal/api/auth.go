@@ -212,7 +212,7 @@ func (s *Server) startWebSession(w http.ResponseWriter, r *http.Request, u *stor
 
 // login 验证密码并处理限流、审计与错误响应；失败时已写好响应，返回 false。via 是 web / npm。
 func (s *Server) login(w http.ResponseWriter, r *http.Request, username, password, via string) (*store.User, bool) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	// 同一出口 IP 失败次数过多时直接拒绝，省掉后面昂贵的密码校验。
 	if retry, blocked := s.loginIPLimiter.blocked(ip); blocked {
 		s.loginIPLimited.Add(1)
@@ -266,6 +266,13 @@ type meResponse struct {
 	// Limited：从 DSH 直接打开的网页会话，只带员工权限；Reauth：账号本身有管理权限，输入密码登录后可用
 	Limited bool `json:"limited,omitempty"`
 	Reauth  bool `json:"reauth,omitempty"`
+	// Embed 非空表示这次请求用的是跨站嵌入的 ee_emb_ 会话（只能看被嵌入的那个应用）
+	Embed *meEmbed `json:"embed,omitempty"`
+}
+
+type meEmbed struct {
+	App  string `json:"app"`
+	Host string `json:"host"`
 }
 
 // mePayload 组装「当前用户 + 角色 + 有效权限」，登录与 /api/auth/me 共用。
@@ -307,6 +314,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		payload.Reauth = rbac.HasAdminPerms(full)
+	}
+	if info := sessionEmbed(r); info != nil {
+		payload.Embed = &meEmbed{App: info.appSlug, Host: info.hostOrigin}
 	}
 	writeJSON(w, http.StatusOK, payload)
 }
@@ -354,6 +364,11 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
 		if err != nil || c.Value == "" {
+			// 没有网页会话 cookie：跨站 iframe 里用 ee_emb_ 内存 Bearer（cookie 永远不会在三方上下文发送）。
+			if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && strings.HasPrefix(token, embedTokenPrefix) {
+				s.requireEmbedUser(w, r, next, token)
+				return
+			}
 			writeErr(w, http.StatusUnauthorized, "请先登录")
 			return
 		}
@@ -377,6 +392,44 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), u, a)))
+	})
+}
+
+// tokenRequest 处理带 Authorization: Bearer 的请求：解析令牌，返回带账号上下文的请求和主体。
+// 没有 Authorization 时 hasToken 为 false；令牌无效时已经写好响应，ok 为 false。
+func (s *Server) tokenRequest(w http.ResponseWriter, r *http.Request) (rp *http.Request, p *Principal, hasToken, ok bool) {
+	token, has := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !has {
+		return r, nil, false, false
+	}
+	p, err := s.resolveBearer(r.Context(), strings.TrimSpace(token), s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	if err != nil {
+		if be, ok := err.(bearerError); ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "令牌无效或已过期", "code": string(be)})
+		} else {
+			s.internalErr(w, r, err)
+		}
+		return nil, nil, true, false
+	}
+	return r.WithContext(withTokenUser(r.Context(), p.User, p.Access, p.TokenID, p.ClientKind)), p, true, true
+}
+
+// requireUserOrToken 接受网页会话，或带任意范围的访问令牌。令牌的权限是账号权限与令牌范围
+// （rbac.ScopeFilter）的交集，之后与网页会话一样按路由权限点校验。
+// 没有 Authorization 时行为与 requireUser 完全一致，浏览器跨站表单发不出 Bearer 头。
+// 只给既由网页又由命令行调用的接口用。
+func (s *Server) requireUserOrToken(next http.Handler) http.Handler {
+	user := s.requireUser(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rp, _, hasToken, ok := s.tokenRequest(w, r)
+		if !hasToken {
+			user.ServeHTTP(w, r)
+			return
+		}
+		if !ok {
+			return
+		}
+		next.ServeHTTP(w, rp)
 	})
 }
 

@@ -109,6 +109,13 @@ func ParseManifest(raw []byte) (*Manifest, error) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("清单读不了：%w", err)
 	}
+	// 存库的是清单原文；Check 会规范化路径，但安装后每次调用都会重新 ParseManifest。
+	// 不在这里规范化，"./openapi.yaml" 会找不到文件，导致所有工具被静默停用。
+	m.OpenAPI = cleanRelPath(m.OpenAPI)
+	m.Icon = cleanRelPath(m.Icon)
+	for i := range m.Apps {
+		m.Apps[i] = cleanRelPath(m.Apps[i])
+	}
 	return &m, nil
 }
 

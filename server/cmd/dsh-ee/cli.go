@@ -24,16 +24,31 @@ const cliUsage = `用法：
   dsh-ee extension dev [--listen 地址]    起一个模拟的 dsh-ee（不要数据库），写扩展时用
   dsh-ee extension call <地址> <工具> [--as 员工] [--args JSON] [--credential 值] [--config JSON]
                                          以某位员工的身份调一次扩展的工具
-  dsh-ee extension pack <目录> [-o 文件]   把声明式扩展打成 zip，算出校验和
+  dsh-ee extension pack <目录> [-o 文件]   把声明式扩展打成 zip，算出校验和（带签名的连签名一起打）
   dsh-ee extension report <目录|地址>      生成给管理员看的交付说明（Markdown）
+  dsh-ee extension keygen <私钥文件> [--public 公钥文件]
+                                         生成签名用的 Ed25519 密钥；私钥只留在本机
+  dsh-ee extension sign <目录> --key <私钥文件> [-o 文件]
+                                         给清单（声明式连同接口文档）签名，写 signature.json
+  dsh-ee extension verify <目录> [--key 公钥文件]
+                                         核对签名；没有签名或验不过时退出码为 1
   dsh-ee config export|plan|test|apply|explain|simulate …
                                          把权限配置（角色、字段、访问规则）当文件来改，见 dsh-ee config help
+  dsh-ee package check <文件.tgz> [--json]
+                                         把 npm 包交给服务端做发布前预检，不发布、不占版本号
+  dsh-ee doctor [--json]                 只读诊断发布链路：服务连通、令牌范围、npmrc、Node/dsh 版本
   dsh-ee admin recover                   在服务器上生成一个 1 小时有效的恢复账号（把自己锁在外面时用）
   dsh-ee schema list [--json]            列出规格
   dsh-ee schema get <名字>                打印一份规格（manifest：清单；errors：检查项）
 
 extension check 有错误时退出码为 1。加 --json 输出给程序和 Agent 看的结果：
 每一条都有 code、severity、where（文件和位置）、message、fix（具体改法）。
+package check 和 doctor 的地址/令牌也可以用 DSH_EE_URL、DSH_EE_TOKEN，或读 .npmrc 与 $DSH_HOME/dsh-ee/token。
+
+签名：sign 签的是「作者/名字@版本:摘要」，摘要就是 check 打印的 sha256（清单和接口文档的 sha256），
+Ed25519 detached 签名存在扩展目录的 signature.json 里。受信任的公钥文件可以用 --key 给，也可以用
+DSH_EE_EXTENSION_TRUSTED_KEYS；dsh-ee 服务端用同名环境变量，DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1 时
+没签名或验不过的扩展不让安装（默认只在安装计划里提示，不阻断）。
 `
 
 // runCLI 处理子命令。不是子命令时 handled 为 false，由调用方启动服务。
@@ -51,6 +66,10 @@ func runCLI(args []string, stdout, stderr io.Writer) (handled bool, code int) {
 		return true, cliSchema(args[1:], stdout, stderr)
 	case "config":
 		return true, cliConfig(args[1:], stdout, stderr)
+	case "package":
+		return true, cliPackage(args[1:], stdout, stderr)
+	case "doctor":
+		return true, cliDoctor(args[1:], stdout, stderr)
 	case "admin":
 		return true, cliAdmin(args[1:], stdout, stderr)
 	}
