@@ -2,14 +2,18 @@
 #   docker build --build-arg VERSION=$(git describe --tags --always) -t dsh-ee .
 
 FROM node:22-alpine AS web
-WORKDIR /src/web
+WORKDIR /src
 RUN corepack enable
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-COPY web/ ./
+COPY web/package.json web/pnpm-lock.yaml ./web/
+RUN cd web && pnpm install --frozen-lockfile
+COPY web/ ./web/
+# 站内开发文档的单一事实源在 docs/，构建期由 scripts/docs/build.mjs 生成
+# web/src/generated/dev-docs.ts；两处都必须 COPY，否则镜像退回旧静态副本且 CI 的生成一致性检查会红。
+COPY docs/ ./docs/
+COPY scripts/ ./scripts/
 # 网页版应用和 DSH 共用接入插件里的工作台渲染（含 kb-doc-render 等被 workbench-view 引用的模块）
-COPY dsh-plugin/src/ /src/dsh-plugin/src/
-RUN pnpm build
+COPY dsh-plugin/src/ ./dsh-plugin/src/
+RUN cd web && pnpm build
 
 FROM golang:1.27-alpine AS server
 WORKDIR /src/server

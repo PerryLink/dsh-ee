@@ -1,22 +1,32 @@
 /**
  * /docs/:slug：开发文档详情（固定路由）。
  *
- * 正文是静态中文导读，渲染见 components/docs-markdown.tsx。
+ * 正文优先来自构建期生成物（源是仓库 docs/，见 scripts/docs/build.mjs），
+ * 没有生成物时回退到旧静态数据；渲染见 components/docs-markdown.tsx。
  * 地址里的 #锚点 会在标题渲染出来后滚动定位；英文界面显示「正文为中文」的提示，不做机器翻译。
  */
 import { Link, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ExternalLink } from "lucide-react";
-import { readMinutes, findDevDoc } from "../data/dev-docs";
+import { ArrowLeft, Copy, ExternalLink } from "lucide-react";
+import { readMinutes, findDevDoc, sourceUrl } from "../data/dev-docs";
 import { isZh } from "../i18n";
+import { copyText } from "../lib/clipboard";
+import { useStore } from "../lib/store";
 import { DocsMarkdown } from "../components/docs-markdown";
 import { Badge, Button, Card, Empty, backLinkCls } from "../components/ui";
 
 export default function DevDocDetail() {
   const { t } = useTranslation();
   const { slug = "" } = useParams();
+  const { notify } = useStore();
   const doc = findDevDoc(slug);
   const zh = isZh();
+
+  /** 复制当前页地址（含 #锚点）；失败时提示，不谎报成功。 */
+  const copyLink = async () => {
+    if (!(await copyText(window.location.href))) return notify(t("common.copyFailed"));
+    notify(t("devdocs.linkCopied"));
+  };
 
   if (!doc) {
     return (
@@ -45,7 +55,9 @@ export default function DevDocDetail() {
       <div className="mb-6">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="brand">{t(`devdocs.categories.${doc.category}`)}</Badge>
-          <span className="text-xs text-neutral-500 tabular-nums">{t("devdocs.updated", { date: doc.updatedAt })}</span>
+          {doc.updatedAt && (
+            <span className="text-xs text-neutral-500 tabular-nums">{t("devdocs.updated", { date: doc.updatedAt })}</span>
+          )}
           <span className="text-xs text-neutral-500">{t("devdocs.readMinutes", { count: readMinutes(doc.body) })}</span>
           {!zh && <Badge tone="amber">{t("devdocs.zhOnly")}</Badge>}
         </div>
@@ -53,6 +65,24 @@ export default function DevDocDetail() {
           {zh ? doc.title.zh : doc.title.en}
         </h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">{zh ? doc.summary.zh : doc.summary.en}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3" data-dev-doc-actions>
+          <Button variant="secondary" size="sm" onClick={copyLink}>
+            <Copy size={13} />
+            {t("devdocs.copyLink")}
+          </Button>
+          {doc.sourcePath && (
+            <a
+              href={sourceUrl(doc.sourcePath)}
+              target="_blank"
+              rel="noreferrer"
+              data-dev-doc-source={doc.sourcePath}
+              className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:underline dark:text-brand-300"
+            >
+              {t("devdocs.viewSource")}
+              <ExternalLink size={13} />
+            </a>
+          )}
+        </div>
       </div>
 
       <DocsMarkdown markdown={doc.body} />

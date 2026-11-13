@@ -1,27 +1,22 @@
 /**
  * /docs：开发文档目录（固定路由，不随菜单 path 变化）。
  *
- * 内容全部来自 web/src/data/dev-docs.ts 的静态中文导读；点开进入 /docs/:slug 阅读。
- * 目录支持按分类筛选 + 客户端搜索（标题/摘要/标签，中文两字词直接子串匹配），不依赖任何后端搜索。
+ * 内容优先来自构建期生成物 web/src/generated/dev-docs.ts（源是仓库 docs/，
+ * 见 scripts/docs/build.mjs）；没有生成物时回退到旧静态数据，点开进入 /docs/:slug 阅读。
+ * 目录支持按分类筛选 + 客户端搜索（标题/摘要/标签/正文，中文两字词直接子串匹配），
+ * 搜索逻辑在 data/dev-docs-search.ts，⌘K 的「文档」分组共用同一套；不依赖任何后端搜索。
  * 侧栏与工作台卡片的入口也指向这里，但即使管理员改了菜单，URL 仍保持不变。
  */
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, Search, X } from "lucide-react";
-import { DOC_CATEGORIES, DEV_DOCS, readMinutes, type DocCategory, type DevDoc } from "../data/dev-docs";
+import { DOC_CATEGORIES, DEV_DOCS, readMinutes, type DocCategory } from "../data/dev-docs";
+import { matchesDevDoc } from "../data/dev-docs-search";
 import { isZh } from "../i18n";
 import { Badge, Card, cardHover, cx, Empty, Notice, PageHeader, Segmented } from "../components/ui";
 
 type Filter = "all" | DocCategory;
-
-/** 搜索词按空白拆成多个词，全部命中才算匹配；中文两字词直接走子串匹配。 */
-function matchesQuery(doc: DevDoc, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  const haystack = [doc.title.zh, doc.title.en, doc.summary.zh, doc.summary.en, ...doc.tags].join(" ").toLowerCase();
-  return q.split(/\s+/).every((word) => haystack.includes(word));
-}
 
 export default function DevDocs() {
   const { t } = useTranslation();
@@ -29,7 +24,7 @@ export default function DevDocs() {
   const [query, setQuery] = useState("");
   const zh = isZh();
   const docs = useMemo(
-    () => DEV_DOCS.filter((doc) => (filter === "all" || doc.category === filter) && matchesQuery(doc, query)),
+    () => DEV_DOCS.filter((doc) => (filter === "all" || doc.category === filter) && matchesDevDoc(doc, query)),
     [filter, query],
   );
 
@@ -83,7 +78,9 @@ export default function DevDocs() {
               <Card className="flex h-full flex-col p-5">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone="brand">{t(`devdocs.categories.${doc.category}`)}</Badge>
-                  <span className="text-xs text-neutral-500 tabular-nums">{t("devdocs.updated", { date: doc.updatedAt })}</span>
+                  {doc.updatedAt && (
+                    <span className="text-xs text-neutral-500 tabular-nums">{t("devdocs.updated", { date: doc.updatedAt })}</span>
+                  )}
                 </div>
                 <h2 className="mt-2.5 text-[15px] leading-6 font-semibold text-neutral-900 group-hover:text-brand-700 dark:group-hover:text-brand-300">
                   {zh ? doc.title.zh : doc.title.en}

@@ -25,9 +25,12 @@ export default {
     notFoundHint: "链接可能已经调整；回到开发文档目录重新选择。",
     toc: "本页目录",
     anchor: "跳转到这一节",
-    searchPlaceholder: "搜索标题、摘要或标签，例如「权限」「扩展」…",
+    searchPlaceholder: "搜索标题、摘要、标签或正文，例如「权限」「设备码」…",
     searchEmpty: "没有匹配的文档",
     clearSearch: "清除搜索",
+    copyLink: "复制链接",
+    linkCopied: "链接已复制",
+    viewSource: "在 GitHub 查看源文件",
 
     // 样例
     examplesTitle: "开发样例",

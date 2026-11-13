@@ -20,6 +20,12 @@ jobs:
         with:
           node-version: 22
       - run: corepack enable
+      # docs/ 是站内 /docs 的单一事实源：web/src/generated/dev-docs.ts 必须与 docs/ 同步
+      # （改了文档要重新生成并提交）；生成器和测试只用 Node 内置模块，不需要先装依赖。
+      - name: 校验站内文档生成物
+        run: |
+          node scripts/docs/build.mjs --check
+          node --experimental-strip-types --test scripts/docs/build.test.mjs
       - run: pnpm install --frozen-lockfile
         working-directory: web
       # tsc + vite build；缺英文翻译的键会在这里报错
