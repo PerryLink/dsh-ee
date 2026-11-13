@@ -355,7 +355,7 @@ func (s *Server) requireAgent(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "请先登录")
 			return
 		}
-		p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+		p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 		if err != nil {
 			if be, ok := err.(bearerError); ok {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "登录已失效，请重新登录", "code": string(be)})

@@ -224,7 +224,7 @@ func (s *Server) handleEmbedSessionCreate(w http.ResponseWriter, r *http.Request
 		writeEmbedErr(w, rid, "mint", http.StatusNotFound, "embed_disabled", "没有开启跨站嵌入")
 		return
 	}
-	if !s.embedMintRate.allow(clientIP(r)) {
+	if !s.embedMintRate.allow(s.clientIP(r)) {
 		writeEmbedErr(w, rid, "mint", http.StatusTooManyRequests, "rate_limited", "请求太频繁，请稍后再试")
 		return
 	}
@@ -354,7 +354,7 @@ func (s *Server) handleEmbedExchange(w http.ResponseWriter, r *http.Request) {
 		writeEmbedErr(w, rid, "exchange", http.StatusNotFound, "embed_disabled", "没有开启跨站嵌入")
 		return
 	}
-	if !s.embedExchangeRate.allow(clientIP(r)) {
+	if !s.embedExchangeRate.allow(s.clientIP(r)) {
 		writeEmbedErr(w, rid, "exchange", http.StatusTooManyRequests, "rate_limited", "请求太频繁，请稍后再试")
 		return
 	}

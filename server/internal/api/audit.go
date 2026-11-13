@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -101,7 +100,7 @@ func (s *Server) audit(r *http.Request, action, target string, detail map[string
 
 // auditAs 指定操作人（npm 令牌、登录这类没有会话的请求）；u 为 nil 表示匿名。
 func (s *Server) auditAs(r *http.Request, u *store.User, action, target string, detail map[string]any) {
-	a := &store.AuditLog{Action: action, Target: target, Detail: detail, IP: clientIP(r)}
+	a := &store.AuditLog{Action: action, Target: target, Detail: detail, IP: s.clientIP(r)}
 	if info, ok := agentFrom(r.Context()); ok {
 		// 经 Agent 的操作：来源记 agent，并带上是哪个工具调的
 		a.Via, a.Client = "agent", info.Principal.Client
@@ -113,7 +112,7 @@ func (s *Server) auditAs(r *http.Request, u *store.User, action, target string, 
 			a.Detail[k] = v
 		}
 	} else if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-		if p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host")); err == nil {
+		if p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host")); err == nil {
 			a.Via = "token"
 			a.Client = p.Client
 			if p.TokenID > 0 {
@@ -138,25 +137,6 @@ func (s *Server) auditSystem(ctx context.Context, action, target string, detail 
 	if err := s.store.InsertAudit(context.WithoutCancel(ctx), &store.AuditLog{Action: action, Target: target, Detail: detail, Via: "system"}); err != nil {
 		s.log.Warn("写审计日志失败", "action", action, "err", err)
 	}
-}
-
-// clientIP 取对端地址。对端是本机或内网地址（即经过反向代理）时，取 X-Forwarded-For 的最后一跳：
-// 那是代理自己追加的、它看到的客户端地址；前面几跳客户端可以随便伪造。
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
-	if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
-		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-			hops := strings.Split(xff[len(xff)-1], ",")
-			if last := strings.TrimSpace(hops[len(hops)-1]); net.ParseIP(last) != nil {
-				return last
-			}
-		}
-	}
-	return host
 }
 
 // GET /api/admin/audit?before=&limit=&action=&actor=&q=&since=&until=
