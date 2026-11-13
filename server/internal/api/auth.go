@@ -377,6 +377,44 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 	})
 }
 
+// tokenRequest 处理带 Authorization: Bearer 的请求：解析令牌，返回带账号上下文的请求和主体。
+// 没有 Authorization 时 hasToken 为 false；令牌无效时已经写好响应，ok 为 false。
+func (s *Server) tokenRequest(w http.ResponseWriter, r *http.Request) (rp *http.Request, p *Principal, hasToken, ok bool) {
+	token, has := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !has {
+		return r, nil, false, false
+	}
+	p, err := s.resolveBearer(r.Context(), strings.TrimSpace(token), s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	if err != nil {
+		if be, ok := err.(bearerError); ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "令牌无效或已过期", "code": string(be)})
+		} else {
+			s.internalErr(w, r, err)
+		}
+		return nil, nil, true, false
+	}
+	return r.WithContext(withTokenUser(r.Context(), p.User, p.Access, p.TokenID, p.ClientKind)), p, true, true
+}
+
+// requireUserOrToken 接受网页会话，或带任意范围的访问令牌。令牌的权限是账号权限与令牌范围
+// （rbac.ScopeFilter）的交集，之后与网页会话一样按路由权限点校验。
+// 没有 Authorization 时行为与 requireUser 完全一致，浏览器跨站表单发不出 Bearer 头。
+// 只给既由网页又由命令行调用的接口用。
+func (s *Server) requireUserOrToken(next http.Handler) http.Handler {
+	user := s.requireUser(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rp, _, hasToken, ok := s.tokenRequest(w, r)
+		if !hasToken {
+			user.ServeHTTP(w, r)
+			return
+		}
+		if !ok {
+			return
+		}
+		next.ServeHTTP(w, rp)
+	})
+}
+
 // requirePerm 要求拥有任一权限点（超级管理员总是通过）。须套在 requireUser 里面。
 func (s *Server) requirePerm(codes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
