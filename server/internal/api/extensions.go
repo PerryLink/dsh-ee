@@ -19,7 +19,10 @@ import (
 // 装成一个 OpenAPI 连接。清单在调用时生效：工具说明、哪些是只读、不由模型填的参数、
 // 返回只保留哪些字段、请求只能发往清单列出的地址。每次调用记下扩展的版本和摘要。
 
-const auditExtInstall = "extension.install"
+const (
+	auditExtInstall  = "extension.install"
+	auditExtRollback = "extension.rollback"
+)
 
 // connExtension 存在连接的版本内容里。清单原文要和接口文档一起算摘要，所以存字符串，不存解析后的 JSON
 // （json.RawMessage 序列化时会被压缩，摘要就对不上了）。
@@ -41,6 +44,12 @@ type connExtension struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	// oauth 模式：管理员填的 OAuth 客户端
 	OAuthClient *extOAuthClient `json:"oauth_client,omitempty"`
+
+	// 安装时验签用的 signature.json 原文和当时的签名状态（audit 口径，如 valid:abc123）。
+	// 回滚要把历史快照当成一次新安装重新检查，凭这两项才能在升级后复核签名、按撤销状态拦下；
+	// 只含公开的签名信息，不含私钥。没签名的扩展这里是空串。
+	Signature       string `json:"signature,omitempty"`
+	SignatureStatus string `json:"signature_status,omitempty"`
 }
 
 // label 是记进调用记录和审计的版本：作者/名字@版本#摘要前 12 位。
@@ -623,6 +632,8 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		Extension: &connExtension{
 			ID: m.ID, Version: m.Version, Digest: p.Check.Digest,
 			Manifest: string(files[extension.ManifestFile]), Admin: req.Admin,
+			// 存下这次验签的材料和状态：升级后要回滚时，按当时的签名重新核对一遍（见 extensions_rollback.go）
+			Signature: string(files[extension.SignatureFile]), SignatureStatus: signatureAudit(p.Signature),
 		},
 	}
 	var osp *assetSpec

@@ -247,6 +247,9 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/connections/test", s.handleConnTest, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/check", s.handleExtCheck, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/install", s.handleExtInstall, rbac.ConnectionsManage),
+		// 扩展升级回滚（extensions_rollback.go）：历史来自 asset_versions，不另存凭据
+		prm("GET /api/admin/extensions/{target}/history", s.handleExtHistory, rbac.ConnectionsManage),
+		prm("POST /api/admin/extensions/{target}/rollback", s.handleExtRollback, rbac.ConnectionsManage),
 		// 扩展签名的信任根（signing_keys.go）：换下 / 撤销都保留记录，历史签名还能核对
 		prm("GET /api/admin/signing-keys", s.handleListSigningKeys, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/signing-keys", s.handleAddSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),

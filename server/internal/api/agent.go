@@ -224,6 +224,9 @@ var agentExcluded = map[string]string{
 	// 声明式扩展（extensions.go）：装之前要管理员看清楚会发往哪些地址、哪些是写操作，再由人确认
 	"POST /api/admin/extensions/check":   "检查扩展包在网页上做；Agent 用 `dsh-ee extension check --json`",
 	"POST /api/admin/extensions/install": "装扩展要管理员在网页上看过安装计划再确认，不交给模型",
+	// 升级回滚（extensions_rollback.go）：回滚会换掉线上版本、重建工具，管理员看过计划再确认
+	"GET /api/admin/extensions/{target}/history":   "扩展安装历史给管理员在网页上看",
+	"POST /api/admin/extensions/{target}/rollback": "回滚要管理员在网页上看过回滚计划和差异再确认，不交给模型",
 
 	// 扩展签名的信任根（signing_keys.go）：信任谁能签名只能由管理员决定，不交给模型
 	"GET /api/admin/signing-keys":                  "信任根只在管理页面看，不把受信任公钥清单交给 Agent 批量枚举",

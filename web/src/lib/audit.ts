@@ -22,6 +22,7 @@ export const AUDIT_CATEGORIES = [
   "device",
   "asset",
   "connection",
+  "extension",
   "connect",
   "brand",
   "kb",

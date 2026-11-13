@@ -123,7 +123,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | 服务扩展 | 一个可访问的 HTTP 服务 | 服务端去 `/.well-known/dsh-ee-extension.json` 取清单；调用时 dsh-ee 给凭据（共享 / `user_secret` / `ee_jwt` / OAuth），按 MCP 或约定接口转发 |
 | 端侧扩展 | 员工本机运行的 npm 包 | 经企业 npm 源下发；本机 MCP 服务 + `/api/local/*` 回报审计 |
 
-- 安装入口是管理员：`POST /api/admin/extensions/check|install`，网页「企业连接 → 安装扩展」。安装即完全信任，没有签名校验和版本回滚（设计，见 §7）。
+- 安装入口是管理员：`POST /api/admin/extensions/check|install`，网页「企业连接 → 安装扩展」。安装即完全信任；签名、信任根与升级回滚见 [plugins.md](./plugins.md) §9.3、§9.4。
 - 服务扩展的 URL 由管理员填写；dsh-ee 会按清单声明的 `servers` 校验接口文档地址，调用时按清单声明的凭据方式带凭据。
 - `ee_jwt` 的签名密钥由 `server/internal/eejwt` 定期从库里重读，轮换时新钥匙延迟生效（默认 10 分钟），避免正在处理的请求验签失败。
 
@@ -212,7 +212,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | 上游模型 | 上游 key 用主密钥加密存库，网关解密后转发 | 主密钥和数据库要同等保护；换主密钥会让已存凭据解不开 |
 | 企业连接凭据 | 共享凭据/员工 `user_secret` 加密存库；`ee_jwt` 是 dsh-ee 现签的 5 分钟 JWT | 源系统仍要自己鉴权；dsh-ee 只负责「告诉它这是谁」 |
 | 写操作 | 默认 `non_dsh`：非 DSH 客户端先返回确认链接，本人确认后同参数再调一次才执行；方式可设 `off` / `always` | 判断客户端靠 `X-DshEE-Client`，可伪造；这道确认防的是「客户端被设成自动同意」，不是防恶意客户端 |
-| 扩展 | 安装 = 管理员完全信任；服务扩展可拿到 `ee_jwt` / `user_secret`，URL 由管理员填 | 没有签名校验、没有版本回滚（设计） |
+| 扩展 | 安装 = 管理员完全信任；服务扩展可拿到 `ee_jwt` / `user_secret`，URL 由管理员填 | 签名 / 信任根 / 升级回滚见 [plugins.md](./plugins.md) §9.3、§9.4；回滚会把历史快照当新版本重新检查 |
 | 反向代理 | `clientIP` 只在直连对端是回环/内网地址时才取 `X-Forwarded-For` 的最后一跳 | 代理必须正确设置 XFF；否则审计里可能是代理 IP |
 | 公开地址 | `DSH_EE_PUBLIC_URL` 为空时按请求 Host/`X-Forwarded-*` 推断 | 生产必须显式配置，避免 Host 伪造影响生成的外部 URL |
 | 浏览器跨域 | 基线没有 CORS；浏览器内第三方 Harness 的跨站直连见 PR #127（`DSH_EE_CORS_ORIGINS` 白名单，默认关闭，只覆盖 `/v1/*` 与 `/mcp`） | 合并前第三方 Harness 应在服务端/本机进程调用；合并后 CORS 也不是认证边界 |
@@ -245,7 +245,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | `/mcp`、`/v1` 每令牌限流/`Retry-After`/`Request-Id` | 没有；MCP 分页与写确认 `_meta` 见 PR #128（合并后生效），限流仍未实现（设计） | [l1-client.md](./l1-client.md) §5；[roadmap.md](./roadmap.md) |
 | MCP `tools/list` 分页、写确认结构化 `_meta` | 基线一次全量 + 文本确认；见 PR #128，合并后生效 | [troubleshooting.md](./troubleshooting.md) §4.2 |
 | CORS（浏览器内第三方 Harness） | 见 PR #127（白名单 `DSH_EE_CORS_ORIGINS`，默认关闭），合并后生效 | [l1-client.md](./l1-client.md) |
-| 扩展签名、版本回滚、Git 安装、作者自助发布 | 没有；安装只经管理员 | [plugins.md](./plugins.md) §9 |
+| Git 安装、自动升级、作者自助发布 | 没有；安装只经管理员。扩展签名、企业目录登记、版本回滚已做最小闭环 | [plugins.md](./plugins.md) §9 |
 | 第三方 Harness 发现/能力/版本头端点 | 见 PR #123（`/.well-known/dsh-ee`、`/v1/capabilities`、`/v1/apps`、`Dsh-EE-API-Version`），合并后生效 | 合入前以 [l1-client.md](./l1-client.md) 与 `/mcp`、`/v1` 为准 |
 | 微应用嵌入 v0/v1 | 见 PR #118：同站 v0（CSP/安全头、`?embed=1&theme=`、`DSH_EE_EMBED_ORIGINS`、postMessage v1）+ 跨站 v1（默认关闭，需 `DSH_EE_EMBED_CROSS_SITE=1` 且配置 `DSH_EE_EMBED_ORIGINS`；会话 TTL `DSH_EE_EMBED_SESSION_TTL`）。宿主接入见 [embedding.md](./embedding.md)，跨站设计与未做项见 [cross-site-embedding.md](./cross-site-embedding.md)（两份文档由 #118/#130 新增，合并后可用）；能力以 #118 合入为准 | 合入前 `server/README.md` 没有这些配置 |
 | 跨站嵌入 v1 | 已由 PR #118 实现，默认关闭，需 `DSH_EE_EMBED_CROSS_SITE=1` + `DSH_EE_EMBED_ORIGINS`；未做项：管理端设置页、完整扩展消息（`navigate`/`navigate-request`/`open-external`/`logout`、深链 tab 同步）、`fit=auto` sticky 头处理、移动端策略、多实例共享 code/会话存储 | [cross-site-embedding.md](./cross-site-embedding.md)（#130 设计/实现参考） |

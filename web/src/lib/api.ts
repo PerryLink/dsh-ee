@@ -1283,6 +1283,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** 服务端的错误响应体：除了 error 文案，还可能有 plan 这类结构化信息（如回滚预览的 409）。 */
+    public data?: unknown,
   ) {
     super(message);
   }
@@ -1348,7 +1350,7 @@ export async function request<T>(
     const msg =
       (data as { error?: string } | null)?.error ??
       (res.status >= 500 ? i18n.t("api.serverError") : i18n.t("api.requestFailed", { status: res.status }));
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, data);
   }
   return data as T;
 }
