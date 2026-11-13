@@ -63,6 +63,15 @@ export interface Me extends User {
   limited?: boolean;
   /** 账号本身有管理权限，输入密码登录后可用 */
   reauth?: boolean;
+  /** 跨站嵌入会话（ee_emb_）才有：绑定被嵌入的应用与宿主 origin */
+  embed?: { app: string; host: string };
+}
+
+/** 管理端嵌入设置页：部署基线（只读）+ 有效值 + 数据库里保存的段。 */
+export interface AdminEmbedSettings {
+  env: { crossSite: boolean; allowedOrigins: string[]; sessionSeconds: number };
+  effective: { crossSite: boolean; allowedOrigins: string[]; apps: string[]; sessionSeconds: number };
+  settings: Settings["embed"];
 }
 
 export interface Role {
@@ -382,6 +391,8 @@ export interface Stats {
 
 export type TokenScope = "models" | "registry:read" | "registry:publish" | "hub" | "connections" | "agent" | "admin";
 export type TokenSource = "manual" | "device" | "issued" | "legacy";
+/** 令牌签发给哪类客户端：dsh 只用于 DSH 接入；third_party 给其他 Harness/脚本（写操作始终人工确认）。 */
+export type TokenClientKind = "dsh" | "third_party";
 
 export interface TokenView {
   id: string;
@@ -393,6 +404,8 @@ export interface TokenView {
   name: string;
   prefix: string;
   source: TokenSource;
+  /** 签发时确定的客户端类型：dsh / third_party（旧 npm/key 令牌按 dsh 兼容） */
+  client_kind?: TokenClientKind;
   scopes: TokenScope[];
   client_name: string;
   client_os: string;
@@ -411,6 +424,10 @@ export interface TokenView {
 export interface TokenInput {
   name: string;
   scopes: TokenScope[];
+  /** 不填由后端按签发入口给默认值；网页表单默认 third_party */
+  client_kind?: TokenClientKind;
+  /** 可选的客户端名字，便于在列表里区分第三方接入方 */
+  client_name?: string;
   monthly_token_limit?: number | null;
   allowed_models?: string[];
   expires_in_days?: number;
@@ -531,6 +548,8 @@ export interface OidcConfig {
   groupsClaim: string;
   roleMappings: { group: string; roleId: number }[];
   autoCreate: boolean;
+  /** 严格身份绑定：要求 IdP 声明邮箱已验证；预建账号填了邮箱时还要求邮箱一致 */
+  requireEmailVerified: boolean;
   feishuApiBase?: string;
   feishuSync?: boolean;
   feishuSyncDisable?: boolean;
@@ -956,6 +975,8 @@ export interface ExtPlan {
   oauth_client_id?: string;
   /** 扩展带进来的字段（access-control.md §6.0） */
   fields?: { object: string; key: string; label: unknown; type: string; options?: string[]; access?: boolean }[];
+  /** 签名状态（docs/plugins.md §9.3）：没签名、验签有效、验签无效、签名者公钥已撤销；默认不阻断，配了强制签名才拦，撤销后一律拦新装。 */
+  signature?: { status: "unsigned" | "valid" | "invalid" | "revoked"; key_id?: string; identity?: string; key_state?: "active" | "retired" | "revoked"; message?: string };
 }
 
 export type ExtText = string | { zh?: string; en?: string };
@@ -1273,18 +1294,38 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
+// 跨站嵌入的 ee_emb_ 内存 Bearer：只放在这个模块变量里，不写 cookie / localStorage。
+// 嵌入页加载后由握手（use-embed.ts）写入，401 时清空并通知宿主重新 mint。
+let embedToken: string | null = null;
+let onEmbedUnauthorized: (() => void) | null = null;
+
+export function setEmbedToken(token: string | null) {
+  embedToken = token;
+}
+
+export function setEmbedUnauthorizedHandler(fn: (() => void) | null) {
+  onEmbedUnauthorized = fn;
+}
+
 export async function request<T>(
   method: string,
   path: string,
   body?: unknown,
   opts: { silent401?: boolean; raw?: { body: Blob | ArrayBuffer | FormData; type?: string } } = {},
 ): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (opts.raw) {
+    if (opts.raw.type) headers["Content-Type"] = opts.raw.type;
+  } else if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (embedToken) headers.Authorization = `Bearer ${embedToken}`;
   let res: Response;
   try {
     res = await fetch(path, {
       method,
       credentials: "same-origin",
-      headers: opts.raw ? (opts.raw.type ? { "Content-Type": opts.raw.type } : undefined) : body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: Object.keys(headers).length ? headers : undefined,
       body: opts.raw ? opts.raw.body : body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -1299,7 +1340,11 @@ export async function request<T>(
     // 代理到不了后端时 Vite 返回的是纯文本
   }
   if (!res.ok) {
-    if (res.status === 401 && !opts.silent401) onUnauthorized?.();
+    if (res.status === 401 && !opts.silent401) {
+      // 嵌入会话过期：先通知握手清 token 并让宿主重新 mint，再让 AuthProvider 清用户
+      if (embedToken) onEmbedUnauthorized?.();
+      onUnauthorized?.();
+    }
     const msg =
       (data as { error?: string } | null)?.error ??
       (res.status >= 500 ? i18n.t("api.serverError") : i18n.t("api.requestFailed", { status: res.status }));
@@ -1753,6 +1798,8 @@ export const api = {
   /** 系统设置：未登录时返回 401（静默），调用方保留默认值。 */
   settings: () => request<Settings>("GET", "/api/settings", undefined, { silent401: true }),
   saveSettings: (s: Settings) => request<Settings>("PUT", "/api/admin/settings", s),
+  adminEmbedSettings: () => request<AdminEmbedSettings>("GET", "/api/admin/embed-settings"),
+  embedLogout: () => request<void>("POST", "/api/auth/embed/logout", {}),
 
   catalog: () => request<{ plugins: CatalogPlugin[] }>("GET", "/api/catalog").then((r) => r.plugins),
   catalogDetail: (name: string) => request<PackageDetail>("GET", `/api/catalog/${encName(name)}`),

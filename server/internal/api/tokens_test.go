@@ -22,7 +22,9 @@ func TestTokenManagementAPI(t *testing.T) {
 	var issued struct {
 		Token string `json:"token"`
 		Info  struct {
-			ID string `json:"id"`
+			ID         string `json:"id"`
+			ClientKind string `json:"client_kind"`
+			ClientName string `json:"client_name"`
 		} `json:"info"`
 	}
 	if err := json.Unmarshal(body, &issued); err != nil {
@@ -31,16 +33,39 @@ func TestTokenManagementAPI(t *testing.T) {
 	if !strings.HasPrefix(issued.Token, "ee_at_") || issued.Info.ID == "" {
 		t.Fatalf("令牌响应不对：%s", body)
 	}
+	// 手工签发的默认给第三方 Harness 用：third_party；写操作始终要人工确认
+	if issued.Info.ClientKind != store.ClientKindThirdParty {
+		t.Fatalf("手工令牌的默认 client_kind 应为 third_party：%s", body)
+	}
+	manualToken, manualID := issued.Token, issued.Info.ID
+	// 但允许显式指定（例如不用设备码登录的 DSH 手工令牌），并复用 client_name 记客户端名字
+	code, body = c.do("POST", "/api/me/tokens", map[string]any{
+		"name": "dsh-manual", "scopes": scopes, "client_kind": "dsh", "client_name": "DSH manual",
+	}, nil)
+	expect(t, "显式 dsh 手工令牌", code, 201, body)
+	if err := json.Unmarshal(body, &issued); err != nil {
+		t.Fatal(err)
+	}
+	if issued.Info.ClientKind != store.ClientKindDSH || issued.Info.ClientName != "DSH manual" {
+		t.Fatalf("显式 client_kind/client_name 没生效：%s", body)
+	}
+	dshManualID := issued.Info.ID
+	code, body = c.do("POST", "/api/me/tokens", map[string]any{"name": "bad-kind", "scopes": scopes, "client_kind": "robot"}, nil)
+	expect(t, "拒绝未知 client_kind", code, 400, body)
 	code, body = c.do("POST", "/api/me/tokens", map[string]any{"name": "bad", "scopes": []string{rbac.ScopeAdmin}}, nil)
 	expect(t, "拒绝 admin scope", code, 400, body)
 	code, body = c.do("GET", "/api/me/tokens", nil, nil)
 	expect(t, "我的令牌列表", code, 200, body)
-	if !strings.Contains(string(body), "manual-token") || !strings.Contains(string(body), `"kind":"access"`) {
+	if !strings.Contains(string(body), "manual-token") || !strings.Contains(string(body), `"kind":"access"`) ||
+		!strings.Contains(string(body), `"client_kind":"third_party"`) || !strings.Contains(string(body), `"client_kind":"dsh"`) {
 		t.Fatalf("令牌列表不对：%s", body)
 	}
-	code, body = c.do("DELETE", "/api/me/tokens/"+issued.Info.ID, nil, nil)
+	// 收尾：两个手工令牌都吊销，后面的按部门批量吊销只该动机器人的令牌
+	code, body = c.do("DELETE", "/api/me/tokens/"+dshManualID, nil, nil)
+	expect(t, "吊销显式 dsh 令牌", code, 204, body)
+	code, body = c.do("DELETE", "/api/me/tokens/"+manualID, nil, nil)
 	expect(t, "吊销我的令牌", code, 204, body)
-	code, body = c.do("GET", "/v1/models", nil, bearer(issued.Token))
+	code, body = c.do("GET", "/v1/models", nil, bearer(manualToken))
 	expect(t, "吊销后失效", code, 401, body)
 
 	code, body = f.admin.do("POST", "/api/admin/users", map[string]any{
@@ -59,6 +84,10 @@ func TestTokenManagementAPI(t *testing.T) {
 	expect(t, "下发机器人令牌", code, 201, body)
 	if err := json.Unmarshal(body, &issued); err != nil {
 		t.Fatal(err)
+	}
+	// 管理员签发同样默认 third_party；机器人/第三方自动化要人工确认写操作
+	if issued.Info.ClientKind != store.ClientKindThirdParty {
+		t.Fatalf("管理员签发的默认 client_kind 应为 third_party：%s", body)
 	}
 	code, body = c.do("POST", "/v1/chat/completions", map[string]any{"model": "chat", "messages": []map[string]string{{"role": "user", "content": "hi"}}}, bearer(issued.Token))
 	expect(t, "机器人令牌调用", code, 200, body)

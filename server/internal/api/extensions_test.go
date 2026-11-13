@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/hikariming/dsh-ee/server/internal/api"
+	"github.com/hikariming/dsh-ee/server/internal/extension"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 )
 
@@ -371,3 +373,108 @@ paths:
                         owner: { type: string }
                         purchase_price: { type: number }
 `
+
+// 安装计划里的签名状态（docs/plugins.md §9.3）：默认显示 unsigned / valid / invalid；
+// 配了 DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1 时，没签名或验不过的扩展检查不通过、也装不了。
+func TestExtensionSignaturePlan(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	box, _ := secret.NewBox(key)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := api.New(st, box, api.Options{
+		DataDir: t.TempDir(), ExtensionTrustedKeys: []ed25519.PublicKey{pub}, ExtensionRequireSignature: true,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "管理员登录", code, 200, body)
+
+	const manifest = `{
+  "id": "acme/signed-itsm", "version": "1.0.0", "name": "有签名的工单", "kind": "declarative",
+  "openapi": "openapi.yaml", "servers": ["https://itsm.acme.internal"],
+  "tools": [{ "name": "list_tickets", "readOnly": true }]
+}`
+	pkg := func(sig []byte) map[string]any {
+		files := map[string]string{"./dsh-ee.extension.json": manifest, "./openapi.yaml": extOpenAPI}
+		if sig != nil {
+			files["./"+extension.SignatureFile] = string(sig)
+		}
+		return map[string]any{"files": files}
+	}
+	sign := func(t *testing.T) []byte {
+		t.Helper()
+		_, raw, err := extension.SignExtension([]byte(manifest), []byte(extOpenAPI), priv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	type plan struct {
+		Check struct {
+			OK      bool
+			Errors  int
+			Results []struct{ Code, Severity, Where, Message, Fix string }
+		}
+		Signature *struct {
+			Status   string
+			KeyID    string `json:"key_id"`
+			Identity string
+			Message  string
+		}
+	}
+	check := func(t *testing.T, sig []byte) plan {
+		t.Helper()
+		code, body := admin.do("POST", "/api/admin/extensions/check", pkg(sig), nil)
+		expect(t, "检查扩展", code, 200, body)
+		return decodeAs[plan](t, body)
+	}
+
+	// 1. 没签名：默认策略下只在计划里显示，配了强制签名就检查不通过
+	unsigned := check(t, nil)
+	if unsigned.Signature == nil || unsigned.Signature.Status != extension.SignatureUnsigned || unsigned.Check.OK {
+		t.Fatalf("没签名时应是 unsigned 且不通过：%s", fmt.Sprint(unsigned))
+	}
+	if !hasResultCode(unsigned.Check.Results, "signature.required") {
+		t.Fatalf("强制签名时要报 signature.required：%+v", unsigned.Check.Results)
+	}
+	code, body = admin.do("POST", "/api/admin/extensions/install", pkg(nil), nil)
+	expect(t, "没签名不能安装", code, 400, body)
+
+	// 2. 签名有效：检查通过，计划里显示 valid 和签名者
+	sig := sign(t)
+	signed := check(t, sig)
+	if !signed.Check.OK || signed.Signature == nil || signed.Signature.Status != extension.SignatureValid || signed.Signature.KeyID != extension.KeyID(pub) {
+		t.Fatalf("签过名应通过并显示 valid：%s", fmt.Sprint(signed))
+	}
+
+	// 3. 内容被改：签名对不上，invalid，不通过
+	tamperedPkg := pkg(sig)
+	tamperedPkg["files"].(map[string]string)["./openapi.yaml"] = extOpenAPI + " "
+	code, body = admin.do("POST", "/api/admin/extensions/check", tamperedPkg, nil)
+	expect(t, "检查被改过的扩展", code, 200, body)
+	tampered := decodeAs[plan](t, body)
+	if tampered.Check.OK || tampered.Signature == nil || tampered.Signature.Status != extension.SignatureInvalid || !strings.Contains(tampered.Signature.Message, "签名对不上") {
+		t.Fatalf("内容被改后应是 invalid 且不通过：%s", fmt.Sprint(tampered))
+	}
+	code, body = admin.do("POST", "/api/admin/extensions/install", tamperedPkg, nil)
+	expect(t, "签名无效不能安装", code, 400, body)
+}
+
+func hasResultCode(results []struct{ Code, Severity, Where, Message, Fix string }, code string) bool {
+	for _, r := range results {
+		if r.Code == code {
+			return true
+		}
+	}
+	return false
+}

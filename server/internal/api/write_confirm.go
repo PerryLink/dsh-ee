@@ -22,8 +22,9 @@ import (
 // 先返回一个确认链接；员工在网页上看过参数、点了同意之后，同一个人用同样的参数再调一次才真正执行，
 // 而且一次同意只能执行一次。
 //
-// 是不是 DSH 靠请求头 X-DshEE-Client 判断，别的客户端可以伪造它——这道确认防的是「客户端被设成自动同意」，
-// 不是防恶意客户端；要一律确认，把方式改成 always。
+// 是不是 DSH 只认令牌的 client_kind 属性（签发时确定），不认可伪造的 X-DshEE-Client 请求头：
+// dsh 令牌沿用「DSH 自己有审批卡」的快捷语义；third_party 令牌始终走服务端人工确认。
+// 这道确认防的是「客户端被设成自动同意」，不是防恶意客户端；要一律确认，把方式改成 always。
 
 const (
 	writeConfirmSetting = "write_confirm"
@@ -100,7 +101,7 @@ func canonicalArgs(raw json.RawMessage) (string, string) {
 func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *store.ConnectionTool, args json.RawMessage) json.RawMessage {
 	ctx := r.Context()
 	mode := s.writeConfirmMode(ctx)
-	if t.ReadOnly || mode == confirmOff || (mode == confirmNonDSH && dshConnect(r)) {
+	if t.ReadOnly || mode == confirmOff || (mode == confirmNonDSH && v.isDSHToken()) {
 		return nil
 	}
 	text, hash := canonicalArgs(args)
@@ -142,7 +143,8 @@ func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *stor
 	if pending, err := s.store.FindWriteConfirmation(ctx, v.user.ID, a.ID, t.Name, hash, store.ConfirmPending); err == nil {
 		return ask(pending.ID, pending.ExpiresAt)
 	}
-	c := &store.WriteConfirmation{UserID: v.user.ID, AssetID: a.ID, Tool: t.Name, ArgsHash: hash, Args: text, Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
+	c := &store.WriteConfirmation{UserID: v.user.ID, AssetID: a.ID, Tool: t.Name, ArgsHash: hash, Args: text, TokenID: v.tokenID,
+		Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
 	if err := s.store.CreateWriteConfirmation(ctx, c, secret.Hash(secret.Token()), confirmPendingTTL); err != nil {
 		s.log.Warn("创建写操作确认失败", "err", err)
 		return mcp.TextResult("没能发起确认，请稍后再试。", true)
@@ -237,7 +239,12 @@ func (s *Server) handleDecideConfirmation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	view := s.confirmView(r.Context(), c)
-	s.audit(r, auditWriteConfirm, "connection:"+view.Slug, map[string]any{"id": c.ID, "tool": c.Tool, "approve": req.Approve, "args_sha256": c.ArgsHash})
+	detail := map[string]any{"id": c.ID, "tool": c.Tool, "approve": req.Approve, "args_sha256": c.ArgsHash}
+	// 发起确认用的是哪个令牌：third_party 令牌发起的确认要能按令牌追溯
+	if c.TokenID > 0 {
+		detail["token_id"] = c.TokenID
+	}
+	s.audit(r, auditWriteConfirm, "connection:"+view.Slug, detail)
 	fresh, err := s.store.GetWriteConfirmation(r.Context(), c.ID)
 	if err != nil {
 		s.internalErr(w, r, err)

@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/api"
 	"github.com/hikariming/dsh-ee/server/internal/eejwt"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
+	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
 // fakeServiceExt 是照协议手写的一个服务扩展（docs/extension-protocol.md），用 dsh-ee 的 JWKS 验每个请求。
@@ -216,6 +218,7 @@ func wikiManifest(version, credential string, extraTools string) func(self strin
 type svcFixture struct {
 	t     *testing.T
 	ts    *httptest.Server
+	st    *store.Store
 	admin *client
 }
 
@@ -233,7 +236,7 @@ func newSvcFixture(t *testing.T) *svcFixture {
 	admin := newClient(t, ts.URL)
 	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
 	expect(t, "管理员登录", code, 200, body)
-	return &svcFixture{t: t, ts: ts, admin: admin}
+	return &svcFixture{t: t, ts: ts, st: st, admin: admin}
 }
 
 // user 建一个员工并登录，返回网页会话和 DSH 令牌。
@@ -454,13 +457,42 @@ func TestServiceExtension(t *testing.T) {
 	}
 	ext.mu.Unlock()
 
-	// 9. 调用方不是 DSH：写操作先停下，员工在网页上同意后，同样的参数再调一次才执行，且只执行一次
+	// 9. 写确认只认令牌的 client_kind 属性，不认可伪造的 X-DshEE-Client 头：
+	//    dsh 令牌（设备码签发的 DSH 登录）沿用「DSH 自己有审批卡」的快捷语义；
+	//    third_party 令牌始终人工确认。先给 alice 建一个 third_party 令牌，演第三方 Harness。
+	code, body = alice.do("POST", "/api/me/tokens", map[string]any{
+		"name": "claude-code", "scopes": []string{"hub", "connections"},
+		"client_kind": "third_party", "client_name": "claude-code",
+	}, nil)
+	expect(t, "建 third_party 令牌", code, 201, body)
+	other := decodeAs[struct {
+		Token string `json:"token"`
+		Info  struct {
+			ID         string `json:"id"`
+			ClientKind string `json:"client_kind"`
+			ClientName string `json:"client_name"`
+		} `json:"info"`
+	}](t, body)
+	if other.Info.ClientKind != "third_party" || other.Info.ClientName != "claude-code" {
+		t.Fatalf("third_party 令牌响应不对：%s", body)
+	}
+	var thirdPartyID int64
+	fmt.Sscanf(other.Info.ID, "at:%d", &thirdPartyID)
+	thirdParty := dshClient{t: t, base: f.ts.URL, token: other.Token}
+
+	// dsh 令牌即使请求头不是 dsh-connect，也按 DSH 快捷语义走
+	if text, isErr = toolCall(t, aliceDSH, nil, "wiki__create_page", map[string]any{"title": "令牌是 DSH 的"}); isErr {
+		t.Fatalf("dsh 令牌不该要确认：%s", text)
+	}
+
+	// third_party 令牌：写操作先停下，员工在网页上同意后，同样的参数再调一次才执行，且只执行一次。
+	// 这里故意带伪造的 X-DshEE-Client: dsh-connect，确认不能被它绕过。
 	args := map[string]any{"title": "年度总结"}
 	before = ext.hits
-	first := toolCallResult(t, aliceDSH, nil, "wiki__create_page", args)
+	first := toolCallResult(t, thirdParty, asDSH, "wiki__create_page", args)
 	text, isErr = resultText(first), resultIsError(first)
 	if !isErr || !strings.Contains(text, "/confirm/") || ext.hits != before {
-		t.Fatalf("应要求确认且不执行：%v %s", isErr, text)
+		t.Fatalf("third_party 令牌伪造请求头也应要求确认且不执行：%v %s", isErr, text)
 	}
 	// 需要确认时结构化给出确认页；旧客户端只读 content/isError，会忽略 _meta。
 	meta, _ := first["_meta"].(map[string]any)
@@ -486,7 +518,7 @@ func TestServiceExtension(t *testing.T) {
 			ID           int64
 			Tool, System string
 			Args         string
-		}
+		} `json:"items"`
 	}](t, body)
 	if len(pending.Items) != 1 || pending.Items[0].Tool != "create_page" || !strings.Contains(pending.Items[0].Args, "年度总结") {
 		t.Fatalf("待确认列表不对：%s", body)
@@ -503,6 +535,14 @@ func TestServiceExtension(t *testing.T) {
 	if text != wantText {
 		t.Fatalf("确认文本应保持旧格式：\n got %q\nwant %q", text, wantText)
 	}
+	// 确认记录里带发起确认的令牌
+	var confirmToken sql.NullInt64
+	if err := f.st.DB().QueryRowContext(context.Background(), "SELECT token_id FROM write_confirmations WHERE id = ?", cid).Scan(&confirmToken); err != nil {
+		t.Fatalf("读确认记录：%v", err)
+	}
+	if !confirmToken.Valid || confirmToken.Int64 != thirdPartyID {
+		t.Fatalf("确认记录应记下发起确认的令牌：%v，期望 %d", confirmToken, thirdPartyID)
+	}
 	// 别人看不到、也替他点不了
 	_, bobDSH := f.user("bob")
 	bob := newClient(t, f.ts.URL)
@@ -511,31 +551,47 @@ func TestServiceExtension(t *testing.T) {
 	code, body = bob.do("POST", fmt.Sprintf("/api/me/confirmations/%d", cid), map[string]any{"approve": true}, nil)
 	expect(t, "别人替他同意", code, 404, body)
 	// 再调一次（还没同意）：还是那一条，不新建
-	toolCall(t, aliceDSH, nil, "wiki__create_page", args)
+	toolCall(t, thirdParty, nil, "wiki__create_page", args)
 	code, body = alice.do("GET", "/api/me/confirmations", nil, nil)
-	if n := len(decodeAs[struct{ Items []any }](t, body).Items); n != 1 {
+	if n := len(decodeAs[struct {
+		Items []any `json:"items"`
+	}](t, body).Items); n != 1 {
 		t.Fatalf("同样的参数不该重复发起确认：%d", n)
 	}
 	code, body = alice.do("POST", fmt.Sprintf("/api/me/confirmations/%d", cid), map[string]any{"approve": true}, nil)
 	expect(t, "同意", code, 200, body)
+	// 审批审计里带发起确认的令牌，能按令牌追溯
+	code, body = admin.do("GET", "/api/admin/audit?action=write.confirm", nil, nil)
+	expect(t, "写确认审计", code, 200, body)
+	if !strings.Contains(string(body), fmt.Sprintf(`"token_id":%d`, thirdPartyID)) {
+		t.Fatalf("写确认审计应带令牌归属：%s", body)
+	}
 	// 参数变了：要重新确认
-	if text, isErr = toolCall(t, aliceDSH, nil, "wiki__create_page", map[string]any{"title": "别的"}); !isErr || !strings.Contains(text, "/confirm/") {
+	if text, isErr = toolCall(t, thirdParty, nil, "wiki__create_page", map[string]any{"title": "别的"}); !isErr || !strings.Contains(text, "/confirm/") {
 		t.Fatalf("参数变了应重新确认：%s", text)
 	}
-	if text, isErr = toolCall(t, aliceDSH, nil, "wiki__create_page", args); isErr {
+	if text, isErr = toolCall(t, thirdParty, nil, "wiki__create_page", args); isErr {
 		t.Fatalf("同意后应执行：%s", text)
 	}
-	if text, isErr = toolCall(t, aliceDSH, nil, "wiki__create_page", args); !isErr || !strings.Contains(text, "/confirm/") {
+	// 执行成功的调用记录里带这次令牌的 id
+	var callToken sql.NullInt64
+	if err := f.st.DB().QueryRowContext(context.Background(), "SELECT token_id FROM connection_calls ORDER BY id DESC LIMIT 1").Scan(&callToken); err != nil {
+		t.Fatalf("读连接调用记录：%v", err)
+	}
+	if !callToken.Valid || callToken.Int64 != thirdPartyID {
+		t.Fatalf("连接调用应记下令牌归属：%v，期望 %d", callToken, thirdPartyID)
+	}
+	if text, isErr = toolCall(t, thirdParty, nil, "wiki__create_page", args); !isErr || !strings.Contains(text, "/confirm/") {
 		t.Fatalf("一次同意只能执行一次：%v %s", isErr, text)
 	}
 	// 只读工具不用确认
-	if text, isErr = toolCall(t, aliceDSH, nil, "wiki__whoami", nil); isErr {
+	if text, isErr = toolCall(t, thirdParty, nil, "wiki__whoami", nil); isErr {
 		t.Fatalf("只读工具不该要确认：%s", text)
 	}
 	// 管理员可以关掉
 	code, body = admin.do("PUT", "/api/admin/write-confirm", map[string]string{"mode": "off"}, nil)
 	expect(t, "关掉服务端确认", code, 200, body)
-	if text, isErr = toolCall(t, aliceDSH, nil, "wiki__create_page", map[string]any{"title": "关掉之后"}); isErr {
+	if text, isErr = toolCall(t, thirdParty, nil, "wiki__create_page", map[string]any{"title": "关掉之后"}); isErr {
 		t.Fatalf("关掉后不该要确认：%s", text)
 	}
 	_ = bobDSH
