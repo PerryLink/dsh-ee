@@ -140,8 +140,17 @@ function AppRoutes() {
   const { menus } = useMenus();
   const { can } = useAuth();
   const pages = menus.filter((m) => m.kind === "page" && m.page_key in PAGE_COMPONENTS);
-  // 从系统设置拆出来的页面：管理员改过菜单、迁移没能把它们挂上时，仍可从默认路由打开
-  const splitOut = (["admin-brand", "admin-auth"] as const).filter((k) => can("settings.manage") && !pages.some((m) => m.page_key === k));
+  // 从系统设置拆出来的页面：管理员改过菜单、迁移没能把它们挂上时，仍可从默认路由打开。
+  // 扩展签名的信任根主要挂在「企业连接」旁边，但只有 settings.manage 的管理员也能直接打开。
+  const splitOut = (
+    [
+      { key: "admin-brand", ok: can("settings.manage") },
+      { key: "admin-auth", ok: can("settings.manage") },
+      { key: "admin-signing-keys", ok: can("settings.manage", "connections.manage") },
+    ] as const
+  )
+    .filter(({ key, ok }) => ok && !pages.some((m) => m.page_key === key))
+    .map(({ key }) => key);
   return (
     <Routes>
       <Route index element={<Landing />} />

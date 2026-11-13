@@ -9,6 +9,7 @@ import { WriteConfirmSettings } from "../../components/write-confirm-settings";
 import { EmbedSettings } from "../../components/embed-settings";
 import { PageLink, useMenus } from "../../lib/menus";
 import { useConfirm } from "../../lib/confirm";
+import { useAuth } from "../../lib/auth";
 import { Trans, useTranslation } from "react-i18next";
 
 /** 设置页的一节。id 用于页内目录与全局搜索定位（lib/search-index.ts）。 */
@@ -207,6 +208,7 @@ const TOC: { id: string; label: string }[] = [
 /** 左侧的本页目录：滚动时高亮当前一节；下面是从这里拆出去的页面。 */
 function SettingsToc() {
   const { t } = useTranslation();
+  const { can } = useAuth();
   const { hasPage } = useMenus();
   const [current, setCurrent] = useState(TOC[0].id);
   useEffect(() => {
@@ -224,7 +226,11 @@ function SettingsToc() {
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, []);
-  const related = (["admin-brand", "admin-auth"] as const).filter((k) => hasPage(k));
+  // 从系统设置拆出去的页面；扩展签名主要挂在「企业连接」旁边，这里也给只有 settings.manage 的管理员一个入口。
+  const related = [
+    ...(["admin-brand", "admin-auth"] as const).filter((k) => hasPage(k)),
+    ...(can("settings.manage") ? (["admin-signing-keys"] as const) : []),
+  ];
   return (
     <nav aria-label={t("nav.toc")} className="mb-6 lg:sticky lg:top-8 lg:mb-0 lg:self-start">
       <div className="px-2 pb-1.5 text-xs font-semibold tracking-wide text-neutral-400">{t("nav.toc")}</div>

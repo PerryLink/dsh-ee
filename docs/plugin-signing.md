@@ -2,7 +2,9 @@
 
 > **状态：部分实现（#134，2026-11-13）。** 扩展签名做了最小闭环，并把信任根落了库：`dsh-ee extension keygen / sign / verify`、安装计划显示 `unsigned / valid / invalid / revoked`、`trusted_signing_keys` 表 + `/api/admin/signing-keys` 管理接口（换下 / 撤销保留历史）、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 强制验签；`DSH_EE_EXTENSION_TRUSTED_KEYS` 仍作为只读兼容来源。
 >
-> **还没做**：企业扩展目录、作者自助上传扩展、扩展版本回滚、DSH 插件（npm 包）签名、受信任公钥的网页管理界面（现在只有管理 API）。下面「如果要做」的选项、取舍和风险仍然成立，未实现的部分供维护者决定；已实现部分的口径、接口和边界见 §7。
+> 管理页面在管理后台「能力与连接 → 扩展签名」（列表 / 新增 PEM 公钥 / 换下 / 撤销、只读环境变量来源）。
+>
+> **还没做**：企业扩展目录、作者自助上传扩展、扩展版本回滚、DSH 插件（npm 包）签名。下面「如果要做」的选项、取舍和风险仍然成立，未实现的部分供维护者决定；已实现部分的口径、接口和边界见 §7。
 >
 > 设计草案的原始出处是 [plugins.md](./plugins.md) §9.2–§9.5（企业目录、签名、升级、卸载），本文只做聚焦整理并补上现状证据与风险。相关：`docs/extension-authors.md` §5.3（升级与回滚边界，见 #130）、`docs/enterprise-publishing.md` §8（当前未实现清单）、`docs/cross-site-embedding.md`（另一条实现参考：跨站嵌入，见 #130）。
 
@@ -147,7 +149,7 @@
 
 1. 签名的优先级：扩展已做最小闭环（§7）；DSH 插件（npm 包）签名是否也做仍待定。
 2. 签名策略默认值：已实现为「警告后允许」默认、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 切到拒绝（fail closed）。
-3. 官方/企业/供应商公钥的信任列表由谁维护、放在哪：现在在库表 `trusted_signing_keys`（管理 API，`DSH_EE_EXTENSION_TRUSTED_KEYS` 兼容）；网页管理界面、官方签名标记和「供应商公钥」的审核流程仍待定。
+3. 官方/企业/供应商公钥的信任列表由谁维护、放在哪：现在在库表 `trusted_signing_keys`（管理 API + 管理后台「扩展签名」页面，`DSH_EE_EXTENSION_TRUSTED_KEYS` 兼容）；官方签名标记、多环境（生产/测试）密钥标记和「供应商公钥」的审核流程仍待定。
 4. 企业目录是「管理员配置的 URL」还是「dsh-ee 生成并分发」？
 5. 作者身份怎么定义（企业账号、部门、外部供应商）？自助分发是否只对内部作者开放？
 6. 回滚是否需要重新审核、是否允许回滚到任意历史版本、是否自动恢复配置？
@@ -174,6 +176,8 @@
 | 换下 | `POST /api/admin/signing-keys/{key_id}/retire` | 同上 | `signing_key.retire` |
 | 撤销 | `POST /api/admin/signing-keys/{key_id}/revoke` | 同上 | `signing_key.revoke` |
 
+管理页面（`web/src/pages/admin/signing-keys.tsx`）：管理后台「能力与连接 → 扩展签名」，列表（含换下 / 撤销的历史）、粘贴 PEM 新增、换下 / 撤销（确认对话框）、只读展示 `DSH_EE_EXTENSION_TRUSTED_KEYS` 里的公钥、显示强制验签状态和「签名不是安全审计」的提示；菜单由默认菜单和迁移 `0034_admin_signing_keys_menu.sql` 补，只有 `settings.manage` 的管理员也能直接打开 `/admin/signing-keys`。i18n 中英成对。
+
 - 验签时把库里的公钥和 `DSH_EE_EXTENSION_TRUSTED_KEYS` 合并。环境变量是只读的兼容来源；同一个 key id 以库里的状态为准——不然撤销一把同时写在 env 里的公钥不会生效。库里的改动立即生效，env 里的公钥仍然要重启才更新。
 - 状态语义：
   - `active`：可以用来验新装 / 升级；
@@ -185,7 +189,7 @@
 
 **这次没做（仍是设计 / 待办）**
 
-- 受信任公钥的网页管理界面：现在只有管理 API，页面和 i18n 未做；公钥只能由管理员手贴 PEM。
+- 受信任公钥的网页管理界面已经补上（管理后台「能力与连接 → 扩展签名」，见上）；正式公钥仍由管理员手贴 PEM，没有企业 CA / KMS 接入。
 - 服务扩展的清单是从对方服务实时取的，目前安装计划里显示 `unsigned`，也不会去取「随清单提供的签名」；配了强制签名时从服务地址安装会被拦下。
 - DSH 插件（npm 包）签名、企业目录、自助分发、版本回滚（§2.2–§2.4）。
 - 多签（一个扩展同时用多把钥匙）、钥匙用途的审批流、官方签名的信任标记。

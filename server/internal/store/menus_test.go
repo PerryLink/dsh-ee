@@ -343,3 +343,95 @@ func TestDefaultMenusIncludesDev(t *testing.T) {
 		}
 	}
 }
+
+// 0034：已有部署升级后，「扩展签名」页挂在「企业连接」旁边（管理员挪过企业连接就跟着它）；
+// 只补一次，重复迁移不会重复插入。
+func TestMigrateMenusSigningKeys(t *testing.T) {
+	ctx := context.Background()
+	st := openTokenTestStore(t)
+	if err := st.ResetMenus(ctx, rbac.DefaultMenus); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 0033 之前的库：页不存在、迁移记录也没有
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM menus WHERE page_key = 'admin-signing-keys'"); err != nil {
+		t.Fatal(err)
+	}
+	replay := func() {
+		t.Helper()
+		if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0034_admin_signing_keys_menu'"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replay()
+	ms, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[int64]*Menu{}
+	for _, m := range ms {
+		byID[m.ID] = m
+	}
+	var page, connections *Menu
+	for _, m := range ms {
+		switch m.PageKey {
+		case "admin-signing-keys":
+			page = m
+		case "admin-connections":
+			connections = m
+		}
+	}
+	if page == nil {
+		t.Fatal("迁移后没有扩展签名页面")
+	}
+	if connections == nil || connections.ParentID == nil || page.ParentID == nil || *page.ParentID != *connections.ParentID {
+		t.Fatalf("扩展签名应和企业连接同组：page=%+v connections=%+v", page, connections)
+	}
+	if g := byID[*page.ParentID]; g == nil || g.Title != "能力与连接" {
+		t.Fatalf("扩展签名应在「能力与连接」里：%+v", g)
+	}
+	if page.Path != "/admin/signing-keys" || page.Permission != rbac.ConnectionsManage || page.Sort <= connections.Sort {
+		t.Fatalf("扩展签名菜单字段：%+v", page)
+	}
+	// 管理员把企业连接挪到别的分组：新页面跟着它，而不是硬塞回「能力与连接」
+	other := &Menu{ParentID: nil, Kind: "group", Title: "自定义组", Sort: 999, Visible: true}
+	if err := st.CreateMenu(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "UPDATE menus SET parent_id = ? WHERE page_key = 'admin-connections'", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM menus WHERE page_key = 'admin-signing-keys'"); err != nil {
+		t.Fatal(err)
+	}
+	replay()
+	again, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var moved *Menu
+	for _, m := range again {
+		if m.PageKey == "admin-signing-keys" {
+			moved = m
+		}
+	}
+	if moved == nil || moved.ParentID == nil || *moved.ParentID != other.ID {
+		t.Fatalf("企业连接挪组后扩展签名应跟过去：%+v", moved)
+	}
+	// 再跑一次迁移不会重复插入
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0034_admin_signing_keys_menu'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	third, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third) != len(again) {
+		t.Fatalf("重复迁移后菜单数 %d → %d", len(again), len(third))
+	}
+}
