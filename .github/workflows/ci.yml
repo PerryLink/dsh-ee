@@ -145,3 +145,31 @@ jobs:
         run: |
           out="$(docker run --rm dsh-ee:ci version)"
           echo "$out" && test "$out" = "${GITHUB_SHA::8}"
+
+  sdk:
+    # 第三方 Harness SDK（sdk/typescript + sdk/python）独立 job，不参与 server/e2e 主链。
+    # TS：构建 / 类型检查 / mock fetch 单测 / npm pack 内容；Python：unittest / 编译检查 / wheel 构建。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: TypeScript SDK（build / typecheck / test / pack）
+        working-directory: sdk/typescript
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm run typecheck
+          npm test
+          npm pack --dry-run
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python SDK（unittest / compileall / wheel）
+        working-directory: sdk/python
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 -m compileall -q dsh_ee_harness tests
+          python3 -m pip wheel --no-deps -w /tmp/sdk-python-wheel .
+          ls /tmp/sdk-python-wheel
