@@ -252,34 +252,50 @@ cd e2e/dsh/scenarios && npm test
 | [`dsh-plugin/`](./dsh-plugin) | DSH 接入插件 `dsh-connect` |
 | [`deploy/`](./deploy) | compose 文件、离线安装包、systemd 单元 |
 | [`e2e/`](./e2e) | Playwright 端到端测试与真实 DSH 场景 |
-| [`docs/`](./docs) | 设计文档：[总体设计](./docs/design.md)、[能力中心](./docs/capability-hub.md)、[知识库](./docs/knowledge.md)、[产品 v1](./docs/product-v1.md) |
+| [`docs/`](./docs) | 设计文档：[总体设计](./docs/design.md)、[能力中心](./docs/capability-hub.md)、[知识库](./docs/knowledge.md)、[产品 v1](./docs/product-v1.md)、[企业发布与审核](./docs/enterprise-publishing.md) |
 
 <details>
 <summary>页面一览（默认菜单，可在「菜单与页面」里改）</summary>
 
+菜单驱动的页面（路由、名称、分组与访问权限都能在「菜单与页面」里改）：
+
+| 分组 | 路径 | 页面 |
+|---|---|---|
+| 用 | `/apps` | 企业应用：我能用的应用，在 DSH 里打开 |
+| 用 | `/knowledge` | 知识问答：制度、手册与资料；在 DSH 的「知识问答」里提问 |
+| 用 | `/workbench` | 我的工作台：本月 Token、装过的能力、部门在用、我分享的 |
+| 造 | `/build/new` | 新建应用：先做一个自己用的 |
+| 造 | `/build` | 我的应用：自己用、分享与审核状态 |
+| 造 | `/build/templates` | 从样板复制：从样板和公司已发布的应用复制一个改 |
+| 造 | `/build/materials` | 原料：做应用能用的知识库、连接、技能与提示词（高级选项里进「分享插件」） |
+| 接入 | `/dsh` | 下载 DSH 核心 / 桌面版 |
+| 接入 | `/setup` | 接入指南：一条命令接入企业源 |
+| 接入 | `/tokens` | 我的令牌：统一新旧令牌、设备、scope 与用量 |
+| 开发 | `/docs` | 开发文档：DSH 插件、dsh-ee 扩展、客户端接入、权限与发布（URL 固定） |
+| 开发 | `/examples` | 开发样例：精选 DSH 插件样例的固定版本安装命令、来源与许可（URL 固定） |
+| 运营 | `/admin`、`/admin/stats`、`/admin/audit` | 总览、运营数据、审计日志 |
+| 账号与权限 | `/admin/users`、`/admin/roles`、`/admin/menus`、`/admin/fields` | 用户、角色与权限、菜单与页面、字段与访问规则 |
+| 模型与额度 | `/admin/providers`、`/admin/quotas`、`/admin/tokens` | 模型接入、额度分配、令牌管理 |
+| 能力与连接 | `/admin/plugins`、`/admin/review`、`/admin/connections` | 能力管理、待审核、企业连接 |
+| 分发与源 | `/admin/distribution`、`/admin/registry`、`/admin/upstream` | DSH 分发、npm 源、上游预载 |
+| 系统 | `/admin/brand`、`/admin/auth`、`/admin/settings` | 品牌与外观、登录方式、系统设置（含 LDAP / AD） |
+
+固定页面（不在菜单里，路由不受「菜单与页面」影响）：
+
 | 路径 | 页面 |
 |---|---|
-| `/` | 落地页 |
-| `/login` | 登录 |
-| `/tokens` | 我的令牌：统一新旧令牌、设备、scope 与用量 |
-| `/account` | 账号与修改密码 |
-| `/workbench` | 我的工作台：本月 Token、密钥、装过的能力、部门在用、我分享的 |
-| `/apps` | 微应用：人设 + 技能 + 企业系统 + 插件，在 DSH 里用 /名字 打开 |
-| `/knowledge` | 知识库：建库、权限、上传文档、试搜、检索记录 |
-| `/hub` | 能力中心：插件、技能、提示词、企业连接、微应用 |
-| `/assets/:id`、`/assets/new` | 能力详情与编辑 |
-| `/plugins/:name` | 插件详情：安装命令、自动检查结果、版本、依赖、README |
-| `/dsh` | 下载 DSH 核心 / 桌面版 |
-| `/setup` | 接入企业插件源 |
-| `/publish` | 分享插件、申请引入社区插件、我的提交 |
-| `/admin` | 管理总览 |
-| `/admin/users`、`/admin/roles`、`/admin/menus` | 用户、角色与权限、菜单与页面 |
-| `/admin/providers`、`/admin/quotas`、`/admin/tokens` | 模型接入、额度分配、令牌管理 |
-| `/admin/stats`、`/admin/audit` | 运营数据、审计日志 |
-| `/admin/registry`、`/admin/plugins`、`/admin/review`、`/admin/upstream` | npm 源、能力管理、审核队列、上游预载 |
-| `/admin/connections` | 企业连接：MCP 服务或 OpenAPI 接口、凭据托管、工具级授权 |
-| `/admin/distribution` | DSH 本体分发管理 |
-| `/admin/settings` | 系统设置（含 LDAP / AD） |
+| `/`、`/login`、`/go` | 落地页、登录、登录后分流 |
+| `/account`、`/device` | 账号与修改密码、设备登录确认 |
+| `/assets/new`、`/assets/:id`、`/assets/:id/edit` | 应用 / 能力的新建、详情与编辑 |
+| `/plugins/:name` | 插件详情：安装命令、发布预检结果、版本、依赖、README |
+| `/knowledge/:id`、`/knowledge/docs/:id` | 知识库详情、文档阅读 |
+| `/docs`、`/docs/:slug` | 开发文档列表与详情（固定路由；侧栏入口在「开发」分组） |
+| `/examples`、`/examples/:id` | 开发样例列表与详情（固定路由；侧栏入口在「开发」分组） |
+| `/a/:slug` | 应用的网页版（手机可用） |
+| `/confirm/:id`、`/request`、`/connections/:slug` | 写操作确认、权限申请、按连接标识跳转 |
+| `/report/monthly`、`/get-started` | 月度报告、开始使用 |
+
+「分享插件」(`/publish`) 是默认菜单里的隐藏页，入口在「原料 → 高级选项」。「开发」分组的「开发文档」「开发样例」是固定路由：菜单只负责侧栏入口、标题与权限，`/docs`、`/examples` 及详情页的 URL 不随菜单里的 path 变化。`/hub`、`/market`、`/keys`、`/admin/keys` 是旧地址，会自动跳到对应的新页面。
 
 </details>
 
