@@ -966,6 +966,8 @@ export interface ExtPlan {
   oauth_client_id?: string;
   /** 扩展带进来的字段（access-control.md §6.0） */
   fields?: { object: string; key: string; label: unknown; type: string; options?: string[]; access?: boolean }[];
+  /** 签名状态（docs/plugins.md §9.3）：没签名、验签有效、验签无效、签名者公钥已撤销；默认不阻断，配了强制签名才拦，撤销后一律拦新装。 */
+  signature?: { status: "unsigned" | "valid" | "invalid" | "revoked"; key_id?: string; identity?: string; key_state?: "active" | "retired" | "revoked"; message?: string };
 }
 
 export type ExtText = string | { zh?: string; en?: string };
