@@ -7,6 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "prebuild": "node ../scripts/docs/build.mjs",
+    "docs:build": "node ../scripts/docs/build.mjs",
+    "docs:check": "node ../scripts/docs/build.mjs --check",
+    "docs:test": "node --experimental-strip-types --test ../scripts/docs/build.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

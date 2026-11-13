@@ -27,9 +27,12 @@ export default {
     notFoundHint: "The link may have changed; go back to the developer docs index and pick another page.",
     toc: "On this page",
     anchor: "Jump to this section",
-    searchPlaceholder: "Search titles, summaries or tags, e.g. “permissions”, “extensions”…",
+    searchPlaceholder: "Search titles, summaries, tags or body text, e.g. “permissions”, “device code”…",
     searchEmpty: "No matching documents",
     clearSearch: "Clear search",
+    copyLink: "Copy link",
+    linkCopied: "Link copied",
+    viewSource: "View source on GitHub",
 
     examplesTitle: "Examples",
     examplesDesc: "Eight selected DSH plugin examples, from starter to advanced. Each one is a short guide with a pinned install command; upstream READMEs, screenshots and media are never copied.",
