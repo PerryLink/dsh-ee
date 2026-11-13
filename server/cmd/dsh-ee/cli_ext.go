@@ -36,6 +36,9 @@ var extCommands = map[string]func(args []string, stdout, stderr io.Writer) int{
 	"call":   cliExtCall,
 	"pack":   cliExtPack,
 	"report": cliExtReport,
+	"keygen": cliExtKeygen,
+	"sign":   cliExtSign,
+	"verify": cliExtVerify,
 }
 
 // options 把参数分成普通参数、带值的选项（--key 值 或 --key=值）和开关。
@@ -446,6 +449,10 @@ func cliExtPack(args []string, stdout, stderr io.Writer) int {
 	}
 	m := res.Manifest
 	files := []string{extension.ManifestFile, m.OpenAPI}
+	// 签过名的扩展：把签名一起打进去，管理员上传后安装计划里能看到签名状态
+	if _, err := os.Stat(filepath.Join(dir, extension.SignatureFile)); err == nil {
+		files = append(files, extension.SignatureFile)
+	}
 	if m.Icon != "" {
 		files = append(files, m.Icon)
 	}

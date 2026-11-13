@@ -66,7 +66,7 @@ ingress:
 ```
 
 在 `demo.env` 里设 `CF_TUNNEL_CONFIG=/home/you/dsh-ee-demo/cloudflared.yml`、
-`DSH_EE_PUBLIC_URL=https://demo.example.com`、`DSH_EE_COOKIE_SECURE=true`，再 `demo.sh reset`。
+`DSH_EE_PUBLIC_URL=https://demo.example.com`，再 `demo.sh reset`（PUBLIC_URL 是 https，会话 cookie 会自动加 Secure）。
 之后 `demo.sh start / stop` 会一起起停 cloudflared，`reset` 不会断开 tunnel（重置那十几秒访客看到 502）。
 
 ### 用 nginx
@@ -86,7 +86,7 @@ location / {
 }
 ```
 
-配好以后在 `demo.env` 里设 `DSH_EE_PUBLIC_URL=https://你的域名`、`DSH_EE_COOKIE_SECURE=true`，再 `demo.sh reset`。
+配好以后在 `demo.env` 里设 `DSH_EE_PUBLIC_URL=https://你的域名`，再 `demo.sh reset`（会话 cookie 会自动加 Secure）。
 
 ## 资源
 

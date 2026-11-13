@@ -23,6 +23,15 @@ export default {
     owner: "Account",
     chooseOwner: "Choose an account",
     source: "Source",
+    clientKind: "Client type",
+    clientKinds: {
+      dsh: "DSH",
+      third_party: "Third-party Harness",
+    },
+    clientKindHints: {
+      dsh: "Only for DSH access. DSH has its own approval card, so writes are confirmed inside DSH first. Do not use it for other harnesses or scripts.",
+      third_party: "For Claude Code, Codex and other harnesses or scripts. Write operations always require an employee to confirm in the web UI.",
+    },
     scopesTitle: "Scopes",
     usage: "Used / monthly limit",
     lastUsed: "Last used",

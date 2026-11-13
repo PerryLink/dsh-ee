@@ -45,9 +45,10 @@ if [ ! -f .env ]; then
     echo "DSH_EE_SECRET_KEY=$(head -c 32 /dev/urandom | base64)"
     echo "DSH_EE_BOOTSTRAP_ADMIN=admin"
     echo "DSH_EE_BOOTSTRAP_ADMIN_PASSWORD=$admin_pw"
-    echo "# 员工访问的地址；部署在 HTTPS 反向代理后面时改成 https://… 并打开 COOKIE_SECURE"
+    echo "# 员工访问的地址；部署在 HTTPS 反向代理后面时改成 https://…（cookie 会自动加 Secure）"
     echo "DSH_EE_PUBLIC_URL="
-    echo "DSH_EE_COOKIE_SECURE=false"
+    echo "# 留空时按 PUBLIC_URL 自动判断；显式 true/false 可覆盖"
+    echo "DSH_EE_COOKIE_SECURE="
     echo "DSH_EE_PORT=8080"
     if [ "$db" = oceanbase ]; then
       echo "OB_TENANT_PASSWORD=$(rand 24)"

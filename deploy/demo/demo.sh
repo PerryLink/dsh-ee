@@ -64,9 +64,9 @@ TIDB_STATUS_PORT=10180
 # TiDB 内存上限（unistore 不设上限会越吃越多）
 TIDB_MEMORY_LIMIT=1536MB
 
-# 对外地址（nginx 反代后的 https 地址）；HTTPS 时把 COOKIE_SECURE 设成 true
+# 对外地址（nginx 反代后的 https 地址）；填了 https 会自动给 cookie 加 Secure
 DSH_EE_PUBLIC_URL=
-DSH_EE_COOKIE_SECURE=false
+DSH_EE_COOKIE_SECURE=
 DSH_EE_SECRET_KEY=$(openssl rand -base64 32)
 DSH_EE_BOOTSTRAP_ADMIN=admin
 # 这个密码会显示在登录页上，所有访客共用

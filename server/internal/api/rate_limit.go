@@ -101,7 +101,7 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		info, ok := s.tokenRate.take(rateLimitKey(r))
+		info, ok := s.tokenRate.take(s.rateLimitKey(r))
 		setRateLimitHeaders(w.Header(), info)
 		if !ok {
 			// Retry-After 按秒向上取整，至少 1 秒；客户端照它退避。
@@ -128,13 +128,13 @@ func isMCPPath(path string) bool { return path == "/mcp" || strings.HasPrefix(pa
 
 // rateLimitKey 用令牌决定额度；没有 Authorization 时退回客户端 IP。
 // 只放哈希，进程里的 map 不留令牌明文。
-func rateLimitKey(r *http.Request) string {
+func (s *Server) rateLimitKey(r *http.Request) string {
 	if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
 		if token = strings.TrimSpace(token); token != "" {
 			return "token:" + secret.Hash(token)
 		}
 	}
-	return "ip:" + clientIP(r)
+	return "ip:" + s.clientIP(r)
 }
 
 func setRateLimitHeaders(h http.Header, info rateInfo) {

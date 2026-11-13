@@ -186,7 +186,7 @@ Agent 调试权限时最需要的是「为什么」：
 
 ### 6.1 扩展的交付
 
-测试全部通过之后（声明式扩展再 `dsh-ee extension pack` 打成 zip；服务扩展交付的是代码仓库或镜像），技能要求 Agent 生成一份交付说明（模板由 `dsh-ee extension report` 生成，Agent 补充）：
+测试全部通过之后（声明式扩展再 `dsh-ee extension pack` 打成 zip；服务扩展交付的是代码仓库或镜像），技能要求 Agent 生成一份交付说明（模板由 `dsh-ee extension report` 生成，Agent 补充）。企业要求扩展签名时，交付前由作者用自己的私钥签名：`dsh-ee extension sign <目录> --key <私钥文件>`，再把公钥交给管理员（[plugins.md](./plugins.md) §9.3）；私钥不能随包交付。
 
 - 这个扩展做什么、提供哪些工具、哪些是写操作；
 - 申请了哪些权限、为什么需要；

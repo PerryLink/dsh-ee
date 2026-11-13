@@ -35,6 +35,8 @@ export default {
     mappingsDesc: "组声明里出现这个值的人获得对应角色，离开后收回；Keycloak 的组路径可以只写最后一段。没出现在映射里的角色不受影响。",
     autoCreate: "首次登录自动建号",
     autoCreateDesc: "关闭后只有管理员预先建好的「企业统一登录」账号能登录。",
+    requireEmailVerified: "要求邮箱已验证（严格身份绑定）",
+    requireEmailVerifiedDesc: "开启后，IdP 必须在 ID Token 或 userinfo 里声明 email_verified=true 才允许登录；预建账号第一次绑定时，若账号填了邮箱，还要与声明一致，避免不同域的同名前缀认领账号。默认关闭：部分企业 IdP 不返回这个声明，开启后这些 IdP 的账号会登不进来。",
     save: "保存统一登录配置",
     saved: "已保存统一登录配置",
     test: "试连",

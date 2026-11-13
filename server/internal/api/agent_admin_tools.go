@@ -884,13 +884,13 @@ func adminSpecs() map[string]*agentSpec {
 			},
 		},
 		"POST /api/admin/upstream/sync": {
-			Tool: "ee_registry", Action: "sync", Summary: "预载上游插件及其依赖到企业源；publish=true 直接上架，否则进入待审核", En: "Sync upstream plugins", Effect: dg,
+			Tool: "ee_registry", Action: "sync", Summary: "预载上游插件及其依赖到企业源；publish=true 需要 plugins.manage，且自动检查 fail 的包仍进待审核", En: "Sync upstream plugins", Effect: dg,
 			Params: []agentParam{{Name: "names", Type: "array", Required: true, Desc: "包名"}, {Name: "publish", Type: "boolean"}},
 			Preview: func(_ context.Context, _ *Server, _ *Principal, args map[string]any) (string, error) {
 				names, _ := args["names"].([]any)
 				msg := fmt.Sprintf("将从上游预载 %d 个插件及其依赖：%s。", len(names), clip(fmt.Sprint(names), 200))
 				if args["publish"] == true {
-					msg += "会直接上架，员工立刻能装，不经审核。"
+					msg += "会直接上架，员工立刻能装；需要 plugins.manage 权限，自动检查 fail 的包仍会进入待审核。"
 				} else {
 					msg += "预载后进入待审核。"
 				}

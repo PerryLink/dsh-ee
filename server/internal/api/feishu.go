@@ -123,12 +123,12 @@ func (s *Server) syncFeishu(ctx context.Context) (*feishuSyncResult, error) {
 		departments, groups := externalDeptNames(dir, remote.DepartmentIDs)
 		identity := oidc.Identity{Subject: subject, Username: username, DisplayName: remote.Name, Email: remote.Email,
 			Department: strings.Join(departments, " / "), Groups: groups}
-		synced, err := s.provisionOIDC(ctx, cfg, identity)
+		synced, _, err := s.provisionOIDC(ctx, cfg, identity)
 		if err == nil && synced != nil {
 			s.applyDirectoryFields(ctx, "feishu", synced.ID, remote.Attrs())
 		}
 		switch {
-		case errors.Is(err, errOIDCConflict), errors.Is(err, errOIDCIdentity):
+		case errors.Is(err, errOIDCConflict), errors.Is(err, errOIDCIdentity), errors.Is(err, errOIDCEmailMismatch):
 			res.Conflicts = append(res.Conflicts, username)
 		case errors.Is(err, errBadCredentials), errors.Is(err, errNotProvisioned):
 			res.Skipped = append(res.Skipped, username)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,6 +34,13 @@ type Upstream struct {
 	hc  *http.Client
 	dir string
 	ttl time.Duration
+	// 允许 tarball 地址解析到内网（内部 npm 镜像需要）；默认只允许公网地址，
+	// 防止上游 packument 把服务端当跳板访问内网/云元数据。
+	allowPrivate bool
+	// 管理端配置的上游 registry origin（scheme://host[:port]）。上游返回的 dist.tarball
+	// 与它同源时放行内网地址：内部镜像/代理通常把 packument 和 tarball 放在同一服务，
+	// 这是管理员显式配置过的信任来源。
+	trustedOrigins map[string]struct{}
 
 	mu       sync.Mutex
 	inflight map[string]*fetchCall
@@ -62,7 +70,8 @@ func NewUpstream(hc *http.Client, dataDir string, ttl time.Duration) (*Upstream,
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
-	return &Upstream{hc: hc, dir: dir, ttl: ttl, inflight: map[string]*fetchCall{}, parsed: map[string]parsedEntry{}}, nil
+	allowPrivate := strings.EqualFold(os.Getenv("DSH_EE_UPSTREAM_ALLOW_PRIVATE"), "true") || os.Getenv("DSH_EE_UPSTREAM_ALLOW_PRIVATE") == "1"
+	return &Upstream{hc: hc, dir: dir, ttl: ttl, allowPrivate: allowPrivate, trustedOrigins: map[string]struct{}{}, inflight: map[string]*fetchCall{}, parsed: map[string]parsedEntry{}}, nil
 }
 
 // PackumentURL 拼上游的包地址：作用域包写成 @scope%2fname，所有 registry 都认。
@@ -75,6 +84,7 @@ func (u *Upstream) Packument(ctx context.Context, base, name string, maxAge time
 	if maxAge == 0 {
 		maxAge = u.ttl
 	}
+	u.trustUpstream(base)
 	key := cacheKey(base, name)
 	u.mu.Lock()
 	if c, ok := u.inflight[key]; ok {
@@ -247,18 +257,90 @@ func cacheKey(base, name string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// FetchTarball 下载上游 tarball 写入 blobs，并按元数据校验完整性。
-func (u *Upstream) FetchTarball(ctx context.Context, blobs *Blobs, rawURL, integrity, shasum string, limit int64) (Digest, error) {
+// blockedUpstreamIP 判断地址是否属于本机/内网/链路本地等不应由服务端主动访问的范围。
+func blockedUpstreamIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast()
+}
+
+// upstreamOrigin 归一 scheme+host 作为 origin 键（host 含端口）。
+func upstreamOrigin(scheme, host string) string {
+	return strings.ToLower(scheme) + "://" + strings.ToLower(host)
+}
+
+// trustUpstream 记录管理端配置的上游 registry origin。上游返回的 dist.tarball 与它同源时
+// 按管理员信任处理（内部镜像/代理的 tarball 通常与 packument 同源），其余目标仍按公网校验。
+func (u *Upstream) trustUpstream(base string) {
+	pu, err := url.Parse(base)
+	if err != nil || pu.Scheme == "" || pu.Host == "" {
+		return
+	}
+	u.mu.Lock()
+	if u.trustedOrigins == nil {
+		u.trustedOrigins = map[string]struct{}{}
+	}
+	u.trustedOrigins[upstreamOrigin(pu.Scheme, pu.Host)] = struct{}{}
+	u.mu.Unlock()
+}
+
+func (u *Upstream) isTrustedOrigin(rawURL string) bool {
+	pu, err := url.Parse(rawURL)
+	if err != nil || pu.Scheme == "" || pu.Host == "" {
+		return false
+	}
+	u.mu.Lock()
+	_, ok := u.trustedOrigins[upstreamOrigin(pu.Scheme, pu.Host)]
+	u.mu.Unlock()
+	return ok
+}
+
+// ValidateUpstreamURL 解析 tarball 地址并检查它会连到的每个 IP；上游 packument 是第三方内容，
+// 不能让它的 dist.tarball 指向内网或云主机元数据。与管理员配置的上游 registry 同源的地址按
+// 内部镜像处理（放行），其他的内网目标需要显式设置 DSH_EE_UPSTREAM_ALLOW_PRIVATE=1。
+func (u *Upstream) ValidateUpstreamURL(ctx context.Context, rawURL string) error {
 	pu, err := url.Parse(rawURL)
 	if err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" {
-		return Digest{}, fmt.Errorf("非法的上游 tarball 地址 %q", rawURL)
+		return fmt.Errorf("非法的上游 tarball 地址 %q", rawURL)
+	}
+	host := pu.Hostname()
+	if host == "" {
+		return fmt.Errorf("非法的上游 tarball 地址 %q", rawURL)
+	}
+	if u.allowPrivate || u.isTrustedOrigin(rawURL) {
+		return nil
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("解析上游 tarball 地址 %s：%w", host, err)
+	}
+	for _, addr := range ips {
+		if !blockedUpstreamIP(addr.IP) {
+			continue
+		}
+		return fmt.Errorf("上游 tarball 地址 %s 解析到内网地址 %s，已拒绝；内部镜像请设置 DSH_EE_UPSTREAM_ALLOW_PRIVATE=1", host, addr.IP)
+	}
+	return nil
+}
+
+// FetchTarball 下载上游 tarball 写入 blobs，并按元数据校验完整性。
+func (u *Upstream) FetchTarball(ctx context.Context, blobs *Blobs, rawURL, integrity, shasum string, limit int64) (Digest, error) {
+	if err := u.ValidateUpstreamURL(ctx, rawURL); err != nil {
+		return Digest{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return Digest{}, err
 	}
 	req.Header.Set("User-Agent", "dsh-ee")
-	resp, err := u.hc.Do(req)
+	// 每一跳重定向都重新校验；默认不跟随到内网。
+	client := *u.hc
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return fmt.Errorf("重定向次数过多")
+		}
+		return u.ValidateUpstreamURL(req.Context(), req.URL.String())
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return Digest{}, fmt.Errorf("下载 %s：%w", rawURL, err)
 	}
