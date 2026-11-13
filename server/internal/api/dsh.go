@@ -631,7 +631,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var msg rpcMsg
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&msg); err != nil || msg.Method == "" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxMCPRequestBody)).Decode(&msg); err != nil || msg.Method == "" {
 		writeRPC(w, json.RawMessage("null"), nil, &mcp.Error{Code: -32700, Message: "不是合法的 JSON-RPC 请求"})
 		return
 	}
