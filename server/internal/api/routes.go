@@ -420,6 +420,10 @@ func (s *Server) routes() []route {
 		pub("GET /v1/apps", s.handleHarnessApps),
 		pub("GET /v1/apps/{name}", s.handleHarnessApp),
 		pub("GET /v1/openapi.json", s.handleHarnessOpenAPI),
+		// 第三方 Harness 的中立只读面（skills_api.go）：Bearer + hub 范围 + 工作台权限，
+		// 数据与 /api/dsh 同源，只把形状归一
+		pub("GET /v1/skills", s.handleNeutralSkills),
+		pub("GET /v1/skills/{name}", s.handleNeutralSkill),
 	}
 	for i := range rs {
 		rs[i].agent = agentSpecs[rs[i].pattern]
