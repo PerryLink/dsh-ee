@@ -212,16 +212,18 @@ func (s *Server) runFeishuSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			cfg, err := s.loadOIDC(ctx)
-			if err != nil || !cfg.Enabled || cfg.Preset != "feishu" || !cfg.FeishuSync {
-				continue
-			}
-			result, err := s.syncFeishu(ctx)
-			if err != nil {
-				s.log.Warn("飞书组织同步失败", "err", err)
-			} else if !result.OK {
-				s.log.Warn("飞书组织同步未完成", "err", result.Error)
-			}
+			s.runLeased(ctx, leaseFeishuSync, func(ctx context.Context) {
+				cfg, err := s.loadOIDC(ctx)
+				if err != nil || !cfg.Enabled || cfg.Preset != "feishu" || !cfg.FeishuSync {
+					return
+				}
+				result, err := s.syncFeishu(ctx)
+				if err != nil {
+					s.log.Warn("飞书组织同步失败", "err", err)
+				} else if !result.OK {
+					s.log.Warn("飞书组织同步未完成", "err", result.Error)
+				}
+			})
 		}
 	}
 }

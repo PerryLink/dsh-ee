@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/kb"
+	"github.com/hikariming/dsh-ee/server/internal/lease"
 	"github.com/hikariming/dsh-ee/server/internal/oidc"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/registry"
@@ -101,6 +102,9 @@ type Options struct {
 	EmbedMaxSessionsPerUser int
 	// 企业目录（directory.go）：tarball 来源的主机白名单；空表示只接受公网 https 地址。
 	DirectoryTarballHosts []string
+	// 多实例后台任务租约（internal/lease），由 cmd/dsh-ee 创建后传入，后台循环与清理任务共用。
+	// nil 表示不启用：每个实例都会执行周期任务（单实例与测试的原有行为）。
+	BackgroundLeases *lease.Runner
 }
 
 type Server struct {
@@ -159,6 +163,8 @@ type Server struct {
 	routeTable []route
 	// 由路由表生成的 Agent 工具
 	agentTools []*agentTool
+	// 后台周期任务的租约（多实例选主）；nil 时直接执行
+	leases *lease.Runner
 	// 知识库的内存关键词索引
 	kb kbIndex
 	// OIDC 登录：发现配置与公钥缓存、进行中的登录请求
@@ -192,7 +198,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 			MaxIdleConnsPerHost:   32,
 		})}
 	}
-	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s := &Server{store: st, box: box, opts: opts, log: log, leases: opts.BackgroundLeases, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}
@@ -451,12 +457,14 @@ func (s *Server) RunBackground(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			j, err := s.registry.CheckUpdates(ctx, 0)
-			if err != nil {
-				s.log.Warn("检查上游新版本失败", "err", err)
-			} else if j != nil {
-				s.log.Info("发现上游新版本，已开始同步", "job", j.ID, "count", j.Total)
-			}
+			s.runLeased(ctx, leaseRegistryCheckUpdate, func(ctx context.Context) {
+				j, err := s.registry.CheckUpdates(ctx, 0)
+				if err != nil {
+					s.log.Warn("检查上游新版本失败", "err", err)
+				} else if j != nil {
+					s.log.Info("发现上游新版本，已开始同步", "job", j.ID, "count", j.Total)
+				}
+			})
 			t.Reset(6 * time.Hour)
 		}
 	}

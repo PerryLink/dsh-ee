@@ -23,7 +23,7 @@ dsh-ee 的运行时只有三样东西：
 3. Go 构建时把 `web/dist` 拷进 `server/internal/webui/build/`，由 `//go:embed all:build` 嵌进二进制；版本号用 `-ldflags "-X main.version=…"` 写入；
 4. 运行镜像只有 `/usr/local/bin/dsh-ee`，`EXPOSE 8080`，`HEALTHCHECK` 请求 `/healthz`，数据卷 `/data`。
 
-启动顺序（`server/cmd/dsh-ee/main.go`）：读环境变量 → 连数据库（`DSH_EE_DB_WAIT` 内每 3 秒重试）→ 跑迁移 → 创建初始管理员（用户表为空时）→ 初始化主密钥与数据目录 → 把上次进程中断的后台任务标为失败（不自动续跑）→ 起 HTTP 服务。收到 SIGINT/SIGTERM 后最多等 30 秒优雅关闭；流式响应可能持续数分钟，所以 HTTP 服务不设 `WriteTimeout`（`ReadHeaderTimeout` 10s、`IdleTimeout` 120s）。
+启动顺序（`server/cmd/dsh-ee/main.go`）：读环境变量 → 连数据库（`DSH_EE_DB_WAIT` 内每 3 秒重试）→ 跑迁移 → 创建初始管理员（用户表为空时）→ 初始化主密钥与数据目录 → 把上次进程中断的后台任务标为失败（不自动续跑；多实例下仍每实例执行，见 §7）→ 初始化后台任务租约执行器 → 起 HTTP 与后台循环（周期任务每轮先抢 `background_leases` 租约，见 §4.3）。收到 SIGINT/SIGTERM 后最多等 30 秒优雅关闭，并释放本实例持有的后台任务租约；流式响应可能持续数分钟，所以 HTTP 服务不设 `WriteTimeout`（`ReadHeaderTimeout` 10s、`IdleTimeout` 120s）。
 
 ## 2. 代码组件
 
@@ -32,6 +32,7 @@ dsh-ee 的运行时只有三样东西：
 | 进程入口 / CLI | `server/cmd/dsh-ee` | 不带子命令时启动服务；`version`、`extension`、`config`、`schema`、`admin recover` 等子命令见 [cli.md](./cli.md) |
 | HTTP 层 | `server/internal/api` | 路由表、认证中间件、全部 handler；`routes.go` 里一行一条路由，同时生成 Agent 工具 |
 | 存储层 | `server/internal/store` | 主库的业务 SQL 与迁移（`migrations/*.sql`，按文件名顺序执行，失败即启动失败）；换数据库方言主要改这一层 |
+| 后台任务租约 | `server/internal/lease` | 多实例下周期任务的租约执行器：抢租约、按 TTL/3 续约、停机释放、DB 不可用时跳过；租约表 `background_leases` 与访问方法在 store 层 |
 | 权限 | `server/internal/rbac` | 权限点目录、角色求并、scope 与权限求交（`ScopeFilter`） |
 | 模型网关 | `server/internal/api/gateway.go`、`llm.go` | OpenAI 兼容的 `/v1`，上游故障转移、额度、用量记录 |
 | npm 源 | `server/internal/registry` | packument / tarball / 发布 / 审核 / 回源 / 预载 / 离线包；`blobs.go` 管数据目录 |
@@ -149,7 +150,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | 能力中心 | `assets`、`asset_versions`、`asset_subscriptions`、`asset_usage`、`app_rows` |
 | 企业连接 | `connection_tools`、`connection_calls`、`connection_shared_credentials`、`write_confirmations` |
 | 知识库/字段/权限配置 | `kb_*`、`field_defs`、`field_values`、`access_rules`、`change_requests` |
-| 运维与审计 | `audit_logs`、`settings`、`feedback`、`data_*`、`dsh_releases` |
+| 运维与审计 | `audit_logs`、`settings`、`feedback`、`data_*`、`dsh_releases`、`background_leases` |
 
 `schema_migrations` 记录已执行的迁移。**多实例同时首次启动会争抢迁移**：先起一个，等它完成再扩容（[server/README.md](../server/README.md) 已知限制）。
 
@@ -169,7 +170,8 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 - 登录失败限流（按用户名，进程内存；5 次失败锁 15 分钟；设备码按 IP 限流）。
 - 上游 packument 内存缓存、知识库关键词索引、流式响应、MCP 事件流。
 - 预载/导入任务：任务记录在 `sync_jobs`，进程重启时启动阶段会把「运行中」的任务标为失败（`FailRunningJobs`），不会自动续跑。
-- 这些是单实例限制的一部分：多实例部署需要把它们移出进程内存（设计）。
+- 后台周期任务（LDAP/飞书同步、知识源同步、上游新版本检查、接入插件发布、Desktop 版本同步、到期与清理任务）不在进程内存里排队：每轮先抢数据库表 `background_leases` 里的一条租约，只有持租实例执行（`internal/lease`）；执行中续约，任务结束/优雅停机释放，进程崩溃则 TTL 到期后由其他实例接管。数据库不可用时该轮跳过并记日志，不会退化成每个实例都跑。
+- 其余进程内状态（登录限流、packument 缓存、知识库索引、MCP 事件流、能力目录变化通知）仍是每个实例一份：多实例部署需要把它们移出进程内存（设计）。
 
 ## 5. 认证、授权与信任边界
 
@@ -236,7 +238,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 
 | 能力 | 现状 | 参考 |
 |---|---|---|
-| 多实例横向扩展 | 限流、缓存、预载任务在进程内存；tarball 在本地磁盘；迁移要求先起一个 | [server/README.md](../server/README.md) 已知限制 |
+| 多实例完整横向扩展 | 周期后台任务已有租约选主（`background_leases`，见 §4.3 与 [operations.md](./operations.md) §9.2）；登录限流、缓存、预载任务、MCP 事件流仍在进程内存，tarball 在本地磁盘，迁移要求先起一个，作业级归属（`FailRunningJobs`、管理员触发的镜像任务）未做 | [operations.md](./operations.md) §9.2、[server/README.md](../server/README.md) 已知限制 |
 | 对象存储 | tarball 只写本地 `DSH_EE_DATA_DIR` | 同上 |
 | 备份/恢复工具 | 仓库没有内置命令；`.env` 必须和数据库一起备份 | [operations.md](./operations.md)、[roadmap.md](./roadmap.md) 阶段 C |
 | 指标/追踪/慢请求日志 | 只有文本日志和 `/healthz` | roadmap 阶段「企业级运行能力」 |

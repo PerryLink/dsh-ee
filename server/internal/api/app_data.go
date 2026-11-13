@@ -645,11 +645,13 @@ func (s *Server) appDelete(ctx context.Context, r *http.Request, v viewer, t *ap
 // runAppRowPurge 每天清一次删除超过 30 天的行。
 func (s *Server) runAppRowPurge(ctx context.Context) {
 	for {
-		if n, err := s.store.PurgeAppRows(ctx, appRowKeep); err != nil {
-			s.log.Warn("清理已删除的应用数据失败", "err", err)
-		} else if n > 0 {
-			s.log.Info("清理了已删除超过 30 天的应用数据", "rows", n)
-		}
+		s.runLeased(ctx, leaseAppRowPurge, func(ctx context.Context) {
+			if n, err := s.store.PurgeAppRows(ctx, appRowKeep); err != nil {
+				s.log.Warn("清理已删除的应用数据失败", "err", err)
+			} else if n > 0 {
+				s.log.Info("清理了已删除超过 30 天的应用数据", "rows", n)
+			}
+		})
 		timer := time.NewTimer(24 * time.Hour)
 		select {
 		case <-ctx.Done():
