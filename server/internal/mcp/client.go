@@ -302,6 +302,19 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 
 // TextResult 构造只有一段文字的工具结果。
 func TextResult(text string, isError bool) json.RawMessage {
-	b, _ := json.Marshal(map[string]any{"content": []map[string]string{{"type": "text", "text": text}}, "isError": isError})
+	return TextResultWithMeta(text, isError, nil)
+}
+
+// TextResultWithMeta 同 TextResult，并在结果级 _meta 里带上结构化字段（MCP 的 CallToolResult._meta）。
+// 旧客户端只读 content/isError，会忽略 _meta；文本与 isError 与 TextResult 完全一致。
+func TextResultWithMeta(text string, isError bool, meta map[string]any) json.RawMessage {
+	result := map[string]any{
+		"content": []map[string]string{{"type": "text", "text": text}},
+		"isError": isError,
+	}
+	if len(meta) > 0 {
+		result["_meta"] = meta
+	}
+	b, _ := json.Marshal(result)
 	return b
 }

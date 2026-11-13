@@ -11,6 +11,8 @@ import { AppNew } from "./asset-editor";
 import DshDownload from "./dsh-download";
 import Setup from "./setup";
 import Publish from "./publish";
+import DevDocs from "./dev-docs";
+import DevExamples from "./dev-examples";
 import MyKeys from "./my-keys";
 import AdminUsers from "./admin/users";
 import AdminRoles from "./admin/roles";
@@ -45,6 +47,8 @@ export const PAGE_COMPONENTS: Record<PageKey, ComponentType> = {
   "dsh-download": DshDownload,
   setup: Setup,
   publish: Publish,
+  "dev-docs": DevDocs,
+  "dev-examples": DevExamples,
   "my-keys": MyKeys,
   "admin-users": AdminUsers,
   "admin-roles": AdminRoles,

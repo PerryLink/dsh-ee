@@ -101,7 +101,7 @@ func validDeviceScopes(scopes []string) bool {
 }
 
 func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
-	if !s.deviceCodeRate.allow(clientIP(r)) {
+	if !s.deviceCodeRate.allow(s.clientIP(r)) {
 		writeDeviceErr(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
@@ -124,7 +124,7 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 	d := &store.DeviceCode{
 		UserCode: store.NewUserCode(), ClientName: cleanClientField(req.ClientName, 128),
 		ClientOS: cleanClientField(req.ClientOS, 64), ClientVersion: cleanClientField(req.ClientVersion, 64),
-		ClientIP: clientIP(r), Scopes: strings.Join(req.Scopes, ","), Status: "pending", ExpiresAt: time.Now().UTC().Add(10 * time.Minute).Truncate(time.Millisecond),
+		ClientIP: s.clientIP(r), Scopes: strings.Join(req.Scopes, ","), Status: "pending", ExpiresAt: time.Now().UTC().Add(10 * time.Minute).Truncate(time.Millisecond),
 	}
 	if err := s.store.CreateDeviceCode(r.Context(), d, secret.Hash(plain)); err != nil {
 		s.internalErr(w, r, err)
@@ -142,7 +142,7 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeviceToken(w http.ResponseWriter, r *http.Request) {
-	if !s.deviceTokenRate.allow(clientIP(r)) {
+	if !s.deviceTokenRate.allow(s.clientIP(r)) {
 		writeDeviceErr(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
@@ -279,7 +279,7 @@ func (s *Server) handleDshLogout(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "缺少接入令牌", "code": tokenInvalid})
 		return
 	}
-	p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "接入令牌无效", "code": tokenInvalid})
 		return

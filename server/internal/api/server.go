@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"github.com/hikariming/dsh-ee/server/internal/datahub"
@@ -11,6 +12,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"sync"
@@ -37,6 +39,12 @@ type Options struct {
 	DataDir string
 	// 对外地址，用于生成 tarball 下载地址；为空时按请求推断。
 	PublicURL string
+	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单，逗号分隔的完整 origin
+	// 已由 config 解析、校验；为空时关闭 CORS，见 cors.go。
+	CORSOrigins []string
+	// 可信反向代理的地址或网段（DSH_EE_TRUSTED_PROXIES）。只有来自这些对端的
+	// X-Forwarded-* 才会被采信；为空时只信任本机回环地址。
+	TrustedProxies []netip.Prefix
 	// 监听地址；示例里的演示差旅系统连接从这里访问 dsh-ee 自己。为空时用请求的 Host。
 	Addr string
 	// 管理模式里「小时」的长度，默认 1 小时；只给自动化测试缩短用。
@@ -56,6 +64,26 @@ type Options struct {
 	DemoSite *DemoSite
 	// 轮换 ee_jwt 密钥时，新钥匙过多久开始签名；0 用默认的 10 分钟（测试里调短）
 	EEKeyDelay time.Duration
+	// 协议面（/v1/* 与 /mcp）每令牌每分钟的请求数；0 表示关闭。
+	// 线上默认由 config 的 DSH_EE_RATE_LIMIT 给 60，测试里按需设置。
+	RateLimitPerMinute int
+	// 限流窗口，默认 1 分钟；只给自动化测试缩短用。
+	RateLimitWindow time.Duration
+	// 允许用 iframe 嵌入网页的宿主 origin（DSH_EE_EMBED_ORIGINS）；为空时只允许同站。
+	// 只由 config 解析、校验后传进来，见 security_headers.go。
+	EmbedOrigins []string
+	// 跨站 iframe 嵌入 v1 总开关（DSH_EE_EMBED_CROSS_SITE）；默认关闭。
+	EmbedCrossSite bool
+	// ee_emb_ 嵌入会话有效期（DSH_EE_EMBED_SESSION_TTL）；0 用默认 2h。
+	EmbedSessionTTL time.Duration
+	// 一次性 embed code 有效期；0 用默认 60s。只给自动化测试缩短用。
+	EmbedCodeTTL time.Duration
+	// 扩展签名（docs/plugins.md §9.3）：受信任的签名公钥，安装计划里据此核对签名。
+	ExtensionTrustedKeys []ed25519.PublicKey
+	// 强制验证签名（DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1）：没签名或验不过的扩展不让装。
+	ExtensionRequireSignature bool
+	// 旧版 npm 令牌 / API key 的 scope 收敛（docs/token-lifecycle.md）；默认 false 保持旧行为。
+	RestrictLegacyTokenScopes bool
 }
 
 type Server struct {
@@ -66,9 +94,11 @@ type Server struct {
 	limiter         *loginLimiter
 	deviceCodeRate  *ipRate
 	deviceTokenRate *ipRate
-	upstream        *http.Client
-	registry        *registry.Service
-	settings        settingsCache
+	// 可信反向代理网段；只有这些对端的 X-Forwarded-* 会被采信（见 proxy.go）
+	trustedProxies []netip.Prefix
+	upstream       *http.Client
+	registry       *registry.Service
+	settings       settingsCache
 	// 能力目录变化的通知（DSH 的 MCP 长连接据此刷新工具）
 	hub hubBroker
 	// 停机时关闭，让 /mcp 事件流自己结束
@@ -76,11 +106,15 @@ type Server struct {
 	streamsOnce sync.Once
 	// 上游 MCP 连接的缓存，按资产 id
 	conns connClients
+	// 网关的上游连接与模型冷却状态
+	providerCD providerCooldowns
 	// ee_jwt 的签名密钥（内存里的一份，定期重读库，见 user_identity.go）
 	eeKeyring eeKeyring
 	// 服务扩展：连续出错时的熔断、回调地址的限流（service_ext.go）
 	extBreak        extBreaker
 	extEndpointRate keyRate
+	// /v1/* 与 /mcp 的每令牌限流；nil 表示关闭（见 rate_limit.go）
+	tokenRate *tokenRate
 	// 示例内容里演示差旅系统的内存数据
 	demo demoTravel
 	crm  demoCRM
@@ -109,11 +143,19 @@ type Server struct {
 	oidcClient *oidc.Client
 	oidcStates oidcStates
 	webLinks   webLinks
+	// 跨站嵌入 v1：一次性 code 与限流（见 embed.go）
+	embedCodes        embedCodes
+	embedMintRate     *ipRate
+	embedExchangeRate *ipRate
 }
 
 func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Server {
 	if opts.SessionTTL == 0 {
 		opts.SessionTTL = 7 * 24 * time.Hour
+	}
+	if len(opts.TrustedProxies) == 0 {
+		// 没接线时也保持安全默认：只信任本机回环地址上的代理。
+		opts.TrustedProxies = defaultTrustedProxies()
 	}
 	if opts.DemoSite != nil {
 		d := *opts.DemoSite
@@ -131,7 +173,10 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 			MaxIdleConnsPerHost:   32,
 		})}
 	}
-	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), embedMintRate: newIPRate(embedMintPerMinute), embedExchangeRate: newIPRate(embedExchangePerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	if opts.RateLimitPerMinute > 0 {
+		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
+	}
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()
@@ -204,7 +249,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/", s.opts.Web)
 	}
 
-	return s.logRequests(mux)
+	// 中立 Harness 契约的版本响应头/请求号只加在 /v1 与发现文档上，既有 API 语义不变。
+	// 浏览器内第三方 Harness 的跨域白名单（DSH_EE_CORS_ORIGINS，默认关闭），只作用于 /v1/* 与 /mcp，见 cors.go；
+	// 放在 harnessAPI 外面，预检先于方法检查处理，harness 的错误响应也带 CORS 头。
+	// securityHeaders 在最外层，harnessAPI 直接写出的响应同样带文档安全头。
+	// 每令牌限流（DSH_EE_RATE_LIMIT）放在 cors 里面，429 也带 CORS 头，浏览器能读到 Retry-After；
+	// requestID 在最外层，日志与响应用同一个请求号。
+	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(mux))))))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -212,7 +263,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
-		s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds())
+		s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds(), "request_id", requestIDFrom(r))
 	})
 }
 
@@ -293,16 +344,37 @@ type ctxKey struct{}
 type principal struct {
 	user   *store.User
 	access *rbac.Access
-	// 会话是从 DSH 凭设备令牌换来的，只带员工权限（见 web_link.go）
+	// 会话是从 DSH 凭设备令牌换来的，或者来自跨站嵌入的 ee_emb_ 会话：只带员工权限
 	limited bool
+	// embed 非 nil 表示这是一条 ee_emb_ 嵌入会话（见 embed.go）
+	embed *embedPrincipal
+	// 经由接入令牌认证时的令牌 id 与客户端类型；网页会话为零值
+	tokenID    int64
+	clientKind string
 }
 
 func withUser(ctx context.Context, u *store.User, a *rbac.Access) context.Context {
 	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: a})
 }
 
+// withTokenUser 与 withUser 相同，并带上令牌属性（id / 客户端类型），供写确认与调用记录用。
+func withTokenUser(ctx context.Context, u *store.User, a *rbac.Access, tokenID int64, clientKind string) context.Context {
+	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: a, tokenID: tokenID, clientKind: clientKind})
+}
+
 func withLimitedUser(ctx context.Context, u *store.User, a *rbac.Access) context.Context {
 	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: limitedAccess(a), limited: true})
+}
+
+// withEmbedUser 把 ee_emb_ 会话放进请求上下文：权限按 limited 收窄，并带上应用与宿主 origin。
+func withEmbedUser(ctx context.Context, u *store.User, a *rbac.Access, info *embedPrincipal) context.Context {
+	return context.WithValue(ctx, ctxKey{}, principal{user: u, access: limitedAccess(a), limited: true, embed: info})
+}
+
+// sessionEmbed 返回当前请求的嵌入会话信息；不是嵌入会话时 nil。
+func sessionEmbed(r *http.Request) *embedPrincipal {
+	p, _ := r.Context().Value(ctxKey{}).(principal)
+	return p.embed
 }
 
 // sessionLimited 表示当前网页会话是从 DSH 打开的，只带员工权限。
@@ -320,6 +392,18 @@ func currentUser(r *http.Request) *store.User {
 func currentAccess(r *http.Request) *rbac.Access {
 	p, _ := r.Context().Value(ctxKey{}).(principal)
 	return p.access
+}
+
+// currentTokenID 返回这次请求所用接入令牌的 id；网页会话或旧令牌为 0。
+func currentTokenID(r *http.Request) int64 {
+	p, _ := r.Context().Value(ctxKey{}).(principal)
+	return p.tokenID
+}
+
+// currentClientKind 返回这次请求所用令牌的客户端类型；网页会话为空。
+func currentClientKind(r *http.Request) string {
+	p, _ := r.Context().Value(ctxKey{}).(principal)
+	return p.clientKind
 }
 
 func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }

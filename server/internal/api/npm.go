@@ -62,7 +62,7 @@ func (s *Server) npmAuth(r *http.Request) (*npmCaller, error) {
 		}
 	}
 	if token != "" {
-		p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+		p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 		var be bearerError
 		if errors.As(err, &be) {
 			return nil, errBadToken
@@ -518,17 +518,24 @@ func (s *Server) handleNpmSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // publicBase 是对外地址（不带结尾斜杠），用于生成 tarball 地址与门户链接。
+// 只有直连对端是可信反向代理时才采信 X-Forwarded-Host / X-Forwarded-Proto：
+// 否则这两个头可由客户端伪造，生成的绝对地址会被指到别处。
 func (s *Server) publicBase(r *http.Request) string {
 	if s.opts.PublicURL != "" {
 		return s.opts.PublicURL
 	}
 	scheme := "http"
-	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	if r.TLS != nil {
 		scheme = "https"
 	}
 	host := r.Host
-	if h := r.Header.Get("X-Forwarded-Host"); h != "" {
-		host = strings.TrimSpace(strings.Split(h, ",")[0])
+	if s.trustedPeer(r) {
+		if p := forwardedValue(r.Header.Values("X-Forwarded-Proto")); strings.EqualFold(p, "https") {
+			scheme = "https"
+		}
+		if h := forwardedValue(r.Header.Values("X-Forwarded-Host")); h != "" {
+			host = h
+		}
 	}
 	return scheme + "://" + host
 }

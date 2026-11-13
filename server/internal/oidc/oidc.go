@@ -50,6 +50,10 @@ type Config struct {
 	RoleMappings []RoleMapping `json:"roleMappings"`
 	// IdP 里有、dsh-ee 还没有的账号首次登录时自动创建
 	AutoCreate bool `json:"autoCreate"`
+	// 严格身份绑定：登录要求 IdP 声明邮箱已验证（email_verified=true）；预建 OIDC 账号
+	// 第一次绑定时，若账号填了邮箱，还要求与声明一致。默认关闭：部分企业 IdP 不返回
+	// email_verified，开启后这些 IdP 的账号会登不进来。
+	RequireEmailVerified bool `json:"requireEmailVerified"`
 	// 飞书：通讯录 API 根地址与组织同步开关。其它 IdP 忽略。
 	FeishuAPIBase       string `json:"feishuApiBase,omitempty"`
 	FeishuSync          bool   `json:"feishuSync"`
@@ -641,6 +645,24 @@ func (c Claims) Strings(path string) []string {
 	return out
 }
 
+// boolClaim 读一个布尔声明。标准写法是 JSON 布尔；少数 IdP 用字符串 "true" 或数字 1。
+func boolClaim(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "true", "1":
+			return true
+		}
+	case json.Number:
+		return x.String() == "1"
+	case float64:
+		return x == 1
+	}
+	return false
+}
+
 // Identity 是按配置从声明里取出的用户资料。
 type Identity struct {
 	Subject     string   `json:"subject"`
@@ -649,16 +671,19 @@ type Identity struct {
 	Email       string   `json:"email"`
 	Department  string   `json:"department"`
 	Groups      []string `json:"groups"`
+	// email_verified 声明：IdP 是否确认邮箱属于这个用户
+	EmailVerified bool `json:"emailVerified"`
 }
 
 func (cfg *Config) Identity(c Claims) Identity {
 	id := Identity{
-		Subject:     c.String("sub"),
-		Username:    strings.ToLower(c.String(cfg.UsernameClaim)),
-		DisplayName: c.String(cfg.NameClaim),
-		Email:       c.String(cfg.EmailClaim),
-		Department:  c.String(cfg.DepartmentClaim),
-		Groups:      c.Strings(cfg.GroupsClaim),
+		Subject:       c.String("sub"),
+		Username:      strings.ToLower(c.String(cfg.UsernameClaim)),
+		DisplayName:   c.String(cfg.NameClaim),
+		Email:         c.String(cfg.EmailClaim),
+		Department:    c.String(cfg.DepartmentClaim),
+		Groups:        c.Strings(cfg.GroupsClaim),
+		EmailVerified: boolClaim(c.lookup("email_verified")),
 	}
 	if id.Groups == nil {
 		id.Groups = []string{}

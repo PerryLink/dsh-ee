@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/hikariming/dsh-ee/server/internal/api"
+	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/registry"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
@@ -240,4 +241,54 @@ func TestPackagePreflightOwner(t *testing.T) {
 	if !conflictKeys(r)["owner"] {
 		t.Fatalf("缺少 owner 冲突：%+v", r.Conflicts)
 	}
+}
+
+// 预检接口既给网页用，也给命令行 `dsh-ee package check` 用：网页会话照旧，
+// 带 registry:publish（或 agent）范围的访问令牌也能调，权限仍按账号权限与令牌范围求交。
+func TestPackagePreflightTokenAuth(t *testing.T) {
+	f := newPrincipalFixture(t)
+	u := f.user(t, "preflight-cli", nil)
+	f.token(t, u.ID, "ee_at_preflight_publish", []string{rbac.ScopeModels, rbac.ScopeRegistryRead, rbac.ScopeRegistryPublish}, nil, nil)
+	f.token(t, u.ID, "ee_at_preflight_read", []string{rbac.ScopeModels, rbac.ScopeRegistryRead}, nil, nil)
+
+	tgz := makeTgz(t, pluginPkg("@company/preflight-token", "1.0.0", nil), bundleFile)
+	post := func(token string) (int, []byte) {
+		t.Helper()
+		req, err := http.NewRequest("POST", f.ts.URL+"/api/me/packages/check", bytes.NewReader(tgz))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, body
+	}
+
+	code, body := post("ee_at_preflight_publish")
+	expect(t, "令牌预检", code, 200, body)
+	r := decodeAs[packageCheckResp](t, body)
+	if !r.CanSubmit || r.Name != "@company/preflight-token" || r.Version != "1.0.0" {
+		t.Fatalf("令牌预检结果不对：%+v", r)
+	}
+
+	// 只有读范围的令牌没有发布权限：和网页一样 403
+	code, body = post("ee_at_preflight_read")
+	expect(t, "只读令牌预检", code, 403, body)
+
+	// 令牌不对、或没带认证，都不能回退成匿名访问
+	code, body = post("ee_at_preflight_missing")
+	expect(t, "无效令牌预检", code, 401, body)
+	code, body = post("")
+	expect(t, "匿名预检", code, 401, body)
+
+	// 网页会话的行为不变
+	code, body = f.admin.doRaw("POST", "/api/me/packages/check", tgz, "application/octet-stream")
+	expect(t, "网页预检", code, 200, body)
 }
