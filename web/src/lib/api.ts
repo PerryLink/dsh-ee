@@ -1008,6 +1008,39 @@ export interface ExtInstallReq {
   oauth_client_secret?: string;
 }
 
+/** 扩展签名的受信任公钥（docs/plugin-signing.md §7）：换下、撤销都保留记录，不删行。 */
+export type SigningKeyState = "active" | "retired" | "revoked" | "pending";
+
+export interface SigningKey {
+  /** 公钥 sha256 前 16 位十六进制（extension.KeyID） */
+  key_id: string;
+  /** PEM：PUBLIC KEY 或 CERTIFICATE；私钥不入库、不回显 */
+  public_key: string;
+  /** 用途；现在只有 extension（扩展签名） */
+  purpose: string;
+  valid_from: string;
+  retired_at?: string;
+  revoked_at?: string;
+  created_by?: number;
+  note: string;
+  created_at: string;
+  /** 按时间算出来的状态：撤销 > 换下 > 未生效 > 正在使用 */
+  state: SigningKeyState;
+}
+
+/** GET /api/admin/signing-keys：库里的信任根（含历史）+ 环境变量里的只读兼容来源。 */
+export interface SigningKeysResp {
+  keys: SigningKey[];
+  count: number;
+  /** 各状态的条数：active / retired / revoked / pending */
+  states: Record<string, number>;
+  /** DSH_EE_EXTENSION_TRUSTED_KEYS 里的公钥，只读；同一 key id 以库里的状态为准 */
+  env_keys: { key_id: string; source: string }[];
+  /** DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1 时 fail closed */
+  require_signature: boolean;
+  purpose: string;
+}
+
 /** 连接上的员工身份设置：ee_jwt 由 dsh-ee 每次现签，user_secret 由员工自己填。 */
 export interface UserAuth {
   mode: "ee_jwt" | "user_secret" | "oauth";
@@ -1762,6 +1795,11 @@ export const api = {
   checkExtension: (pkg: ExtPackage) => request<ExtPlan>("POST", "/api/admin/extensions/check", pkg),
   installExtension: (pkg: ExtPackage, r: ExtInstallReq) =>
     request<{ asset: { id: number; slug: string }; identity: string; tools?: number; sync_error?: string; upgraded_from?: string }>("POST", "/api/admin/extensions/install", { ...pkg, ...r }),
+  /** 扩展签名的信任根：列表含换下 / 撤销的历史；私钥不入库，这里只收公钥 PEM。 */
+  signingKeys: () => request<SigningKeysResp>("GET", "/api/admin/signing-keys"),
+  addSigningKey: (input: { public_key: string; note?: string; purpose?: string }) => request<SigningKey>("POST", "/api/admin/signing-keys", input),
+  retireSigningKey: (keyID: string) => request<SigningKey>("POST", `/api/admin/signing-keys/${encodeURIComponent(keyID)}/retire`),
+  revokeSigningKey: (keyID: string) => request<SigningKey>("POST", `/api/admin/signing-keys/${encodeURIComponent(keyID)}/revoke`),
   syncConnection: (id: number) => request<{ ok: boolean; tools?: number; error?: string }>("POST", `/api/admin/connections/${id}/sync`),
   setConnectionTool: (id: number, name: string, p: { enabled: boolean; roles: number[] }) =>
     request<void>("PATCH", `/api/admin/connections/${id}/tools/${encodeURIComponent(name)}`, p),

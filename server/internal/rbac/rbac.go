@@ -144,6 +144,9 @@ var DefaultMenus = []Menu{
 		{Kind: "page", Title: "能力管理", Path: "/admin/plugins", PageKey: "admin-plugins", Icon: "Boxes", Permission: PluginsManage},
 		{Kind: "page", Title: "待审核", Path: "/admin/review", PageKey: "admin-review", Icon: "ClipboardCheck", Permission: PluginsManage},
 		{Kind: "page", Title: "企业连接", Path: "/admin/connections", PageKey: "admin-connections", Icon: "Cable", Permission: ConnectionsManage},
+		// 扩展签名的信任根（docs/plugin-signing.md §7）：装扩展的管理员顺手管受信任公钥；
+		// 只有 settings.manage 的管理员也能直接打开这个路由（web/src/main.tsx 的兜底）。
+		{Kind: "page", Title: "扩展签名", Path: "/admin/signing-keys", PageKey: "admin-signing-keys", Icon: "ShieldCheck", Permission: ConnectionsManage},
 	}},
 	{Kind: "group", Title: "分发与源", Children: []Menu{
 		{Kind: "page", Title: "DSH 分发", Path: "/admin/distribution", PageKey: "admin-distribution", Icon: "Download", Permission: DistributionManage},

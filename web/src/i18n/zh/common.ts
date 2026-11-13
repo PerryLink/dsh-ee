@@ -88,6 +88,8 @@ export default {
   confirm: {
     delete: { title: "确认删除？", action: "删除" },
     revoke: { title: "确认吊销？", action: "吊销" },
+    retire: { title: "确认换下？", action: "换下" },
+    revokeKey: { title: "确认撤销？", action: "撤销" },
     disable: { title: "确认禁用？", action: "禁用" },
     reset: { title: "恢复默认？", action: "恢复默认" },
     restore: { title: "确认恢复？", action: "恢复" },
@@ -133,6 +135,7 @@ export default {
     "admin-settings": "系统设置",
     "admin-brand": "品牌与外观",
     "admin-auth": "登录方式",
+    "admin-signing-keys": "扩展签名",
     knowledge: "知识问答",
   },
   pageDesc: {
@@ -168,6 +171,7 @@ export default {
     "admin-settings": "全局设置",
     "admin-brand": "DSH 里的企业名称、logo、首屏标题与配色",
     "admin-auth": "LDAP / AD 与企业统一登录（OIDC）",
+    "admin-signing-keys": "扩展签名的受信任公钥：新增、换下、撤销",
     knowledge: "制度、手册与资料；在 DSH 的「知识问答」里提问",
   },
   /** 默认菜单分组名。 */
