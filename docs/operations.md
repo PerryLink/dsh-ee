@@ -209,7 +209,7 @@ cp /path/to/当前目录/.env .
 2. 把 `blobs/` 等内容放回 `DSH_EE_DATA_DIR`（目录属主要能被运行用户读写）。
 3. 用**同一份** `DSH_EE_SECRET_KEY` 配置 `.env`，其余变量按新环境改（`DSH_EE_DSN`、`DSH_EE_PUBLIC_URL`、`DSH_EE_COOKIE_SECURE`）。
 4. 启动服务并验证：
-   - `GET /healthz` 返回 ok；
+   - `GET /healthz` 返回 ok（进程活着）；`GET /readyz` 返回 200（数据库、迁移、数据目录、主密钥都就绪）；
    - 管理员能登录；「我的令牌」列表存在；
    - 从 npm 源下载一个已发布版本的 tarball（例如 `curl -f https://<域名>/npm/@<作用域>/<包名>/-/<包名>-<版本>.tgz`，带作用域；按是否要求令牌加 `Authorization`）；
    - `/v1/models` 用有效令牌能返回模型；
@@ -242,11 +242,13 @@ cp /path/to/当前目录/.env .
 
 | 端点 | 说明 |
 |---|---|
-| `GET /healthz` | 公开，返回 `{"status":"ok","version":"<版本>"}`；Docker `HEALTHCHECK` 与 `install.sh` 都用它判断就绪 |
+| `GET /healthz` | 公开，返回 `{"status":"ok","version":"<版本>"}`；Docker `HEALTHCHECK` 与 `install.sh` 都用它判断进程已启动 |
+| `GET /readyz` | 公开，逐项检查 `database`（数据库 ping）、`migrations`（迁移是否到当前二进制的最新版本）、`data_dir`（数据目录可写）、`secret_key`（主密钥已加载）；全部通过 200 `{"status":"ok","checks":{…}}`，任一失败 503 `{"status":"unready",…}`；总超时 2 秒，响应 `Cache-Control: no-store` |
 
-- **它只证明 HTTP 进程活着，不检查数据库**。数据库断了 `/healthz` 仍然 200，但登录/接口会报错。
-- 没有 `/readyz`、没有指标端点（设计）。
-- 负载均衡建议：用 `/healthz` 做存活探针；不要把它当业务健康探针。业务健康可以人工用登录页、`/v1/models`（带令牌）、或 `GET /api/me/doctor`（登录用户的自检，见 [troubleshooting.md](./troubleshooting.md)）。
+- **`/healthz` 只证明 HTTP 进程活着，不检查数据库**。数据库断了 `/healthz` 仍然 200，但登录/接口会报错。
+- **要判断实例能不能接业务流量，用 `/readyz`**：它检查上面四项依赖，失败项的 `message` 是固定文案，不含 DSN、地址、密钥或原始错误（原始错误只写服务端日志）。
+- 负载均衡 / Kubernetes 建议：**liveness 用 `/healthz`**（依赖抖动不该触发重启），**readiness 用 `/readyz`**（不健康时摘流量，恢复后自动接回）；滚动升级时也用它等新实例迁移完成。探针示例见 [../server/README.md](../server/README.md#健康检查) 与 [../deploy/README.md](../deploy/README.md)。
+- `/readyz` 是单实例视角的依赖检查，不做多实例选主/协调；多实例同时首次启动的迁移竞争仍按 §9.2 处理。
 
 ## 9. 容量与扩展
 
@@ -304,6 +306,7 @@ cp /path/to/当前目录/.env .
 | 重启 | `docker compose restart dsh-ee`；systemd `systemctl restart dsh-ee` |
 | 看日志 | §7 |
 | 判断进程是否活 | `curl -fsS http://127.0.0.1:8080/healthz` |
+| 判断依赖是否就绪 | `curl -fsS http://127.0.0.1:8080/readyz`（失败返回 503，`checks` 里能看到是哪一项） |
 | 看数据库连不上 | 日志里的 `连接数据库: …`；检查 DSN、网络、库权限；`DSH_EE_DB_WAIT` 内会重试 |
 | 升级 | §5；升级前备份 §6 |
 | 回滚 | §5.5；注意 `ee_at_` 令牌与新增表 |

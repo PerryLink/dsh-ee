@@ -12,6 +12,11 @@ Wants=network-online.target
 User=dsh-ee
 EnvironmentFile=/etc/dsh-ee/dsh-ee.env
 ExecStart=/usr/local/bin/dsh-ee
+# 健康检查：GET /healthz 只证明进程活着（liveness，恒 200）；GET /readyz 检查数据库、
+# 迁移、数据目录与主密钥（readiness，未就绪返回 503）。systemd 本身没有 readiness 探针，
+# 就绪判断交给负载均衡 / 外部监控调用 /readyz；需要时也可以在启动后跑一次
+#（ExecStartPost 失败会把本次启动标成 failed，按需启用）：
+#ExecStartPost=/usr/bin/curl -fsS --max-time 3 http://127.0.0.1:8080/readyz
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

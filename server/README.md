@@ -146,12 +146,34 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_EXTENSION_TRUSTED_KEYS` | 受信任的扩展签名公钥（PEM 文件，可以放多把；公钥、证书、私钥文件都认）。**这是启动时读的只读兼容来源**：主要的信任根在库里（表 `trusted_signing_keys`，管理员用 `/api/admin/signing-keys` 增 / 换下 / 撤销，撤销后新装拒绝，历史保留）；同一个 key id 以库里的状态为准。不配时签了名的扩展也显示「不受信任」。改这个变量要重启，改库里立即生效 |
 | `DSH_EE_EXTENSION_REQUIRE_SIGNATURE` | 设为 `1` 时，没签名或签名无效的扩展不让安装（fail closed）；库里或 `DSH_EE_EXTENSION_TRUSTED_KEYS` 至少要有受信任的公钥，一把都没有时启动只警告、所有扩展都装不了。撤销的签名在任何策略下都不让新装。默认只在安装计划里提示，不阻断。见 [docs/plugins.md](../docs/plugins.md) §9.3 |
 
+## 健康检查
+
+服务提供两个不用登录的探针，语义不同，部署时不要混用：
+
+| 路径 | 语义 | 检查什么 | 返回 |
+|---|---|---|---|
+| `GET /healthz` | liveness（进程存活） | 只证明 HTTP 进程还能响应；不查数据库、不查磁盘 | 恒为 `200`，`{"status":"ok","version":"…"}` |
+| `GET /readyz` | readiness（能否接流量） | 数据库 `Ping`、数据库迁移是否执行到当前二进制的最新版本、数据目录是否可写、主密钥是否已加载；整体超时 2 秒 | 全部通过 `200`，`{"status":"ok","version":"…","checks":{…}}`；任一失败 `503`，`{"status":"unready",…}` |
+
+`/readyz` 的 `checks` 按依赖分项（`database`、`migrations`、`data_dir`、`secret_key`），每项只有 `status`（`ok` / `fail`）和失败时的固定 `message`；不含 DSN、地址、密钥或原始错误，原始错误只写服务端日志。响应带 `Cache-Control: no-store`。
+
+- **liveness 用 `/healthz`**：数据库或数据目录出问题时进程本身没坏，不该重启；用 `/readyz` 做 liveness，依赖抖动会导致容器被反复重建。
+- **readiness 用 `/readyz`**：实例从负载均衡 / Kubernetes Service 摘除，依赖恢复后再接回；滚动升级时也用它判断新实例是否可以接流量。
+- systemd 没有内置的 readiness 探针：可以由外部监控 / 负载均衡调用 `/readyz`，或在启动后跑一次（见 [deploy/systemd/dsh-ee.service](../deploy/systemd/dsh-ee.service) 里的注释）。Kubernetes、Docker Compose 的探针示例见 [deploy/README.md](../deploy/README.md)。
+
+```bash
+curl -fsS http://127.0.0.1:8080/healthz   # 进程活着
+curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 退出
+```
+
 ## 接口
 
 管理与员工接口用会话 cookie；写操作必须 `Content-Type: application/json`（配合 SameSite=Lax 防 CSRF）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| GET | `/healthz` | 存活探针：只证明进程能响应，不查数据库 / 磁盘 |
+| GET | `/readyz` | 就绪探针：数据库、迁移、数据目录、主密钥；未就绪返回 `503` |
 | POST | `/api/auth/login` | `{username, password}` |
 | POST | `/api/auth/logout` | |
 | POST | `/api/embed/sessions` | 宿主后端换一次性嵌入 code：`Authorization: Bearer ee_at_`（需 `agent` scope），`{app, host_origin, next?}`；需要开启 `DSH_EE_EMBED_CROSS_SITE`；60 秒一次性，绑定用户+应用+宿主 origin |

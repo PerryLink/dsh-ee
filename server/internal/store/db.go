@@ -150,6 +150,55 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
+// MigrationState 是数据库迁移的当前状态，供就绪检查（GET /readyz）判断迁移是否已到最新。
+type MigrationState struct {
+	// Latest 是当前二进制内置迁移里按文件名排序的最后一条版本。
+	Latest string
+	// Pending 是还没在 schema_migrations 里登记的迁移版本，按文件名顺序。
+	Pending []string
+}
+
+// MigrationStatus 只读查询迁移状态：比对 schema_migrations 与内置迁移文件的差集，
+// 不建表、不执行迁移、不改数据。还没初始化（schema_migrations 不存在）时返回错误，
+// 调用方据此判断未就绪。
+func (s *Store) MigrationStatus(ctx context.Context) (MigrationState, error) {
+	files, err := fs.Glob(migrationFS, "migrations/*.sql")
+	if err != nil {
+		return MigrationState{}, err
+	}
+	sort.Strings(files)
+	known := make([]string, 0, len(files))
+	var state MigrationState
+	for _, f := range files {
+		version := strings.TrimSuffix(strings.TrimPrefix(f, "migrations/"), ".sql")
+		known = append(known, version)
+		state.Latest = version
+	}
+
+	rows, err := s.db.QueryContext(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return MigrationState{}, err
+	}
+	defer rows.Close()
+	applied := make(map[string]bool, len(known))
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return MigrationState{}, err
+		}
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return MigrationState{}, err
+	}
+	for _, version := range known {
+		if !applied[version] {
+			state.Pending = append(state.Pending, version)
+		}
+	}
+	return state, nil
+}
+
 // splitStatements 按行尾分号切分；迁移文件里不写含分号的字符串。
 func splitStatements(sqlText string) []string {
 	var out []string
