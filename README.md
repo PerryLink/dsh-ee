@@ -171,6 +171,7 @@ Confirm the device code in the browser, and DSH is connected to the company's ca
 | `DSH_EE_COOKIE_SECURE` | Set to `true` behind HTTPS |
 | `DSH_EE_DATA_DIR` | Data directory (npm tarballs, caches), default `./data` |
 | `DSH_EE_DATA_DSN` / `DSH_EE_DATA_READ_DSN` | Data hub database (writable / read-only); `off` disables the data hub |
+| `DSH_EE_TRUSTED_PROXIES` | Reverse-proxy IPs/CIDRs (comma-separated) whose `X-Forwarded-*` headers are trusted; defaults to loopback only. Set it when the proxy runs in another container/host or behind a cloud LB |
 
 The full list is in [server/README.md](./server/README.md).
 

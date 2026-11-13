@@ -32,7 +32,7 @@ func (s *Server) dshPrincipal(w http.ResponseWriter, r *http.Request) (*Principa
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "企业账号登录已失效，在对话框输入 /ee-login 重新登录", "code": tokenInvalid})
 		return nil, false
 	}
-	p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 	if err != nil {
 		var be bearerError
 		if errors.As(err, &be) {

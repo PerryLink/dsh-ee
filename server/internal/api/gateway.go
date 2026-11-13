@@ -62,7 +62,7 @@ func (s *Server) authKey(w http.ResponseWriter, r *http.Request) (*Principal, *s
 		writeGatewayError(w, r, http.StatusUnauthorized, "invalid_request_error", tokenInvalid, "缺少或无效的 API key")
 		return nil, nil, false
 	}
-	p, err := s.resolveBearer(r.Context(), token, clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
+	p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 	if err != nil {
 		var be bearerError
 		if errors.As(err, &be) {
