@@ -124,7 +124,9 @@ func (s *Store) PollDevice(ctx context.Context, code string, interval time.Durat
 	return false, err
 }
 
-func (s *Store) ApproveDevice(ctx context.Context, code string, userID int64, token *AccessToken, tokenHash string, sealed []byte) error {
+// ApproveDevice 批准设备码并签出 access token（只在开启 refresh 时再带上第一枚 refresh token）。
+// refresh 用可变参数是为了不影响已有调用方：不传表示这次签发不带 refresh。
+func (s *Store) ApproveDevice(ctx context.Context, code string, userID int64, token *AccessToken, tokenHash string, sealed []byte, refresh ...*RefreshToken) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -159,7 +161,11 @@ func (s *Store) ApproveDevice(ctx context.Context, code string, userID int64, to
 	token.ClientOS = d.ClientOS
 	token.ClientVersion = d.ClientVersion
 	token.Scopes = strings.Split(d.Scopes, ",")
-	if err := createAccessToken(ctx, tx, token, tokenHash); err != nil {
+	var rt *RefreshToken
+	if len(refresh) > 0 {
+		rt = refresh[0]
+	}
+	if err := createAccessTokenWithRefreshTx(ctx, tx, token, tokenHash, rt); err != nil {
 		return err
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE device_codes SET status = 'approved', user_id = ?, token_id = ?, token_sealed = ?
@@ -172,6 +178,12 @@ func (s *Store) ApproveDevice(ctx context.Context, code string, userID int64, to
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE access_tokens SET revoked_at = ?
 		WHERE user_id = ? AND client_name = ? AND source = 'device' AND id <> ? AND revoked_at IS NULL`, now(), userID, d.ClientName, token.ID); err != nil {
+		return err
+	}
+	// 同一台设备重新登录：旧令牌族里的 refresh token 一起作废，避免旧 refresh 还能续期。
+	if _, err := tx.ExecContext(ctx, `UPDATE token_refresh_tokens rt JOIN access_tokens t ON t.family_id = rt.family_id
+		SET rt.revoked_at = ? WHERE rt.revoked_at IS NULL AND t.user_id = ? AND t.client_name = ? AND t.source = 'device' AND t.id <> ?`,
+		now(), userID, d.ClientName, token.ID); err != nil {
 		return err
 	}
 	return tx.Commit()

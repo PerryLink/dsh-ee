@@ -40,6 +40,18 @@ type Config struct {
 	// true 时它们只保留原始用途的 scope：npm 令牌只剩 registry，key 只剩模型网关；
 	// 默认 false 不改变旧行为，避免现有客户端突然失效。
 	RestrictLegacyTokenScopes bool
+	// 刷新令牌（OAuth 风格，docs/token-lifecycle.md §3）。默认关闭：关闭时
+	// POST /api/auth/refresh 返回 404，设备/手工签发的响应也不带 refresh_token。
+	RefreshTokens bool
+	// refresh 换出来的 access token 有效期（DSH_EE_REFRESH_ACCESS_TTL）。
+	RefreshAccessTTL time.Duration
+	// 单枚 refresh token 的空闲有效期（DSH_EE_REFRESH_TOKEN_TTL），轮换时重新计算。
+	RefreshTokenTTL time.Duration
+	// 令牌族绝对有效期（DSH_EE_REFRESH_FAMILY_TTL）：无论怎么轮换都不能超过它。
+	RefreshFamilyTTL time.Duration
+	// 轮换宽限（DSH_EE_REFRESH_GRACE）：>0 时旧 refresh 在轮换后这段时间内重试会原样
+	// 返回上次响应（客户端没收到响应时的幂等重试）；0 表示严格，再次出现即按复用吊销整族。
+	RefreshGrace time.Duration
 	// 首次启动、用户表为空时创建的管理员。
 	BootstrapAdmin         string
 	BootstrapAdminPassword string
@@ -112,6 +124,11 @@ func Load() (*Config, error) {
 		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
 		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
 		DBWait:                 2 * time.Minute,
+		// 刷新令牌的默认参数：access 1 小时、refresh 空闲 30 天、族绝对 180 天、宽限严格。
+		RefreshAccessTTL: time.Hour,
+		RefreshTokenTTL:  30 * 24 * time.Hour,
+		RefreshFamilyTTL: 180 * 24 * time.Hour,
+		RefreshGrace:     0,
 	}
 	if c.DSN == "" {
 		return nil, errors.New("缺少 DSH_EE_DSN，例如 root:@tcp(127.0.0.1:4000)/dsh_ee")
@@ -175,6 +192,45 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES: %w", err)
 		}
 		c.RestrictLegacyTokenScopes = b
+	}
+	// 刷新令牌（docs/token-lifecycle.md §3）；开关默认关，参数只在开启后生效。
+	if v := os.Getenv("DSH_EE_REFRESH_TOKENS"); v != "" {
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_REFRESH_TOKENS: %w", err)
+		}
+		c.RefreshTokens = b
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_ACCESS_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute || d > 24*time.Hour {
+			return nil, errors.New("DSH_EE_REFRESH_ACCESS_TTL 要在 1m 到 24h 之间，例如 30m")
+		}
+		c.RefreshAccessTTL = d
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_TOKEN_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Hour || d > 365*24*time.Hour {
+			return nil, errors.New("DSH_EE_REFRESH_TOKEN_TTL 要在 1h 到 8760h（365 天）之间，例如 720h")
+		}
+		c.RefreshTokenTTL = d
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_FAMILY_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Hour || d > 10*365*24*time.Hour {
+			return nil, errors.New("DSH_EE_REFRESH_FAMILY_TTL 要在 1h 到 87600h（10 年）之间，例如 4320h")
+		}
+		c.RefreshFamilyTTL = d
+	}
+	if c.RefreshFamilyTTL < c.RefreshTokenTTL {
+		return nil, errors.New("DSH_EE_REFRESH_FAMILY_TTL 不能小于 DSH_EE_REFRESH_TOKEN_TTL：族上限必须能覆盖单枚 refresh 的有效期")
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_GRACE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 || d > 5*time.Minute {
+			return nil, errors.New("DSH_EE_REFRESH_GRACE 要在 0 到 5m 之间；0 表示严格轮换（重试按复用吊销整族）")
+		}
+		c.RefreshGrace = d
 	}
 	if v := os.Getenv("DSH_EE_DEMO_MODE"); v != "" {
 		b, err := strconv.ParseBool(v)

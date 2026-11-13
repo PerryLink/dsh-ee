@@ -64,3 +64,37 @@ func TestTokenClientKindMigration(t *testing.T) {
 		}
 	}
 }
+
+// 0035：刷新令牌数据模型（docs/token-lifecycle.md §3）。
+func TestTokenRefreshMigration(t *testing.T) {
+	body, err := migrationFS.ReadFile("migrations/0035_token_refresh_tokens.sql")
+	if err != nil {
+		t.Fatalf("读 0035 迁移: %v", err)
+	}
+	stmts := splitStatements(string(body))
+	if len(stmts) == 0 {
+		t.Fatal("0035 迁移没有可执行语句")
+	}
+	joined := strings.Join(stmts, "\n")
+	for _, want := range []string{
+		"CREATE TABLE token_refresh_tokens",
+		"family_id          CHAR(32)",
+		"access_token_id    BIGINT",
+		"user_id            BIGINT",
+		"client_kind        VARCHAR(16)",
+		"secret_hash        CHAR(64)",
+		"issued_at          DATETIME(3)",
+		"expires_at         DATETIME(3)",
+		"rotated_at         DATETIME(3)",
+		"revoked_at         DATETIME(3)",
+		"reuse_detected_at  DATETIME(3)",
+		"created_ip         VARCHAR(64)",
+		"UNIQUE KEY uk_token_refresh_hash",
+		"ALTER TABLE access_tokens",
+		"family_id CHAR(32) NULL",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("0035 迁移缺少 %q：\n%s", want, joined)
+		}
+	}
+}

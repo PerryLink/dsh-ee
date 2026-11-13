@@ -131,6 +131,11 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | 用户表为空时创建的管理员，默认用户名 `admin` |
 | `DSH_EE_COOKIE_SECURE` | 会话 cookie 是否加 `Secure`；不填时 `DSH_EE_PUBLIC_URL` 是 https 就自动开启，显式设置覆盖 |
 | `DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES` | 设为 `true` 时收敛旧 `ee_npm_` / `sk-ee_` 令牌的 scope（npm 令牌只剩 registry、API key 只剩模型网关）；默认关闭，见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) |
+| `DSH_EE_REFRESH_TOKENS` | 刷新令牌（OAuth 风格轮换 + 复用检测）总开关，**默认关闭**。开启后 `POST /api/auth/refresh` 可用，设备登录 / 手工 / 管理员签发的响应会额外带 `ee_rt_` refresh token；关闭时刷新端点返回 404、签发响应不变。见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) §3 |
+| `DSH_EE_REFRESH_ACCESS_TTL` | 刷新换出的 access token 有效期，默认 `1h`，允许 `1m`–`24h` |
+| `DSH_EE_REFRESH_TOKEN_TTL` | 单枚 refresh token 的空闲有效期，默认 `720h`（30 天），允许 `1h`–`8760h`；轮换时重新计算 |
+| `DSH_EE_REFRESH_FAMILY_TTL` | 令牌族绝对上限，默认 `4320h`（180 天），轮换继承、不会延长；不能小于 `DSH_EE_REFRESH_TOKEN_TTL` |
+| `DSH_EE_REFRESH_GRACE` | 轮换宽限，默认 `0`（严格：旧 refresh 再次出现即按复用吊销整族）；允许 `0`–`5m`，>0 时宽限期内重试原样返回上次响应 |
 | `DSH_EE_SESSION_TTL` | 会话有效期，默认 `168h` |
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、上游缓存），默认 `./data`；容器里是 `/data` |
 | `DSH_EE_PUBLIC_URL` | 对外地址，如 `https://dsh.acme.internal`；npm 的 tarball 地址按它生成，不填时按请求的 Host / `X-Forwarded-*` 推断 |
@@ -171,7 +176,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 
 ## 接口
 
-管理与员工接口用会话 cookie；写操作必须 `Content-Type: application/json`（配合 SameSite=Lax 防 CSRF）。
+管理与员工接口默认用会话 cookie；个别给命令行 / 自动化用的接口也接受 Bearer（见各行说明）。写操作必须 `Content-Type: application/json`（配合 SameSite=Lax 防 CSRF）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -179,6 +184,8 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | GET | `/readyz` | 就绪探针：数据库、迁移、数据目录、主密钥；未就绪返回 `503` |
 | POST | `/api/auth/login` | `{username, password}` |
 | POST | `/api/auth/logout` | |
+| POST | `/api/auth/refresh` | 刷新令牌轮换：`{refresh_token, client_kind?}` → 新 `{access_token, refresh_token, expires_in, refresh_expires_in, scopes, client_kind}`；需要开启 `DSH_EE_REFRESH_TOKENS`（关闭时 404）；旧 refresh 复用会吊销整族并返回 401 `invalid_grant` |
+| POST | `/api/auth/introspect` | 令牌自省：Bearer 查自己，管理员用会话 + `{token}` 查任意令牌；只返回元数据（不返回明文 / 哈希） |
 | POST | `/api/embed/sessions` | 宿主后端换一次性嵌入 code：`Authorization: Bearer ee_at_`（需 `agent` scope），`{app, host_origin, next?}`；需要开启 `DSH_EE_EMBED_CROSS_SITE`；60 秒一次性（sha256 落库，跨实例可用），绑定用户+应用+宿主 origin；每 IP 限流 |
 | POST | `/api/auth/embed/exchange` | iframe 同源调用：`{code}` → `{token:"ee_emb_…", limited:true, expires_in}`；不 Set-Cookie；code 跨实例一次性，限流跨实例合计 |
 | POST | `/api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` 撤销本次嵌入会话（`revoked_at` 软删除，所有实例立即生效）；不影响网页会话 |
@@ -190,7 +197,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | GET | `/api/me/keys` | 旧版 key、本月用量与额度 |
 | POST | `/api/me/keys` | 自助创建旧版 key `{name, expires_at?}`，明文只返回这一次 |
 | DELETE | `/api/me/keys/{id}` | 吊销自己的旧版 key |
-| GET / POST | `/api/me/tokens` | 统一新旧令牌列表 / 创建 `ee_at_` `{name, scopes, monthly_token_limit?, allowed_models?, expires_in_days?}` |
+| GET / POST | `/api/me/tokens` | 统一新旧令牌列表 / 创建 `ee_at_` `{name, scopes, monthly_token_limit?, allowed_models?, expires_in_days?}`；开启 `DSH_EE_REFRESH_TOKENS` 时创建响应额外带 `refresh_token` |
 | DELETE | `/api/me/tokens/{id}` | 按 `at:` / `npm:` / `key:` 前缀吊销自己的令牌 |
 | GET / POST | `/api/admin/users` | 用户列表（含角色） / 新建 `{username, password, display_name, department, role_ids?, monthly_token_limit?}`；机器人用 `account_type: bot` + `owner_id` 且不设密码；不传 `role_ids` 给默认的「员工」角色，不传额度默认 `0`（未分配） |
 | PATCH | `/api/admin/users/{id}` | `{display_name, department, disabled, password}` 任选 |
@@ -211,9 +218,9 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | PATCH / DELETE | `/api/admin/models/{id}` | 修改 `{name, upstream_model, display_name, enabled}` / 删除 |
 | GET / POST | `/api/admin/keys` | 旧版 key 列表 / 代发 `{user_id, name, expires_at?}`，明文只返回这一次 |
 | DELETE | `/api/admin/keys/{id}` | 吊销旧版 key |
-| GET / POST | `/api/admin/tokens` | 统一令牌筛选 / 给员工或机器人下发令牌 |
+| GET / POST | `/api/admin/tokens` | 统一令牌筛选 / 给员工或机器人下发令牌。POST 也接受 Bearer：需 `keys.manage`（即开过管理模式的令牌），供 CI / 机器人程序化签发，审计 `token.issue` 记 `via=token`；字段 `{user_id, name, scopes?, client_kind?, client_name?, expires_in_days?, monthly_token_limit?, allowed_models?}`。见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) §6 |
 | POST | `/api/admin/tokens/revoke` | 按 id、用户、设备或部门批量吊销 |
-| POST | `/api/device/code`、`/api/device/token` | 设备码发起与轮询领取（无需会话） |
+| POST | `/api/device/code`、`/api/device/token` | 设备码发起与轮询领取（无需会话）；开启 `DSH_EE_REFRESH_TOKENS` 时领取响应额外带 `refresh_token` |
 | GET / POST | `/api/device/{user_code}` | 查看设备信息 / 登录后批准或拒绝 |
 | GET | `/api/settings` | 系统设置（登录即可读） |
 | PUT | `/api/admin/settings` | 整份替换；按改动的段落校验权限（npm 源 / 上游段落也可由对应管理员修改） |

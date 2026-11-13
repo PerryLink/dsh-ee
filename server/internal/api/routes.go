@@ -116,6 +116,9 @@ func (s *Server) routes() []route {
 		pub("POST /api/auth/login", s.handleLogin),
 		// 令牌自省：Bearer 自身（第三方 Harness/SDK）或管理员网页会话查任意令牌
 		pub("POST /api/auth/introspect", s.handleIntrospect),
+		// 刷新令牌（docs/token-lifecycle.md §3）：默认关闭，关闭时处理函数返回 404。
+		// 凭据在请求体里（refresh token），不需要 Bearer。
+		pub("POST /api/auth/refresh", s.handleRefreshToken),
 		pub("POST /api/auth/demo-login", s.handleDemoLogin),
 		pub("GET /demo/intro/{lang}", s.handleDemoVideo),
 		pub("POST /api/auth/logout", s.handleLogout),
@@ -204,7 +207,9 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/keys", s.handleIssueKey, rbac.KeysManage),
 		prm("DELETE /api/admin/keys/{id}", s.handleRevokeKey, rbac.KeysManage),
 		usr("GET /api/admin/tokens", s.handleAdminTokens),
-		usr("POST /api/admin/tokens", s.handleIssueToken),
+		// 签发令牌既可网页会话，也可用带 keys.manage（管理模式下的令牌）的 Bearer 调用，
+		// 供 CI / 机器人等无人值守场景续发 ee_at_（docs/token-lifecycle.md §6）。
+		prmt("POST /api/admin/tokens", s.handleIssueToken),
 		usr("POST /api/admin/tokens/revoke", s.handleRevokeTokens),
 
 		// 系统设置：登录即可读（前端要用组织名、作用域、评分开关），按段落校验写权限

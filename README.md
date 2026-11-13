@@ -174,6 +174,8 @@ Confirm the device code in the browser, and DSH is connected to the company's ca
 | `DSH_EE_LOGIN_IP_LIMIT` / `DSH_EE_LOGIN_IP_WINDOW` | Failed logins allowed per client IP in a fixed window, default `50` per `15m`; `0` / `off` disables |
 | `DSH_EE_METRICS` | Set to `true` to expose `GET /metrics` (Prometheus text format, loopback / internal networks only); off by default |
 | `DSH_EE_TRUSTED_PROXIES` | Reverse-proxy IPs/CIDRs (comma-separated) whose `X-Forwarded-*` headers are trusted; defaults to loopback only. Set it when the proxy runs in another container/host or behind a cloud LB |
+| `DSH_EE_REFRESH_TOKENS` | Opt-in OAuth-style refresh tokens (one-time rotation + reuse detection); default off, so no client behavior changes. When enabled, device/manual issuance also returns an `ee_rt_` refresh token and `POST /api/auth/refresh` is available (404 while off). See [docs/token-lifecycle.md](./docs/token-lifecycle.md) §3 |
+| `DSH_EE_REFRESH_ACCESS_TTL` / `_TOKEN_TTL` / `_FAMILY_TTL` / `_GRACE` | Refresh token TTLs and rotation grace: access `1h`, refresh idle `720h`, family cap `4320h`, grace `0` (strict) by default |
 
 The full list is in [server/README.md](./server/README.md).
 

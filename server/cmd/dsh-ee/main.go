@@ -131,6 +131,12 @@ func run(log *slog.Logger) error {
 		AdminModeUnit:  cfg.AdminModeUnit,
 		// 旧令牌 scope 收敛（DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES）；默认关闭，不破坏现有客户端
 		RestrictLegacyTokenScopes: cfg.RestrictLegacyTokenScopes,
+		// 刷新令牌（DSH_EE_REFRESH_TOKENS，docs/token-lifecycle.md §3）；默认关闭
+		RefreshTokens:             cfg.RefreshTokens,
+		RefreshAccessTTL:          cfg.RefreshAccessTTL,
+		RefreshTokenTTL:           cfg.RefreshTokenTTL,
+		RefreshFamilyTTL:          cfg.RefreshFamilyTTL,
+		RefreshGrace:              cfg.RefreshGrace,
 		DataHub:                   dataHub,
 		DataHubErr:                dataErr,
 		DemoSite:                  demoSite(cfg),
@@ -234,6 +240,18 @@ func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 				log.Warn("清理过期设备码失败", "err", err)
 			} else if n > 0 {
 				log.Info("已清理过期设备码", "count", n)
+			}
+			// 刷新令牌（docs/token-lifecycle.md）：清掉宽限已过的重放密文（明文窗口尽量短）；
+			// 过期且已轮换/吊销的 refresh 记录保留 30 天后删除，access token 的记录不受影响。
+			if n, err := st.ClearRefreshSuccessors(ctx, time.Now().Add(-time.Hour)); err != nil {
+				log.Warn("清理刷新令牌重放密文失败", "err", err)
+			} else if n > 0 {
+				log.Info("已清理刷新令牌重放密文", "count", n)
+			}
+			if n, err := st.DeleteExpiredRefreshTokens(ctx, time.Now().Add(-30*24*time.Hour)); err != nil {
+				log.Warn("清理过期刷新令牌失败", "err", err)
+			} else if n > 0 {
+				log.Info("已清理过期刷新令牌", "count", n)
 			}
 		}
 	}
