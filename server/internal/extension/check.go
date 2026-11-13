@@ -96,6 +96,16 @@ var (
 	writeNameRe = regexp.MustCompile(`^(?i:create|submit|delete|remove|update|set|add|send|post|put|patch|cancel|approve|reject|write|insert|upload|import|reset|revoke|close|archive)(_|[A-Z]|$)`)
 )
 
+// ValidID 报告扩展 id 是否合法：写成「作者/名字」，只用小写字母、数字和连字符。
+// 企业目录校验条目、目录内嵌的签名身份时和清单检查用同一个口径。
+func ValidID(id string) bool { return idRe.MatchString(id) }
+
+// ValidVersion 报告版本号是否是语义化版本（和清单检查同一个口径）。
+func ValidVersion(v string) bool { return semverRe.MatchString(v) }
+
+// ValidPackageName 报告 npm 包名是否合法（可带作用域，和端侧扩展清单检查同一个口径）。
+func ValidPackageName(name string) bool { return packageRe.MatchString(name) }
+
 var (
 	kinds        = []string{KindDeclarative, KindService, KindLocal}
 	credModes    = []string{CredShared, CredUserSecret, CredEEJWT, CredOAuth}

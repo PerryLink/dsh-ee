@@ -32,6 +32,10 @@ const cliUsage = `用法：
                                          给清单（声明式连同接口文档）签名，写 signature.json
   dsh-ee extension verify <目录> [--key 公钥文件]
                                          核对签名；没有签名或验不过时退出码为 1
+  dsh-ee directory sign <文件> --key <私钥文件> [-o 文件]
+                                         给企业目录（dsh-ee-directory.json）整体签名；默认原地写回
+  dsh-ee directory verify <文件> [--key 公钥文件]
+                                         核对目录签名和条目；没有签名或验不过时退出码为 1
   dsh-ee config export|plan|test|apply|explain|simulate …
                                          把权限配置（角色、字段、访问规则）当文件来改，见 dsh-ee config help
   dsh-ee package check <文件.tgz> [--json]
@@ -49,6 +53,10 @@ package check 和 doctor 的地址/令牌也可以用 DSH_EE_URL、DSH_EE_TOKEN�
 Ed25519 detached 签名存在扩展目录的 signature.json 里。受信任的公钥文件可以用 --key 给，也可以用
 DSH_EE_EXTENSION_TRUSTED_KEYS；dsh-ee 服务端用同名环境变量，DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1 时
 没签名或验不过的扩展不让安装（默认只在安装计划里提示，不阻断）。
+
+企业目录（format 2，docs/plugin-signing.md §8）：directory sign 签的是目录里除 signature 之外的
+canonical JSON，directory verify 用 --key 或 DSH_EE_EXTENSION_TRUSTED_KEYS 核对；tarball 来源的
+内网主机要写进 DSH_EE_DIRECTORY_TARBALL_HOSTS 白名单。
 `
 
 // runCLI 处理子命令。不是子命令时 handled 为 false，由调用方启动服务。
@@ -62,6 +70,8 @@ func runCLI(args []string, stdout, stderr io.Writer) (handled bool, code int) {
 		return true, 0
 	case "extension":
 		return true, cliExtension(args[1:], stdout, stderr)
+	case "directory":
+		return true, cliDirectory(args[1:], stdout, stderr)
 	case "schema":
 		return true, cliSchema(args[1:], stdout, stderr)
 	case "config":

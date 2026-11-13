@@ -29,6 +29,7 @@ export const AUDIT_CATEGORIES = [
   "data",
   "dsh_release",
   "embed",
+  "directory",
 ] as const;
 
 /** 动作名；没有翻译的新动作原样显示。 */

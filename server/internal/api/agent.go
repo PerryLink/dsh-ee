@@ -230,6 +230,9 @@ var agentExcluded = map[string]string{
 	"POST /api/admin/signing-keys":                 "加受信任的签名公钥只能由管理员在管理页面做",
 	"POST /api/admin/signing-keys/{key_id}/retire": "换下签名公钥由管理员在管理页面做",
 	"POST /api/admin/signing-keys/{key_id}/revoke": "撤销签名公钥由管理员在管理页面做",
+	"GET /api/admin/directory":                     "企业目录只给管理员在网页上看；目录条目不是模型的工具",
+	"POST /api/admin/directory/check":              "贴进来的目录文档要管理员看校验结果，不交给 Agent 代读/代贴",
+	"POST /api/admin/directory/apply":              "登记企业目录会改变全局来源清单，只能由管理员在网页上确认",
 
 	// 多份命名共享凭据（shared_credentials.go）：密钥不进入模型上下文
 	"GET /api/admin/connections/{id}/shared-credentials":           "命名共享凭据只在管理员页面查看，不把授权清单交给 Agent 批量枚举",

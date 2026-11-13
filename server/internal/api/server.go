@@ -92,6 +92,8 @@ type Options struct {
 	ExtensionRequireSignature bool
 	// 旧版 npm 令牌 / API key 的 scope 收敛（docs/token-lifecycle.md）；默认 false 保持旧行为。
 	RestrictLegacyTokenScopes bool
+	// 企业目录（directory.go）：tarball 来源的主机白名单；空表示只接受公网 https 地址。
+	DirectoryTarballHosts []string
 }
 
 type Server struct {

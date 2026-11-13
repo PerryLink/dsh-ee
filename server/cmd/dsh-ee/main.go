@@ -144,6 +144,8 @@ func run(log *slog.Logger) error {
 		LoginIPLimit:       cfg.LoginIPLimit,
 		LoginIPWindow:      cfg.LoginIPWindow,
 		Metrics:            cfg.Metrics,
+		// 企业目录（directory.go）：tarball 来源的主机白名单
+		DirectoryTarballHosts: cfg.DirectoryTarballHosts,
 	}, log)
 	if cfg.RateLimitPerMinute > 0 {
 		log.Info("已启用公开协议面限流", "per_minute_per_token", cfg.RateLimitPerMinute)

@@ -32,6 +32,7 @@ export default {
       kb: "知识库",
       app_data: "应用数据",
       data: "数据中台",
+      directory: "企业目录",
     },
     colTime: "时间",
     colActor: "操作人",
@@ -78,6 +79,7 @@ export default {
       app_data: { insert: "新增应用数据", update: "修改应用数据", delete: "删除应用数据", export: "导出应用数据" },
       kb: { create: "新建知识库", edit: "修改知识库", delete: "删除知识库", doc_create: "添加文档", doc_edit: "修改文档", doc_delete: "删除文档" },
       embed: { session_create: "签发嵌入登录码", revoke: "撤销嵌入会话", deny: "拒绝嵌入请求" },
+      directory: { apply: "登记企业目录" },
     },
   },
 };
