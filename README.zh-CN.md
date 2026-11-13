@@ -169,7 +169,7 @@ irm https://<dsh-ee>/setup.ps1 | iex          # Windows
 | `DSH_EE_ADDR` | 监听地址，默认 `127.0.0.1:8080` |
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | 用户表为空时创建的管理员，默认用户名 `admin` |
 | `DSH_EE_PUBLIC_URL` | 对外地址，如 `https://dsh.example.internal`；npm 的 tarball 地址按它生成 |
-| `DSH_EE_COOKIE_SECURE` | 部署在 HTTPS 后面时设为 `true` |
+| `DSH_EE_COOKIE_SECURE` | 会话 cookie 是否加 `Secure`；`DSH_EE_PUBLIC_URL` 为 `https://…` 时默认开启，显式设置可覆盖 |
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、缓存），默认 `./data` |
 | `DSH_EE_DATA_DSN` / `DSH_EE_DATA_READ_DSN` | 数据中台的库（可写 / 只读账号）；设为 `off` 关闭数据中台 |
 | `DSH_EE_TRUSTED_PROXIES` | 可信反向代理的地址 / CIDR（逗号分隔），只有它们传来的 `X-Forwarded-*` 会被采信；默认只有本机回环地址。代理在别的机器、容器网络或云负载均衡后面时必填 |

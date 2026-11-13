@@ -128,7 +128,7 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_SECRET_KEY` | 必填。32 字节 base64 主密钥，加密上游 key |
 | `DSH_EE_ADDR` | 监听地址，默认 `127.0.0.1:8080` |
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | 用户表为空时创建的管理员，默认用户名 `admin` |
-| `DSH_EE_COOKIE_SECURE` | 部署在 HTTPS 后面时设为 `true` |
+| `DSH_EE_COOKIE_SECURE` | 会话 cookie 是否加 `Secure`；不填时 `DSH_EE_PUBLIC_URL` 是 https 就自动开启，显式设置覆盖 |
 | `DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES` | 设为 `true` 时收敛旧 `ee_npm_` / `sk-ee_` 令牌的 scope（npm 令牌只剩 registry、API key 只剩模型网关）；默认关闭，见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) |
 | `DSH_EE_SESSION_TTL` | 会话有效期，默认 `168h` |
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、上游缓存），默认 `./data`；容器里是 `/data` |
