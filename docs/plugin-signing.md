@@ -1,8 +1,10 @@
-# 插件/扩展签名、企业目录、自助分发与回滚：设计选项（未实现）
+# 插件/扩展签名、企业目录、自助分发与回滚：设计选项（部分实现）
 
-> **状态：设计，未实现。** 当前 dsh-ee **不做签名校验**，没有企业扩展目录，没有作者自助上传扩展，也没有扩展版本回滚；**安装以管理员为主**（`POST /api/admin/extensions/install` 需要 `connections.manage`）。DSH 插件走企业 npm 源发布/审核，完整性用 sha512，但同样**不验签名**。
+> **状态：部分实现（#134，2026-11-13）。** 扩展签名做了最小闭环，并把信任根落了库：`dsh-ee extension keygen / sign / verify`、安装计划显示 `unsigned / valid / invalid / revoked`、`trusted_signing_keys` 表 + `/api/admin/signing-keys` 管理接口（换下 / 撤销保留历史）、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 强制验签；`DSH_EE_EXTENSION_TRUSTED_KEYS` 仍作为只读兼容来源。
 >
-> 本文把「如果要做」的选项、取舍和风险列出来，供维护者决定；不实现、不改代码。设计草案的原始出处是 [plugins.md](./plugins.md) §9.2–§9.5（企业目录、签名、升级、卸载），本文只做聚焦整理并补上现状证据与风险。相关：[extension-authors.md](./extension-authors.md) §5.3（升级与回滚边界）、[enterprise-publishing.md](./enterprise-publishing.md) §8（当前未实现清单）、[cross-site-embedding.md](./cross-site-embedding.md)（另一条实现参考：跨站嵌入）。
+> **还没做**：企业扩展目录、作者自助上传扩展、扩展版本回滚、DSH 插件（npm 包）签名、受信任公钥的网页管理界面（现在只有管理 API）。下面「如果要做」的选项、取舍和风险仍然成立，未实现的部分供维护者决定；已实现部分的口径、接口和边界见 §7。
+>
+> 设计草案的原始出处是 [plugins.md](./plugins.md) §9.2–§9.5（企业目录、签名、升级、卸载），本文只做聚焦整理并补上现状证据与风险。相关：`docs/extension-authors.md` §5.3（升级与回滚边界，见 #130）、`docs/enterprise-publishing.md` §8（当前未实现清单）、`docs/cross-site-embedding.md`（另一条实现参考：跨站嵌入，见 #130）。
 
 ## 1. 现状（代码证据）
 
@@ -12,10 +14,11 @@
 |---|---|---|
 | 交付 | 作者用 `dsh-ee extension check/pack/report` 自检并把 zip（或服务地址）交给管理员；**没有作者自助上传通道** | `server/cmd/dsh-ee/cli_ext.go`、`server/internal/api/routes.go`（只有 admin 的 check/install） |
 | 检查 | `extension check` 是**静态检查**：清单、接口文档、只读标记、凭据写法，不执行扩展代码 | `server/internal/extension/check.go`、`codes.go`（62 个检查项） |
-| 身份 | 扩展身份 = `id@version` + **sha256 摘要**（`extension.Digest`，对清单与 OpenAPI 字节算） | `server/internal/extension/manifest.go` |
-| 摘要的用途 | 用于判断「同版本内容是否变了」、安装计划里展示、升级时决定要不要管理员确认；**不是作者身份认证，也不是签名** | `server/internal/api/extensions.go` 的 `planExtension` |
+| 身份 | 扩展身份 = `id@version` + **sha256 摘要**（`extension.Digest`，对清单与 OpenAPI 字节算）；签了名时还有 `signature.json` | `server/internal/extension/manifest.go`、`signature.go` |
+| 摘要的用途 | 用于判断「同版本内容是否变了」、安装计划里展示、升级时决定要不要管理员确认；**摘要不是作者身份认证**，「是谁签的、内容有没有被换」由签名回答（#134） | `server/internal/api/extensions.go` 的 `planExtension` |
 | 安装 | 管理员上传 zip / 填服务地址 → `POST /api/admin/extensions/check` 出安装计划 → `POST /api/admin/extensions/install`；升级时敏感变化（新地址、新增反向权限、同版本内容变化、凭据模式变化）必须带 `confirm:true` | `extensions.go`、`routes.go` |
-| 签名 | **无**：安装不校验任何签名；`extension sign` / `extension verify` 命令不存在 | 全仓库无 sign/verify 实现（`plugins.md` §9.3 是设计） |
+| 签名 | 已实现最小闭环（#134）：作者用 `dsh-ee extension sign` 对清单 + 接口文档签 `signature.json`（Ed25519，签 `作者/名字@版本:摘要`）；安装 / 检查计划显示 `unsigned / valid / invalid / revoked`。默认只提示不阻断，`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` fail closed | `server/internal/extension/signature.go`、`server/cmd/dsh-ee/cli_sign.go`、`server/internal/api/extensions.go` |
+| 信任根 | 受信任公钥落库（`trusted_signing_keys`：key id / 公钥 / purpose / valid_from / retired_at / revoked_at / created_by / note）；换下、撤销保留历史，撤销后新装 / 升级拒绝。`DSH_EE_EXTENSION_TRUSTED_KEYS` 仍是只读兼容来源 | `server/internal/store/migrations/0032_trusted_signing_keys.sql`、`server/internal/api/signing_keys.go`、`store/signing_keys.go` |
 | 回滚 | **无**：升级就是再装一次；只记录 `upgraded_from`，没有「回到上一版本」的接口或页面；声明式扩展的旧版本 spec 仍存在 `asset_versions` 表里，但只是历史数据，没有回滚入口 | `extensions.go:652`、`store/assets.go`、`store/migrations/0007_hub.sql` |
 | 企业目录 | **无**：不能配置「扩展目录 URL / 审核过的清单」 | 无对应路由或配置 |
 
@@ -37,7 +40,7 @@
 
 ## 2. 设计选项
 
-> 下面每个选项都标「若做，建议的最小形态」与「风险」。**当前都不实现**；维护者确认后应单独立项/PR，不要在没有评审的情况下先合一半。
+> 下面每个选项都标「若做，建议的最小形态」与「风险」。**2.1 A 的「签清单 + 接口文档」「Ed25519 detached 签名」「公钥信任库」「安装计划展示」「默认警告后允许」已按建议实现最小闭环（§7）**；其余选项（zip 整包签名、npm 包签名、企业目录、自助分发、回滚）仍未实现，维护者确认后应单独立项/PR。
 
 ### 2.1 A. 签名（扩展优先，插件其次）
 
@@ -116,7 +119,7 @@
 | 问题 | 说明 | 建议 |
 |---|---|---|
 | 信任什么 | 作者身份？内容摘要？审核记录？部署的服务？ | 三者分开表达：签名（内容来源）、审核（企业准入）、部署（运行时）；UI/文档不要合并成「可信」一个词 |
-| 密钥轮换/吊销 | 签名公钥的启用/停用、历史签名怎么办 | 公钥带 `kid` + `not_before/not_after`；吊销后仍允许验证历史版本（标注「已吊销」），但拒绝新装 |
+| 密钥轮换/吊销 | 签名公钥的启用/停用、历史签名怎么办 | 公钥带 `kid` + `not_before/not_after`；吊销后仍允许验证历史版本（标注「已吊销」），但拒绝新装。**已按此实现（#134）**：`key_id` + `valid_from` + `retired_at/revoked_at`，revoked 显示且拒绝新装，见 §7 |
 | 多实例 | 企业目录缓存、密钥列表、回滚状态要共享 | 都要落库；内存缓存可接受但要有失效策略 |
 | 离线/内网 | 目录、签名、密钥都在内网 | 目录与公钥支持手工导入/离线包；不依赖公网 |
 | 供应链边界 | 上游 npm 包的安全由作者/上游生态负责；dsh-ee 不做代码审计 | 文档必须写清（见 `plugin-quality.md` §1、`plugin-audit` 类边界） |
@@ -124,7 +127,7 @@
 
 ## 4. 如果维护者决定要做：建议顺序
 
-1. **签名（扩展）**：`extension sign/verify` + 公钥信任库 + 安装计划展示 + 策略（默认警告后允许）。不动安装主流程。
+1. **签名（扩展）**：✅ 已做（#134）：`extension keygen/sign/verify` + 公钥信任库（落库）+ 安装计划展示 + 策略（默认警告后允许，`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 切到拒绝）。没动安装主流程。
 2. **回滚（扩展）**：基于 `asset_versions` 追加新版本 + 审计 + 二次确认；不自动回滚配置/凭据。
 3. **企业目录**：在签名与回滚稳定后，做「从 URL 拉取审核清单 + 缓存」；目录条目必须过 check + 验签。
 4. **自助分发**：最后做，先复用 DSH 插件的 npm 发布/审核通道，再评估扩展 zip 上传；需要新的权限点和配额。
@@ -133,7 +136,7 @@
 
 ## 5. 明确不做（当前）
 
-- 不实现签名、不生成/托管作者私钥、不声称任何包「已认证」；
+- 不生成/托管作者私钥、不声称任何包「已认证」；扩展签名已实现最小闭环（§7），DSH 插件（npm 包）签名仍未实现；
 - 不实现企业目录、Git/GitLab 安装、自动升级策略；
 - 不实现作者自助上传扩展、扩展市场/评分/排名；
 - 不实现扩展一键回滚；
@@ -142,10 +145,49 @@
 
 ## 6. 待维护者决策
 
-1. 签名的优先级：先做扩展还是 DSH 插件，或都不做（只保留审核）？
-2. 签名策略默认值：警告后允许（plugins.md 已定）还是先「只记录不拦截」？
-3. 官方/企业/供应商公钥的信任列表由谁维护、放在哪（设置页/配置文件/环境变量）？
+1. 签名的优先级：扩展已做最小闭环（§7）；DSH 插件（npm 包）签名是否也做仍待定。
+2. 签名策略默认值：已实现为「警告后允许」默认、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 切到拒绝（fail closed）。
+3. 官方/企业/供应商公钥的信任列表由谁维护、放在哪：现在在库表 `trusted_signing_keys`（管理 API，`DSH_EE_EXTENSION_TRUSTED_KEYS` 兼容）；网页管理界面、官方签名标记和「供应商公钥」的审核流程仍待定。
 4. 企业目录是「管理员配置的 URL」还是「dsh-ee 生成并分发」？
 5. 作者身份怎么定义（企业账号、部门、外部供应商）？自助分发是否只对内部作者开放？
 6. 回滚是否需要重新审核、是否允许回滚到任意历史版本、是否自动恢复配置？
 7. 上述能力与 `plugins.md` §9 的既有设计是否一致；若调整，是否同步改那份设计稿？
+
+## 7. 已实现的部分（#134，2026-11-13）
+
+扩展签名的最小闭环，接口是「信任根落库」。实现在 `server/internal/extension/signature.go`（签名 / 验签 / 密钥状态）、`server/cmd/dsh-ee/cli_sign.go`（命令行）、`server/internal/api/signing_keys.go`（管理接口 + 验签合并）、`server/internal/store/signing_keys.go` 和 `server/internal/store/migrations/0032_trusted_signing_keys.sql`；使用口径见 [plugins.md](./plugins.md) §9.3。
+
+**签名（作者侧）**
+
+- `dsh-ee extension keygen / sign / verify`：Ed25519 detached 签名，签 `作者/名字@版本:摘要`，摘要沿用 `extension.Digest`（清单 + 接口文档的 sha256）；签名写 `signature.json`，`extension pack` 会把签名一起打进 zip。
+- 私钥只在作者本地（`keygen` 生成，权限 0600），dsh-ee 不生成、不托管、不入库、不上传；服务端只保存受信任的公钥。
+- 安装 / 检查计划的签名状态分 `unsigned / valid / invalid / revoked`，并带签名者的 `key_id` 和 `key_state`（active / retired / revoked），不合并成一个「可信」。
+
+**信任根（管理侧）**
+
+库表 `trusted_signing_keys`：`key_id`、`public_key`（PEM，PUBLIC KEY 或 CERTIFICATE，不收私钥）、`purpose`（现在只有 `extension`）、`valid_from`、`retired_at`、`revoked_at`、`created_by`、`note`、`created_at`。换下、撤销都不删行。
+
+| 操作 | 接口 | 权限 | 审计 |
+|---|---|---|---|
+| 列表（含历史） | `GET /api/admin/signing-keys` | `connections.manage` 或 `settings.manage` | — |
+| 新增公钥 | `POST /api/admin/signing-keys` | 同上 | `signing_key.add` |
+| 换下 | `POST /api/admin/signing-keys/{key_id}/retire` | 同上 | `signing_key.retire` |
+| 撤销 | `POST /api/admin/signing-keys/{key_id}/revoke` | 同上 | `signing_key.revoke` |
+
+- 验签时把库里的公钥和 `DSH_EE_EXTENSION_TRUSTED_KEYS` 合并。环境变量是只读的兼容来源；同一个 key id 以库里的状态为准——不然撤销一把同时写在 env 里的公钥不会生效。库里的改动立即生效，env 里的公钥仍然要重启才更新。
+- 状态语义：
+  - `active`：可以用来验新装 / 升级；
+  - `retired`（换下）：不再用于新签名，历史签名仍认，安装计划里标出 `key_state: retired`；
+  - `revoked`（撤销）：历史签名显示 `revoked`；**不管有没有开强制签名，新装 / 升级都拒绝**。撤销过的公钥不能重新加回来，要恢复信任请加一把新钥匙；
+  - `valid_from` 在未来的：列表里是 `pending`，验签时先不用。
+- 强制验签：`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 时 `unsigned / invalid` 也不让装（fail closed）；这时库或 env 至少要有一把受信任公钥，一把都没有时启动只警告（可以先起服务再用管理 API 加），否则所有扩展都会被拦下。revoked 的签名在任何策略下都不让新装。
+- 没有 env 也能验签：公钥只放库、不设 `DSH_EE_EXTENSION_TRUSTED_KEYS` 时，安装计划照常核对签名（有测试覆盖）。
+
+**这次没做（仍是设计 / 待办）**
+
+- 受信任公钥的网页管理界面：现在只有管理 API，页面和 i18n 未做；公钥只能由管理员手贴 PEM。
+- 服务扩展的清单是从对方服务实时取的，目前安装计划里显示 `unsigned`，也不会去取「随清单提供的签名」；配了强制签名时从服务地址安装会被拦下。
+- DSH 插件（npm 包）签名、企业目录、自助分发、版本回滚（§2.2–§2.4）。
+- 多签（一个扩展同时用多把钥匙）、钥匙用途的审批流、官方签名的信任标记。
+
+**边界**（同 §2.1）：签名只证明清单 / 接口文档是谁签的、没被换过，不是安全审计；撤销只影响 dsh-ee 的新装 / 升级，不会卸载已装扩展，也不改变对方系统的运行时行为。

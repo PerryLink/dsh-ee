@@ -55,6 +55,7 @@ export const defaultSettings: Settings = {
     extraScopes: [],
     requireToken: true,
   },
+  embed: { crossSite: null, allowedOrigins: [], apps: [], sessionMinutes: 0 },
 };
 
 interface Store {

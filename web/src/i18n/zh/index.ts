@@ -25,6 +25,8 @@ import studio from "./studio";
 import appGuide from "./app-guide";
 import { sharedCredentials } from "./shared-credentials";
 import ext from "./ext";
+import devdocs from "./devdocs";
+import embed from "./embed";
 
 /** 中文文案（源语言）。按页面分模块，这里合并成一棵树。 */
 export default {
@@ -55,4 +57,6 @@ export default {
   ...studio,
   ...appGuide,
   ...ext,
+  ...devdocs,
+  ...embed,
 };

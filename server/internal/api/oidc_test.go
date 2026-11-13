@@ -342,4 +342,45 @@ func TestOIDCLogin(t *testing.T) {
 	if !strings.Contains(string(body), `"via":"oidc"`) {
 		t.Fatalf("审计里应记下 OIDC 登录：%s", body)
 	}
+	// 新账号建号、预建账号首次绑定都应有身份绑定审计
+	code, body = admin.do("GET", "/api/admin/audit?action=oidc.bind", nil, nil)
+	expect(t, "身份绑定审计", code, 200, body)
+	for _, name := range []string{"lin.na", "new.guy"} {
+		if !strings.Contains(string(body), `"target":"`+name+`"`) {
+			t.Fatalf("身份绑定审计里应有 %s：%s", name, body)
+		}
+	}
+
+	// ---- 严格身份绑定（requireEmailVerified）：默认关闭，开启后只认已验证邮箱 ----
+	cfg["autoCreate"] = true
+	cfg["requireEmailVerified"] = true
+	code, body = admin.do("PUT", "/api/admin/auth/oidc", cfg, nil)
+	expect(t, "开启严格身份绑定", code, 200, body)
+	fail("严格模式：没有 email_verified", map[string]any{"sub": "u-9", "preferred_username": "strict.one"}, nil, "email_verified")
+	fail("严格模式：email_verified=false", map[string]any{"sub": "u-9", "preferred_username": "strict.one", "email_verified": false}, nil, "email_verified")
+
+	// 预建账号填了邮箱：IdP 声明的邮箱不一致时不能认领；一致时才能绑定
+	code, body = admin.do("POST", "/api/admin/users", map[string]any{"username": "pre.built", "auth_source": "oidc", "email": "pre.built@xinghe.com"}, nil)
+	expect(t, "预建带邮箱的 OIDC 账号", code, 201, body)
+	fail("严格模式：预建账号邮箱不一致", map[string]any{"sub": "u-10", "preferred_username": "pre.built", "email": "other@partner.example", "email_verified": true}, nil, "邮箱")
+	prebuilt := newClient(t, ts.URL)
+	if loc := idp.login(t, prebuilt, map[string]any{"sub": "u-10", "preferred_username": "pre.built", "email": "pre.built@xinghe.com", "email_verified": true}, nil); loc != "/build" {
+		t.Fatalf("邮箱一致时预建账号应能绑定：%s", loc)
+	}
+
+	// 已验证邮箱的普通员工照常自动建号
+	strict := newClient(t, ts.URL)
+	if loc := idp.login(t, strict, map[string]any{"sub": "u-9", "preferred_username": "strict.one", "email": "strict.one@xinghe.com", "email_verified": true}, nil); loc != "/build" {
+		t.Fatalf("验证过邮箱的员工应能登录：%s", loc)
+	}
+	code, body = strict.do("GET", "/api/auth/me", nil, nil)
+	expect(t, "严格模式员工 me", code, 200, body)
+	if !strings.Contains(string(body), `"username":"strict.one"`) {
+		t.Fatalf("严格模式登录后应是 strict.one：%s", body)
+	}
+	code, body = admin.do("GET", "/api/admin/audit?action=oidc.bind", nil, nil)
+	expect(t, "严格模式身份绑定审计", code, 200, body)
+	if !strings.Contains(string(body), `"target":"pre.built"`) || !strings.Contains(string(body), `"target":"strict.one"`) {
+		t.Fatalf("严格模式的绑定也应记审计：%s", body)
+	}
 }

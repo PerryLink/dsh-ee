@@ -67,6 +67,16 @@ func TestLocalExtensionConfirmAndAudit(t *testing.T) {
 	if dsh := confirm(aliceTok, req3); dsh["approved"] != true {
 		t.Fatalf("DSH 里默认不用服务端再确认：%v", dsh)
 	}
+	// 但快捷语义只认令牌属性：third_party 令牌就算自报 harness=dsh 也要人工确认
+	code, body = alice.do("POST", "/api/me/tokens", map[string]any{
+		"name": "third-party", "scopes": []string{"hub", "connections"}, "client_kind": "third_party",
+	}, nil)
+	expect(t, "建 third_party 令牌", code, 201, body)
+	thirdParty := dshClient{t: t, base: f.ts.URL, token: decodeAs[struct{ Token string }](t, body).Token}
+	req4 := map[string]any{"extension": "acme/legacy-oa", "tool": "submit_leave", "args": map[string]any{"days": 11}, "harness": "dsh"}
+	if tp := confirm(thirdParty, req4); tp["approved"] != false || !strings.Contains(fmt.Sprint(tp["url"]), "/confirm/") {
+		t.Fatalf("third_party 令牌自报 dsh 也要确认：%v", tp)
+	}
 	code, body = f.admin.do("PUT", "/api/admin/write-confirm", map[string]string{"mode": "always"}, nil)
 	expect(t, "改成一律确认", code, 200, body)
 	if dsh := confirm(aliceTok, req3); dsh["approved"] != false {

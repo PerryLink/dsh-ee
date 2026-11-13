@@ -22,8 +22,9 @@ import (
 // 先返回一个确认链接；员工在网页上看过参数、点了同意之后，同一个人用同样的参数再调一次才真正执行，
 // 而且一次同意只能执行一次。
 //
-// 是不是 DSH 靠请求头 X-DshEE-Client 判断，别的客户端可以伪造它——这道确认防的是「客户端被设成自动同意」，
-// 不是防恶意客户端；要一律确认，把方式改成 always。
+// 是不是 DSH 只认令牌的 client_kind 属性（签发时确定），不认可伪造的 X-DshEE-Client 请求头：
+// dsh 令牌沿用「DSH 自己有审批卡」的快捷语义；third_party 令牌始终走服务端人工确认。
+// 这道确认防的是「客户端被设成自动同意」，不是防恶意客户端；要一律确认，把方式改成 always。
 
 const (
 	writeConfirmSetting = "write_confirm"
@@ -100,7 +101,7 @@ func canonicalArgs(raw json.RawMessage) (string, string) {
 func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *store.ConnectionTool, args json.RawMessage) json.RawMessage {
 	ctx := r.Context()
 	mode := s.writeConfirmMode(ctx)
-	if t.ReadOnly || mode == confirmOff || (mode == confirmNonDSH && dshConnect(r)) {
+	if t.ReadOnly || mode == confirmOff || (mode == confirmNonDSH && v.isDSHToken()) {
 		return nil
 	}
 	text, hash := canonicalArgs(args)
@@ -122,23 +123,33 @@ func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *stor
 	}
 	base := s.callerBase(r)
 	link := func(id int64) string { return base + "/confirm/" + strconv.FormatInt(id, 10) }
-	ask := func(id int64) json.RawMessage {
-		return mcp.TextResult("这个操作会修改「"+a.Title+"」里的数据，要先由你本人在网页上确认，现在还没有执行。\n"+
-			"请打开 "+link(id)+" 核对参数并点「同意」，然后让我用完全相同的参数再调用一次。\n"+
-			"同意后 10 分钟内有效，只能执行一次；参数变了要重新确认。不要改用别的工具绕过。", true)
+	// ask 的文本保持原样（旧客户端按文本展示），同时把确认信息放进结果级 _meta：
+	// 第三方 Harness 不用解析中文文本就能拿到确认页，旧客户端忽略 _meta 不受影响。
+	ask := func(id int64, expiresAt time.Time) json.RawMessage {
+		text := "这个操作会修改「" + a.Title + "」里的数据，要先由你本人在网页上确认，现在还没有执行。\n" +
+			"请打开 " + link(id) + " 核对参数并点「同意」，然后让我用完全相同的参数再调用一次。\n" +
+			"同意后 10 分钟内有效，只能执行一次；参数变了要重新确认。不要改用别的工具绕过。"
+		return mcp.TextResultWithMeta(text, true, map[string]any{
+			"dsh-ee/confirmation": map[string]any{
+				"id":         id,
+				"url":        link(id),
+				"expires_at": expiresAt.UTC().Format(time.RFC3339),
+			},
+		})
 	}
 	if rejected, err := s.store.FindWriteConfirmation(ctx, v.user.ID, a.ID, t.Name, hash, store.ConfirmRejected); err == nil && rejected != nil {
 		return mcp.TextResult("你刚才在网页上拒绝了这个操作，所以没有执行。如果还是要做，请先告诉我，我会重新发起确认；不要自动重试。", true)
 	}
 	if pending, err := s.store.FindWriteConfirmation(ctx, v.user.ID, a.ID, t.Name, hash, store.ConfirmPending); err == nil {
-		return ask(pending.ID)
+		return ask(pending.ID, pending.ExpiresAt)
 	}
-	c := &store.WriteConfirmation{UserID: v.user.ID, AssetID: a.ID, Tool: t.Name, ArgsHash: hash, Args: text, Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
+	c := &store.WriteConfirmation{UserID: v.user.ID, AssetID: a.ID, Tool: t.Name, ArgsHash: hash, Args: text, TokenID: v.tokenID,
+		Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
 	if err := s.store.CreateWriteConfirmation(ctx, c, secret.Hash(secret.Token()), confirmPendingTTL); err != nil {
 		s.log.Warn("创建写操作确认失败", "err", err)
 		return mcp.TextResult("没能发起确认，请稍后再试。", true)
 	}
-	return ask(c.ID)
+	return ask(c.ID, c.ExpiresAt)
 }
 
 type confirmView struct {
@@ -228,7 +239,12 @@ func (s *Server) handleDecideConfirmation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	view := s.confirmView(r.Context(), c)
-	s.audit(r, auditWriteConfirm, "connection:"+view.Slug, map[string]any{"id": c.ID, "tool": c.Tool, "approve": req.Approve, "args_sha256": c.ArgsHash})
+	detail := map[string]any{"id": c.ID, "tool": c.Tool, "approve": req.Approve, "args_sha256": c.ArgsHash}
+	// 发起确认用的是哪个令牌：third_party 令牌发起的确认要能按令牌追溯
+	if c.TokenID > 0 {
+		detail["token_id"] = c.TokenID
+	}
+	s.audit(r, auditWriteConfirm, "connection:"+view.Slug, detail)
 	fresh, err := s.store.GetWriteConfirmation(r.Context(), c.ID)
 	if err != nil {
 		s.internalErr(w, r, err)

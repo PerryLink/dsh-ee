@@ -83,6 +83,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 额度属于「分配额度」权限：只有「管理用户」权限时，不能借建号显式设置或清空额度
+	if !canSetQuotaOnCreate(currentAccess(r), req.MonthlyTokenLimit) {
+		writeErr(w, http.StatusForbidden, "设置月度额度需要「分配额度」权限")
+		return
+	}
 	if req.AccountType == "" {
 		req.AccountType = store.AccountHuman
 	}
@@ -115,7 +120,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 新用户默认 0：管理员分配额度后才能调用模型。显式传 null 表示不限额。
+	// 新用户默认 0：管理员分配额度后才能调用模型；显式传 null 表示不限额（要「分配额度」权限）。
 	limit := int64(0)
 	if req.MonthlyTokenLimit.Set {
 		if req.MonthlyTokenLimit.Value != nil && *req.MonthlyTokenLimit.Value < 0 {
@@ -156,8 +161,14 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if u.AccountType == store.AccountBot {
 		action = "user.create_bot"
 	}
-	s.audit(r, action, u.Username, map[string]any{"id": u.ID, "source": u.AuthSource, "roles": dedupe(roleIDs), "owner_id": u.OwnerID})
+	s.audit(r, action, u.Username, map[string]any{"id": u.ID, "source": u.AuthSource, "roles": dedupe(roleIDs), "owner_id": u.OwnerID, "monthly_token_limit": u.MonthlyTokenLimit})
 	writeJSON(w, http.StatusCreated, u)
+}
+
+// canSetQuotaOnCreate：建账号时能不能显式设置 / 清空月度额度。额度属于「分配额度」
+// 权限，只有「管理用户」时不能借建号开出不限额账号；不传这个字段按默认额度处理。
+func canSetQuotaOnCreate(a *rbac.Access, limit nullableInt64) bool {
+	return !limit.Set || a.Has(rbac.QuotasManage)
 }
 
 type updateUserReq struct {
@@ -196,6 +207,26 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if (req.Disabled != nil || req.Password != nil || req.UnbindIdentity) && !outranks(currentAccess(r), target) {
 		writeErr(w, http.StatusForbidden, "不能禁用、重置密码或解除权限比自己大的用户的身份绑定")
 		return
+	}
+	// 部门是资产 / 知识库的可见范围，也是「本部门令牌管理」的作用域：改部门等于替
+	// 目标调整可访问的范围，所以只能由权限严格大于目标的管理员调整下级部门，
+	// 改自己、同级或上级都不行（超级管理员本来就绕开一切检查，不受此限）。
+	if req.Department != nil && !canChangeDepartment(currentAccess(r), target) {
+		writeErr(w, http.StatusForbidden, "不能修改自己、同级或权限比自己大的用户的部门")
+		return
+	}
+	// 部门变更要记前后值，先读一次变更前的用户
+	var before *store.User
+	if req.Department != nil {
+		before, err = s.store.GetUser(r.Context(), id)
+		if err != nil {
+			if notFound(err) {
+				writeErr(w, http.StatusNotFound, "用户不存在")
+				return
+			}
+			s.internalErr(w, r, err)
+			return
+		}
 	}
 	if target.Super && req.Disabled != nil && *req.Disabled {
 		if n, err := s.store.CountSuperUsers(r.Context(), id); err != nil {
@@ -264,9 +295,31 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.DisplayName != nil || req.Department != nil {
 		detail["profile"] = true
 	}
+	if req.Department != nil {
+		detail["old_department"] = before.Department
+		detail["new_department"] = u.Department
+	}
 	s.audit(r, auditUserUpdate, u.Username, detail)
 	s.hub.notify()
 	writeJSON(w, http.StatusOK, u)
+}
+
+// canChangeDepartment：actor 能不能改目标的部门。部门决定资产 / 知识库的可见范围，
+// 也是「本部门令牌管理」的作用域，所以只允许调整权限严格小于自己的下级：自己、
+// 同级（权限集合相同）和权限更大的用户都不行。超级管理员不受限。
+func canChangeDepartment(actor, target *rbac.Access) bool {
+	if actor.Super {
+		return true
+	}
+	if target.Super || len(target.Perms) >= len(actor.Perms) {
+		return false
+	}
+	for p := range target.Perms {
+		if !actor.Perms[p] {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- 代发 key（员工也可以在自己的「我的 API key」里自助创建）----

@@ -10,6 +10,21 @@ import (
 	"time"
 )
 
+// 令牌的客户端类型：dsh 是 DSH 的接入插件/设备登录，third_party 是其他 Harness。
+// 写确认只对 dsh 令牌走 DSH 审批卡的快捷语义，third_party 始终人工确认（api/write_confirm.go）。
+const (
+	ClientKindDSH        = "dsh"
+	ClientKindThirdParty = "third_party"
+)
+
+// NormalizeClientKind 把空值与未知值收敛到 dsh：旧令牌、旧代码路径按原有 DSH 行为处理。
+func NormalizeClientKind(kind string) string {
+	if kind == ClientKindThirdParty {
+		return ClientKindThirdParty
+	}
+	return ClientKindDSH
+}
+
 type AccessToken struct {
 	ID                int64      `json:"id"`
 	UserID            int64      `json:"user_id"`
@@ -20,6 +35,7 @@ type AccessToken struct {
 	Prefix            string     `json:"prefix"`
 	TokenHash         string     `json:"-"`
 	Source            string     `json:"source"`
+	ClientKind        string     `json:"client_kind"`
 	Scopes            []string   `json:"scopes"`
 	MonthlyTokenLimit *int64     `json:"monthly_token_limit"`
 	AllowedModels     []string   `json:"allowed_models"`
@@ -38,7 +54,7 @@ type AccessToken struct {
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
-const accessTokenColumns = `t.id, t.user_id, t.name, t.prefix, t.token_hash, t.source, t.scopes, t.monthly_token_limit,
+const accessTokenColumns = `t.id, t.user_id, t.name, t.prefix, t.token_hash, t.source, t.client_kind, t.scopes, t.monthly_token_limit,
 	t.allowed_models, t.expires_at, t.sliding_days, t.admin_until, t.client_name, t.client_os, t.client_version,
 	t.last_used_at, t.last_client, t.last_host, t.last_ip, t.revoked_at, t.created_by, t.created_at`
 
@@ -49,7 +65,7 @@ func scanAccessToken(row interface{ Scan(...any) error }, joined ...any) (*Acces
 	var expires, adminUntil, used, revoked sql.NullTime
 	var sliding sql.NullInt32
 	err := row.Scan(append([]any{
-		&t.ID, &t.UserID, &t.Name, &t.Prefix, &t.TokenHash, &t.Source, &scopes, &limit,
+		&t.ID, &t.UserID, &t.Name, &t.Prefix, &t.TokenHash, &t.Source, &t.ClientKind, &scopes, &limit,
 		&models, &expires, &sliding, &adminUntil, &t.ClientName, &t.ClientOS, &t.ClientVersion,
 		&used, &t.LastClient, &t.LastHost, &t.LastIP, &revoked, &t.CreatedBy, &t.CreatedAt,
 	}, joined...)...)
@@ -59,6 +75,8 @@ func scanAccessToken(row interface{ Scan(...any) error }, joined ...any) (*Acces
 	if err != nil {
 		return nil, err
 	}
+	// 旧数据/旧迁移里没有 kind：按 DSH 兼容处理
+	t.ClientKind = NormalizeClientKind(t.ClientKind)
 	if len(joined) == 3 {
 		t.Username = *joined[0].(*string)
 		t.Department = *joined[1].(*string)
@@ -105,12 +123,13 @@ func createAccessToken(ctx context.Context, db execContext, t *AccessToken, hash
 		models = string(b)
 	}
 	t.TokenHash = hash
+	t.ClientKind = NormalizeClientKind(t.ClientKind)
 	t.CreatedAt = now()
-	res, err := db.ExecContext(ctx, `INSERT INTO access_tokens (user_id, name, prefix, token_hash, source, scopes, monthly_token_limit,
+	res, err := db.ExecContext(ctx, `INSERT INTO access_tokens (user_id, name, prefix, token_hash, source, client_kind, scopes, monthly_token_limit,
 		allowed_models, expires_at, sliding_days, admin_until, client_name, client_os, client_version,
 		last_used_at, last_ip, revoked_at, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.UserID, t.Name, t.Prefix, hash, t.Source, strings.Join(t.Scopes, ","), t.MonthlyTokenLimit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.UserID, t.Name, t.Prefix, hash, t.Source, t.ClientKind, strings.Join(t.Scopes, ","), t.MonthlyTokenLimit,
 		models, t.ExpiresAt, t.SlidingDays, t.AdminUntil, t.ClientName, t.ClientOS, t.ClientVersion,
 		t.LastUsedAt, t.LastIP, t.RevokedAt, t.CreatedBy, t.CreatedAt)
 	if err != nil {
