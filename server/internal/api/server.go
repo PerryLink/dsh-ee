@@ -64,6 +64,11 @@ type Options struct {
 	DemoSite *DemoSite
 	// 轮换 ee_jwt 密钥时，新钥匙过多久开始签名；0 用默认的 10 分钟（测试里调短）
 	EEKeyDelay time.Duration
+	// 协议面（/v1/* 与 /mcp）每令牌每分钟的请求数；0 表示关闭。
+	// 线上默认由 config 的 DSH_EE_RATE_LIMIT 给 60，测试里按需设置。
+	RateLimitPerMinute int
+	// 限流窗口，默认 1 分钟；只给自动化测试缩短用。
+	RateLimitWindow time.Duration
 	// 允许用 iframe 嵌入网页的宿主 origin（DSH_EE_EMBED_ORIGINS）；为空时只允许同站。
 	// 只由 config 解析、校验后传进来，见 security_headers.go。
 	EmbedOrigins []string
@@ -108,6 +113,8 @@ type Server struct {
 	// 服务扩展：连续出错时的熔断、回调地址的限流（service_ext.go）
 	extBreak        extBreaker
 	extEndpointRate keyRate
+	// /v1/* 与 /mcp 的每令牌限流；nil 表示关闭（见 rate_limit.go）
+	tokenRate *tokenRate
 	// 示例内容里演示差旅系统的内存数据
 	demo demoTravel
 	crm  demoCRM
@@ -167,6 +174,9 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 		})}
 	}
 	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), embedMintRate: newIPRate(embedMintPerMinute), embedExchangeRate: newIPRate(embedExchangePerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	if opts.RateLimitPerMinute > 0 {
+		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
+	}
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()
@@ -243,7 +253,9 @@ func (s *Server) Handler() http.Handler {
 	// 浏览器内第三方 Harness 的跨域白名单（DSH_EE_CORS_ORIGINS，默认关闭），只作用于 /v1/* 与 /mcp，见 cors.go；
 	// 放在 harnessAPI 外面，预检先于方法检查处理，harness 的错误响应也带 CORS 头。
 	// securityHeaders 在最外层，harnessAPI 直接写出的响应同样带文档安全头。
-	return s.logRequests(s.securityHeaders(s.cors(harnessAPI(mux))))
+	// 每令牌限流（DSH_EE_RATE_LIMIT）放在 cors 里面，429 也带 CORS 头，浏览器能读到 Retry-After；
+	// requestID 在最外层，日志与响应用同一个请求号。
+	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(mux))))))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -251,7 +263,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
-		s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds())
+		s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds(), "request_id", requestIDFrom(r))
 	})
 }
 
