@@ -91,7 +91,7 @@
 ## 8. 当前未实现 / 边界
 
 - **没有签名与目录审核**：`extension sign` / `extension verify` 不存在，安装不校验签名；不要对外声称「已签名 / 已认证」。
-- **没有企业扩展目录、自动升级、一键回滚**：声明式扩展升级只能再装一次；旧版本文件要自己留。
+- **没有企业扩展目录和自动升级**：声明式扩展升级只能再装一次；已装的版本可以回滚（`POST /api/admin/extensions/{slug-or-id}/rollback`，见 [plugins.md](./plugins.md) §9.4），旧版本文件仍建议自己留档。
 - **不做评分 / 认证 / 排名**：dsh-ee 的「发布预检（静态）」不等于 ENTRY / FLOW / BOOST，也不等于安全审计；详见 [plugin-quality.md](./plugin-quality.md)。
 - **开放收录模式仍需人工兜底**：`open` 模式下无 fail 项即上架，但 `secrets`、bundle 缺失这类 fail 项仍会进待审核。
 - **上游镜像不改变包内容**：只做依赖闭包镜像，不审代码；上游包的安全由作者和上游生态负责。

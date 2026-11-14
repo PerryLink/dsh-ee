@@ -200,3 +200,117 @@ func TestRateLimitConfig(t *testing.T) {
 		})
 	}
 }
+
+// API 客户端（client_credentials）的每 IP 限流开关：默认 120，0/off 关闭，非法值启动失败。
+func TestClientTokenRateLimitConfig(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		want    int
+		wantErr bool
+	}{
+		{name: "默认每分钟 120 次", env: "", want: 120},
+		{name: "环境变量调整", env: "30", want: 30},
+		{name: "0 关闭", env: "0", want: 0},
+		{name: "off 关闭", env: "off", want: 0},
+		{name: "false 关闭", env: "false", want: 0},
+		{name: "负数非法", env: "-1", wantErr: true},
+		{name: "非数字非法", env: "abc", wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("DSH_EE_CLIENT_TOKEN_PER_MINUTE", c.env)
+			cfg, err := Load()
+			if c.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "DSH_EE_CLIENT_TOKEN_PER_MINUTE") {
+					t.Fatalf("期望 DSH_EE_CLIENT_TOKEN_PER_MINUTE 报错，得到 %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.ClientTokenPerMinute != c.want {
+				t.Fatalf("ClientTokenPerMinute = %d，期望 %d", cfg.ClientTokenPerMinute, c.want)
+			}
+		})
+	}
+}
+
+func TestBackgroundLeaseDefaults(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.BackgroundLease || c.BackgroundLeaseTTL != 90*time.Second {
+		t.Fatalf("后台任务租约默认应开启、TTL 90s，得到 %v / %v", c.BackgroundLease, c.BackgroundLeaseTTL)
+	}
+}
+
+func TestBackgroundLeaseEnv(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("DSH_EE_BACKGROUND_LEASE", "false")
+	t.Setenv("DSH_EE_BACKGROUND_LEASE_TTL", "15s")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BackgroundLease || c.BackgroundLeaseTTL != 15*time.Second {
+		t.Fatalf("配置没生效：%v / %v", c.BackgroundLease, c.BackgroundLeaseTTL)
+	}
+
+	setRequiredEnv(t)
+	t.Setenv("DSH_EE_BACKGROUND_LEASE_TTL", "500ms")
+	if _, err := Load(); err == nil {
+		t.Fatal("过短的 TTL 应让启动失败")
+	}
+	setRequiredEnv(t)
+	t.Setenv("DSH_EE_BACKGROUND_LEASE", "maybe")
+	if _, err := Load(); err == nil {
+		t.Fatal("非法的开关值应让启动失败")
+	}
+}
+
+func TestLoadRefreshConfig(t *testing.T) {
+	setRequiredEnv(t)
+	// 默认关闭，参数是保守的默认值
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 报错：%v", err)
+	}
+	if cfg.RefreshTokens || cfg.RefreshAccessTTL != time.Hour || cfg.RefreshTokenTTL != 30*24*time.Hour ||
+		cfg.RefreshFamilyTTL != 180*24*time.Hour || cfg.RefreshGrace != 0 {
+		t.Fatalf("刷新令牌默认配置不对：%+v", cfg)
+	}
+	t.Setenv("DSH_EE_REFRESH_TOKENS", "1")
+	t.Setenv("DSH_EE_REFRESH_ACCESS_TTL", "15m")
+	t.Setenv("DSH_EE_REFRESH_TOKEN_TTL", "720h")
+	t.Setenv("DSH_EE_REFRESH_FAMILY_TTL", "4320h")
+	t.Setenv("DSH_EE_REFRESH_GRACE", "20s")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load 报错：%v", err)
+	}
+	if !cfg.RefreshTokens || cfg.RefreshAccessTTL != 15*time.Minute || cfg.RefreshTokenTTL != 720*time.Hour ||
+		cfg.RefreshFamilyTTL != 4320*time.Hour || cfg.RefreshGrace != 20*time.Second {
+		t.Fatalf("刷新令牌配置没生效：%+v", cfg)
+	}
+	// 族上限必须覆盖单枚 refresh 的有效期
+	t.Setenv("DSH_EE_REFRESH_FAMILY_TTL", "500h")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REFRESH_FAMILY_TTL") {
+		t.Fatalf("族上限小于 refresh 有效期应失败，实际 err=%v", err)
+	}
+	// access TTL 越界
+	t.Setenv("DSH_EE_REFRESH_FAMILY_TTL", "4320h")
+	t.Setenv("DSH_EE_REFRESH_ACCESS_TTL", "25h")
+	if _, err := Load(); err == nil {
+		t.Fatal("超过 24h 的 access TTL 应该失败")
+	}
+	// 宽限期越界
+	t.Setenv("DSH_EE_REFRESH_ACCESS_TTL", "15m")
+	t.Setenv("DSH_EE_REFRESH_GRACE", "6m")
+	if _, err := Load(); err == nil {
+		t.Fatal("超过 5m 的宽限期应该失败")
+	}
+}

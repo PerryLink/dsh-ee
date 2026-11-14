@@ -1,6 +1,6 @@
 # dsh-ee 运维手册
 
-> 状态：按 `origin/main`（20aafbb，2026-11-12）核对代码与 `deploy/` 写成。**已实现**的按命令/配置写；**没有实现**的（备份工具、指标、日志轮转、多实例、自动回滚等）标「设计」，见 §12。文中标「PR #N，合并后生效」的能力来自对应独立 PR（#118 微应用嵌入 v0/v1、#122 CLI、#123 Harness 发现、#127 CORS、#128 MCP 分页/写确认结构化），**均未合入基线**；能力以对应 PR 合入为准。
+> 状态：按 `origin/main`（20aafbb，2026-11-12）核对代码与 `deploy/` 写成。**已实现**的按命令/配置写；**没有实现**的（备份工具、指标、日志轮转、自动回滚等）标「设计」，见 §12。文中标「PR #N，合并后生效」的能力来自对应独立 PR（#118 微应用嵌入 v0/v1、#122 CLI、#123 Harness 发现、#127 CORS、#128 MCP 分页/写确认结构化），**均未合入基线**；能力以对应 PR 合入为准。多实例后台任务租约（§9.2）随多实例前置 PR 提供，合入后生效。
 >
 > 相关文档：[architecture.md](./architecture.md)（组件与数据）、[cli.md](./cli.md)（命令）、[troubleshooting.md](./troubleshooting.md)（错误码与修复）、[deploy/README.md](../deploy/README.md)（官方部署说明）。
 
@@ -105,10 +105,14 @@ go run ./cmd/seed                  # 可选：演示数据（角色、员工、�
 | `DSH_EE_PUBLIC_URL` | 空 | 生产建议 | 对外地址，如 `https://ee.example.com`；生成 tarball/脚本/索引里的外部地址 |
 | `DSH_EE_DATA_DIR` | `./data` | 否 | 数据目录；容器里 `/data` |
 | `DSH_EE_DB_WAIT` | `2m` | 否 | 启动时等数据库就绪的最长时间，超时启动失败 |
+| `DSH_EE_BACKGROUND_LEASE` | `true` | 否 | 多实例后台任务租约开关（§9.2）：周期任务每轮先抢数据库里的一条租约，只有 leader 实例执行。默认开启，单实例也安全；设为 `false` 时每个实例都会执行周期任务，只应在确认单实例部署时关闭 |
+| `DSH_EE_BACKGROUND_LEASE_TTL` | `90s` | 否 | 后台任务租约有效期，`1s`–`1h`；持租实例按 1/3 TTL 续约。进程被强杀后最多这么久其他实例才能接管 |
 | `DSH_EE_DATA_DSN` | 主库名 + `_data` | 否 | 数据中台库（可写账号）；设 `off` 关闭数据中台 |
 | `DSH_EE_DATA_READ_DSN` | 自动创建只读账号 | 否 | 数据中台只读账号；账号没权限建用户时由 DBA 提供 |
 | `DSH_EE_ADMIN_MODE_UNIT` | `1h` | 否 | **只给自动化测试**调整「管理模式 1/8 小时」里「1 小时」的长度，生产不要设 |
 | `DSH_EE_DEMO_MODE` 等 `DSH_EE_DEMO_*` | 关闭 | 否 | 仅公开演示站使用（登录页显示初始账号、限制访问本机等）；`server/internal/config/config.go` 有完整列表 |
+| `DSH_EE_CSP` | `off` | 否 | 内容安全策略：`off` / `report` / `enforce`。默认只加现有的 `frame-ancestors` 嵌入收口；`report` 用 `Content-Security-Policy-Report-Only` 只报告，`enforce` 用 `Content-Security-Policy` 阻断。非法值启动失败。见 §10.1 |
+| `DSH_EE_CSP_REPORT_URI` | 空 | 否 | CSP 违规报告地址（`http(s)://…`，可选）。`DSH_EE_CSP` 不是 `off` 时写进策略的 `report-uri`；非法地址启动失败 |
 
 说明：
 
@@ -260,14 +264,36 @@ cp /path/to/当前目录/.env .
 | `DSH_EE_DATA_DIR` | 每个已发布/镜像版本的 tarball、上游缓存、DSH 安装包镜像 | `du -sh <data dir>`、`du -sh <data dir>/blobs` |
 | 进程内存 | 上游 packument 缓存、知识库索引、流式连接、MCP 事件流 | 容器/进程 RSS |
 
-### 9.2 单实例边界（当前实现）
+### 9.2 多实例部署前置（后台任务租约）
 
+多实例部署时，周期后台任务在数据库表 `background_leases` 里**选主**：每轮先抢一条租约，只有抢到的实例执行；执行期间按 TTL/3 续约，任务结束释放，进程崩溃时 TTL 到期后其他实例接管。覆盖的任务：
+
+| 租约名 | 任务 |
+|---|---|
+| `ldap.sync` | LDAP 目录同步（`sync_disable` 时禁用离岗账号） |
+| `feishu.sync` | 飞书组织同步 |
+| `extension.health` | 服务扩展清单健康检查 |
+| `kb.source-sync` | 知识源定时同步 |
+| `admin.elevation-expiry` | 管理模式到期：清 `admin_until`、写审计、通知 DSH 刷新工具 |
+| `admin.recovery-expiry` | 停用到期的恢复账号 |
+| `app.row-purge` | 清理已删除超过 30 天的应用数据行 |
+| `dsh.releases` | Desktop 安装包同步/下载与启动恢复 |
+| `connect.publish` | DSH 接入插件发布检查（启动、触发与每小时兜底） |
+| `registry.check-updates` | 上游新版本检查（启动 1 分钟后、之后每 6 小时） |
+| `sessions.sweep` | 过期会话/嵌入会话/确认码/设备码清理 |
+| `embed.sweep` | 一次性 embed code 与限流窗口清理 |
+
+- **数据库不可用时该轮跳过并记日志**，不会退化成「每个实例都跑」：这些任务本来就要读写数据库，库不可用时执行也做不成事；宁可晚一轮也不重复执行。单实例部署同样走这套逻辑，行为不变（只是多一条租约记录）。
+- **优雅停机**释放租约，其他实例立刻可以接管；进程被强杀（kill -9 / OOM）时靠 `DSH_EE_BACKGROUND_LEASE_TTL` 到期，期间该任务暂停，不会双跑。
+- **开关**：`DSH_EE_BACKGROUND_LEASE`（默认 `true`，单实例也安全）；只有确认是单实例部署时才可以设 `false`（例如回滚到旧版本期间不想多写这张表）。
+- **先起一个实例完成数据库迁移，再起其余实例**（迁移竞争未解决，见 [architecture.md](./architecture.md) §4.1）。
+- **共享存储**：`DSH_EE_DATA_DIR` 里的 npm tarball、品牌图、Desktop 安装包镜像都是本地磁盘；多实例要么挂同一份共享存储（NFS 等），要么在负载均衡上做粘性，否则下载/发布请求会落到没有文件的实例。对象存储仍是设计，没有实现。
+- **进程内状态仍按实例独立**：登录失败限流、上游 packument 内存缓存、知识库关键词索引、MCP 事件流与「能力目录变化」通知（hub）都在各自进程里。后台任务只在 leader 实例写库/审计；管理模式到期的刷新通知由每个实例各自推给连到自己的 DSH 长连接（审计只写一份）。
+- **触发型任务**（`connect.publish`、`dsh.releases`）：kick 只在收到请求的实例内存里，非 leader 收到后不会跨实例转发；靠 leader 的周期兜底补跑（connect 每小时、Desktop 版本 6 小时）。管理员在非 leader 实例点「立即发布/下载」由该实例直接处理（不是周期任务），多实例下同一资源的并发写仍按原有幂等/锁逻辑。
 - **一次性状态已多实例安全**：从 DSH 打开网页的 handoff code、开始使用接入码、OIDC state/PKCE 存在数据库表 `ephemeral_states`，多个实例共享：A 实例生成，B 实例打开链接、收回调或轮询接入进度都能用。一次性由 `UPDATE … SET consumed_at=now() WHERE consumed_at IS NULL AND expires_at>now()` 的 affected rows 保证；过期状态由 `sweepEmbed` 每分钟清理一次（清理只回收空间，有效性判断不依赖它）。要求所有实例连同一个数据库、使用同一个 `DSH_EE_SECRET_KEY`（OIDC state 的 nonce/PKCE verifier 加密后落库）、系统时钟同步（TTL 按应用时间判断）。数据库不可用时这些功能直接失败（fail closed），**不会**回退到进程内存。
-- 登录限流、上游 packument 内存缓存、预载/导入任务、知识库索引都在进程内存里；**多实例会行为不一致**。
-- 后台任务与进程内锁（LDAP/飞书同步、知识源同步、上游新版本检查、DSH 安装包下载、`oauthLocks`/`connectMu` 等）还没有跨实例租约或分布式锁；多实例会重复执行或互相打断。
-- tarball 在本地磁盘；多实例需要共享存储（NFS 等）或对象存储——对象存储是设计，没有实现。
-- 多个实例同时首次启动会争抢数据库迁移：先起一个完成迁移，再起其余实例。
-- 没有 `/mcp`、`/v1` 的每令牌限流；没有独立的队列/worker 进程。
+- **作业级归属未做**：启动时 `FailRunningJobs` 会把 `sync_jobs` 里所有 running 任务标成中断，这一步仍由每个实例启动时执行；Desktop 安装包的启动恢复已走租约。多实例滚动重启仍可能打断另一实例上管理员手动触发的镜像任务——需要更强一致性时，在低峰重启或暂停同步。
+
+此外仍属单实例边界：多个实例同时首次启动会争抢数据库迁移；`/mcp`、`/v1` 的每令牌限流在进程内存里按实例各自计数；没有独立的队列/worker 进程。
 
 ### 9.3 扩容与容量规划建议
 
@@ -300,6 +326,31 @@ cp /path/to/当前目录/.env .
 用它登录网页，把管理角色重新分好后就不要再用。
 ```
 
+### 10.1 内容安全策略（CSP）
+
+默认 `DSH_EE_CSP=off`：HTML 出口只加「微应用嵌入」那套 `frame-ancestors` 收口，行为与之前完全一致。设为 `report` / `enforce` 后会在这之上再给 HTML 加一份完整策略；`frame-ancestors` 与嵌入配置**合并**，不会因为开 CSP 把嵌入收口覆盖掉。
+
+| `DSH_EE_CSP` | 响应头 | 效果 |
+|---|---|---|
+| `off`（默认） | `Content-Security-Policy: frame-ancestors …` | 不启用完整策略 |
+| `report` | `Content-Security-Policy-Report-Only: <完整策略>` + 仍带 `Content-Security-Policy: frame-ancestors …` | 不阻断页面；浏览器控制台与 `report-uri` 收集违规。嵌入边界仍强制执行 |
+| `enforce` | `Content-Security-Policy: <完整策略，含合并后的 frame-ancestors>` | 阻断违规请求 |
+
+完整策略（两种模式相同）：
+
+```text
+default-src 'self'; script-src 'self' 'sha256-<index.html 内联脚本哈希>'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self';
+frame-ancestors 'self' <仅 /a/*：DSH_EE_EMBED_ORIGINS 与设置里追加的来源>
+```
+
+- `script-src` 的哈希在启动时从**实际嵌入、实际下发的那份** `index.html` 计算（首屏主题脚本），构建产物变了哈希跟着变，不需要手工维护；不会用 `'unsafe-inline'` 兜底。没有嵌入前端（HTML 不由本进程提供）时 `script-src` 只有 `'self'`。
+- `DSH_EE_CSP_REPORT_URI`（可选）：写进策略的 `report-uri`，浏览器把违规 POST 过去（`Content-Type: application/csp-report`）。dsh-ee 不自带收集端点，用现有日志/网关或反向代理接；建议 `report` 模式先配它。
+- 只作用于本进程下发的 `text/html`：JSON、静态资源、3xx 重定向、SSE 流不受影响。前端单独部署（HTML 由 nginx 等提供）时，本进程不会给那些 HTML 加 CSP，要在实际提供 HTML 的那层配置。
+- 上线顺序：`off` → `report` 观察 1–2 周（看浏览器控制台或报告端点）→ `enforce`。切换需要重启；回滚把变量改回 `off` 重启即可。
+- 已知边界（`enforce` 下按当前策略可能被拦，先看 `report` 再决定是否放开）：品牌设置里本地图片裁剪用 `blob:` URL 预览，而 `img-src` 不含 `blob:`；外部字体/CDN 不在 `font-src` / `connect-src` 放行之列；内联事件属性与 `javascript:` URL 不能靠哈希放行（当前前端没有）。
+- 反代不要再写第二份 `Content-Security-Policy`（多份会按交集执行，可能让这里的配置静默失效）；也不要加 `X-Frame-Options`。验收：`curl -sI https://ee.example.com/login | grep -i 'content-security-policy'`，`report` 模式下同时能看到 `content-security-policy-report-only`。
+
 ## 11. 常见运维任务速查
 
 | 我要… | 做什么 |
@@ -330,7 +381,7 @@ cp /path/to/当前目录/.env .
 | 指标（Prometheus）、链路追踪、慢请求日志、请求 ID | 没有；只有文本日志与 `/healthz` |
 | 日志级别/轮转/syslog/Webhook | 没有；在外部日志设施处理 |
 | 审计导出、保留期、外发 | 没有；只有 `/admin/audit` 页面查询 |
-| 多实例/共享存储/对象存储 | 部分：一次性状态已入数据库 `ephemeral_states`（§9.2）；后台任务租约、限流、缓存、预载任务仍在进程内存，tarball 在本地磁盘 |
+| 多实例完整水平扩展 | 周期后台任务已用 `background_leases` 租约选主、一次性状态已入数据库 `ephemeral_states`（§9.2）；登录限流、缓存、预载任务、MCP 事件流仍在进程内存，tarball 在本地磁盘，迁移要求先起一个，作业级归属未做；共享存储/对象存储没有 |
 | 零停机升级、滚动升级 | 没有；升级期间服务不可用 |
 | 容量/限流面板、每令牌限流 | 没有；见 [architecture.md](./architecture.md) §7 |
 | 备份一致性编排（数据库 + blobs 同一快照） | 没有；靠运维窗口与流程约束 |

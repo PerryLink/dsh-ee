@@ -451,6 +451,10 @@ func hostAllowlisted(host string, patterns []string) bool {
 	return false
 }
 
+// PublicHostProblem 是 publicHostProblem 的导出形式：安装 / 下载扩展包时按实际解析到的 IP
+// 再核一遍，防止域名解析到内网（企业目录的 tarball 地址虽然登记时校验过，下载前仍要再确认）。
+func PublicHostProblem(host string) string { return publicHostProblem(host) }
+
 // publicHostProblem 检查主机名是不是「公网才接受」的：拒绝 IP 字面量里的内网/回环/链路本地/
 // 保留地址、localhost 和常见内网域名、单段主机名。
 func publicHostProblem(host string) string {

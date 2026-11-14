@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -10,6 +12,15 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
+
+// deviceTokenPayload 是批准设备时密封在 device_codes.token_sealed 里的内容。
+// 开启刷新令牌（DSH_EE_REFRESH_TOKENS）后会额外带第一枚 refresh token；
+// 关闭时仍然按旧格式只密封 access token 明文，新旧格式靠首字符区分（'{' 表示 JSON）。
+type deviceTokenPayload struct {
+	AccessToken      string     `json:"access_token"`
+	RefreshToken     string     `json:"refresh_token,omitempty"`
+	RefreshExpiresAt *time.Time `json:"refresh_expires_at,omitempty"`
+}
 
 type rateWindow struct {
 	start time.Time
@@ -194,21 +205,42 @@ func (s *Server) handleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		writeDeviceErr(w, http.StatusBadRequest, "expired_token")
 		return
 	}
-	plain, err := s.box.Open(sealed)
+	raw, err := s.box.Open(sealed)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
-	t, err := s.store.AccessTokenByHash(r.Context(), secret.Hash(string(plain)))
+	// 关闭 refresh 时是旧的「只密封 access token」格式；开启后是 JSON
+	accessPlain := raw
+	var refreshPlain string
+	var refreshExpiresAt *time.Time
+	if len(raw) > 0 && raw[0] == '{' {
+		var payload deviceTokenPayload
+		if err := json.Unmarshal(raw, &payload); err != nil || payload.AccessToken == "" {
+			s.internalErr(w, r, errors.New("设备令牌密封内容损坏"))
+			return
+		}
+		accessPlain = []byte(payload.AccessToken)
+		refreshPlain = payload.RefreshToken
+		refreshExpiresAt = payload.RefreshExpiresAt
+	}
+	t, err := s.store.AccessTokenByHash(r.Context(), secret.Hash(string(accessPlain)))
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
 	s.demoStat("dsh_connect", t.Username)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"access_token": string(plain), "scopes": strings.Split(d.Scopes, ","),
+	resp := map[string]any{
+		"access_token": string(accessPlain), "scopes": strings.Split(d.Scopes, ","),
 		"user": map[string]string{"username": t.Username, "department": t.Department}, "expires_at": t.ExpiresAt,
-	})
+	}
+	if refreshPlain != "" {
+		resp["refresh_token"] = refreshPlain
+		if refreshExpiresAt != nil {
+			resp["refresh_expires_in"] = secondsUntil(*refreshExpiresAt)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleDeviceInfo(w http.ResponseWriter, r *http.Request) {
@@ -268,12 +300,27 @@ func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
 	days := settings.Connect.DeviceTokenDays
 	expires := time.Now().UTC().AddDate(0, 0, days).Truncate(time.Millisecond)
 	t := &store.AccessToken{Name: d.ClientName, Prefix: plain[:12], MonthlyTokenLimit: nil, ExpiresAt: &expires, SlidingDays: &days}
-	sealed, err := s.box.Seal([]byte(plain))
-	if err != nil {
+	// 开启刷新令牌时，批准设备这一步就把第一枚 refresh token 一起签出来，
+	// 和 access token 在同一个事务里落库；客户端轮询 /api/device/token 时一次性拿到两枚。
+	var rt *store.RefreshToken
+	var sealed []byte
+	if s.opts.RefreshTokens {
+		seed, refreshPlain := newRefreshSeed(currentUser(r).ID, store.ClientKindDSH, s.clientIP(r), s.opts.RefreshFamilyTTL, s.opts.RefreshTokenTTL)
+		rt = seed
+		payload, err := json.Marshal(deviceTokenPayload{AccessToken: plain, RefreshToken: refreshPlain, RefreshExpiresAt: &rt.ExpiresAt})
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+		if sealed, err = s.box.Seal(payload); err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+	} else if sealed, err = s.box.Seal([]byte(plain)); err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
-	if err := s.store.ApproveDevice(r.Context(), d.UserCode, currentUser(r).ID, t, secret.Hash(plain), sealed); err != nil {
+	if err := s.store.ApproveDevice(r.Context(), d.UserCode, currentUser(r).ID, t, secret.Hash(plain), sealed, rt); err != nil {
 		s.internalErr(w, r, err)
 		return
 	}

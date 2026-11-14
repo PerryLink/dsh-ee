@@ -108,10 +108,19 @@ func (s *Store) DeleteUserEmbedSessions(ctx context.Context, userID int64) error
 	return err
 }
 
-// DeleteExpiredEmbedSessions 清理过期或已吊销的嵌入会话（后台每小时跑一次）。
+// embedSessionRetention 是过期/已吊销会话在表里保留的时长。
+//
+// 每小时清理如果立刻删掉终态行，管理端「运行概览」的今日新建/过期/吊销会在当天下午
+// 就查不到上午的数据（默认会话 TTL 只有 2 小时，新建的行过期后马上被删）。保留 7 天
+// 让按天聚合稳定，也超不过任何时区的一天；活跃会话的判定不受影响（过期/吊销本来就不算），
+// 保留期外的行仍然物理删除，表不会无限增长。
+const embedSessionRetention = 7 * 24 * time.Hour
+
+// DeleteExpiredEmbedSessions 清理超过保留期的过期/已吊销嵌入会话（后台每小时跑一次）。
 func (s *Store) DeleteExpiredEmbedSessions(ctx context.Context) (int64, error) {
+	cutoff := now().Add(-embedSessionRetention)
 	res, err := s.db.ExecContext(ctx,
-		"DELETE FROM embed_sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL", now())
+		"DELETE FROM embed_sessions WHERE expires_at <= ? OR (revoked_at IS NOT NULL AND revoked_at <= ?)", cutoff, cutoff)
 	if err != nil {
 		return 0, err
 	}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/kb"
+	"github.com/hikariming/dsh-ee/server/internal/lease"
 	"github.com/hikariming/dsh-ee/server/internal/oidc"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/registry"
@@ -99,8 +100,34 @@ type Options struct {
 	EmbedExchangePerMinute int
 	// 每用户同时有效的嵌入会话上限；0 用默认 5，超过时撤销最旧的会话。
 	EmbedMaxSessionsPerUser int
+	// 内容安全策略（DSH_EE_CSP）：off / report / enforce；空或其它值按 off。
+	// report 用 Content-Security-Policy-Report-Only，enforce 用 Content-Security-Policy；
+	// 两种模式都保留 #118 的 frame-ancestors 嵌入收口。见 security_headers.go。
+	CSP string
+	// CSP 违规报告地址（DSH_EE_CSP_REPORT_URI）；为空时策略里不加 report-uri。
+	CSPReportURI string
+	// index.html 里内联脚本的 CSP sha256 源（形如 "sha256-…"）。由 webui 在启动时从
+	// 嵌入的构建产物算出来，见 webui.InlineScriptHashes；为空时 script-src 只有 'self'。
+	CSPInlineScriptHashes []string
 	// 企业目录（directory.go）：tarball 来源的主机白名单；空表示只接受公网 https 地址。
 	DirectoryTarballHosts []string
+	// API 客户端 client_credentials（clients.go）：每 IP 每分钟最多签发几次；0 表示关闭限流，
+	// 配置默认 120（DSH_EE_CLIENT_TOKEN_PER_MINUTE）。只防撞库，正常集成换 token 远低于这个量。
+	ClientTokenPerMinute int
+	// 多实例后台任务租约（internal/lease），由 cmd/dsh-ee 创建后传入，后台循环与清理任务共用。
+	// nil 表示不启用：每个实例都会执行周期任务（单实例与测试的原有行为）。
+	BackgroundLeases *lease.Runner
+	// 刷新令牌（docs/token-lifecycle.md §3）：默认关闭；关闭时 POST /api/auth/refresh 返回 404，
+	// 设备登录 / 手工签发也不会额外返回 refresh token。
+	RefreshTokens bool
+	// refresh 换出来的 access token 有效期；0 用默认 1h。
+	RefreshAccessTTL time.Duration
+	// 单枚 refresh token 的空闲有效期；0 用默认 30 天。
+	RefreshTokenTTL time.Duration
+	// 令牌族绝对有效期；0 用默认 180 天。
+	RefreshFamilyTTL time.Duration
+	// 轮换宽限：>0 时旧 refresh 在轮换后这段时间内重试会原样返回上次响应；0 严格。
+	RefreshGrace time.Duration
 }
 
 type Server struct {
@@ -112,11 +139,15 @@ type Server struct {
 	loginIPLimiter  *loginIPLimiter
 	deviceCodeRate  *ipRate
 	deviceTokenRate *ipRate
-	// 启动时间与登录计数，只给 /metrics 用
+	// client_credentials 的每 IP 限流；nil 表示关闭（见 clients.go）
+	clientTokenRate *ipRate
+	// 启动时间、登录计数与嵌入拒绝计数，只给 /metrics 用
 	startedAt            time.Time
 	loginFailures        atomic.Uint64
 	loginIPLimited       atomic.Uint64
 	loginUsernameLimited atomic.Uint64
+	// 被拒绝的嵌入请求数（embed.deny 审计）：进程内累计，重启清零、多实例各自独立
+	embedDenied atomic.Uint64
 	// 可信反向代理网段；只有这些对端的 X-Forwarded-* 会被采信（见 proxy.go）
 	trustedProxies []netip.Prefix
 	upstream       *http.Client
@@ -157,6 +188,8 @@ type Server struct {
 	routeTable []route
 	// 由路由表生成的 Agent 工具
 	agentTools []*agentTool
+	// 后台周期任务的租约（多实例选主）；nil 时直接执行
+	leases *lease.Runner
 	// 知识库的内存关键词索引
 	kb kbIndex
 	// OIDC 登录：发现配置与公钥缓存（一次性 state/PKCE 在共享表 ephemeral_states 里）
@@ -167,6 +200,19 @@ type Server struct {
 func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Server {
 	if opts.SessionTTL == 0 {
 		opts.SessionTTL = 7 * 24 * time.Hour
+	}
+	// 刷新令牌的默认 TTL；只在开启 refresh 时用得到，但先归一到合法值，避免响应里算出空时间。
+	if opts.RefreshAccessTTL <= 0 {
+		opts.RefreshAccessTTL = time.Hour
+	}
+	if opts.RefreshTokenTTL <= 0 {
+		opts.RefreshTokenTTL = 30 * 24 * time.Hour
+	}
+	if opts.RefreshFamilyTTL <= 0 {
+		opts.RefreshFamilyTTL = 180 * 24 * time.Hour
+	}
+	if opts.RefreshFamilyTTL < opts.RefreshTokenTTL {
+		opts.RefreshFamilyTTL = opts.RefreshTokenTTL
 	}
 	if len(opts.TrustedProxies) == 0 {
 		// 没接线时也保持安全默认：只信任本机回环地址上的代理。
@@ -188,11 +234,14 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 			MaxIdleConnsPerHost:   32,
 		})}
 	}
-	s := &Server{store: st, box: box, opts: opts, log: log, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s := &Server{store: st, box: box, opts: opts, log: log, leases: opts.BackgroundLeases, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}
 	s.loginIPLimiter = newLoginIPLimiter(opts.LoginIPLimit, opts.LoginIPWindow)
+	if opts.ClientTokenPerMinute > 0 {
+		s.clientTokenRate = newIPRate(opts.ClientTokenPerMinute)
+	}
 	s.startedAt = time.Now()
 	s.kb.ix = kb.NewIndex()
 	s.extEndpointRate.limit = extEndpointPerMinute
@@ -260,7 +309,18 @@ func (s *Server) Handler() http.Handler {
 	// 没匹配上的接口返回 JSON 404，不要落到前端的 index.html
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "接口不存在") })
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+		// Anthropic 兼容面下的其它路径（batches/files/count_tokens 的子路径等）用 Anthropic 错误壳，
+		// 避免 Claude Code / Anthropic SDK 拿到 OpenAI 形状的 404。
+		if isAnthropicMessagesPath(r.URL.Path) {
+			writeAnthropicErr(w, http.StatusNotFound, "not_found_error", "接口不存在：Anthropic 兼容目前只实现 POST /v1/messages")
+			return
+		}
 		writeOpenAIErr(w, http.StatusNotFound, "invalid_request_error", "not_found", "接口不存在")
+	})
+	// Anthropic 兼容面的别名前缀（DeepSeek 的 base URL 习惯）：未匹配路径用 Anthropic 错误壳，
+	// 不要落到前端 SPA 兜底。
+	mux.HandleFunc("/anthropic/", func(w http.ResponseWriter, r *http.Request) {
+		writeAnthropicErr(w, http.StatusNotFound, "not_found_error", "接口不存在：Anthropic 兼容入口是 POST /v1/messages（别名 /anthropic/v1/messages）")
 	})
 	if s.opts.Web != nil {
 		mux.Handle("/", s.opts.Web)
@@ -315,6 +375,28 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apiError{Error: msg})
+}
+
+// httpProblem 是带状态码和给人看的信息的失败：处理函数内部把校验失败返回给外层统一写回，
+// 免得每个步骤都自己 writeErr。实现函数见 writeProblem。
+type httpProblem struct {
+	status int
+	msg    string
+}
+
+func (e *httpProblem) Error() string { return e.msg }
+
+// statusErr 造一个带状态码的失败。
+func statusErr(status int, msg string) error { return &httpProblem{status: status, msg: msg} }
+
+// writeProblem 把处理函数返回的失败写回：带状态码的按状态码，其余按 500。
+func (s *Server) writeProblem(w http.ResponseWriter, r *http.Request, err error) {
+	var p *httpProblem
+	if errors.As(err, &p) {
+		writeErr(w, p.status, p.msg)
+		return
+	}
+	s.internalErr(w, r, err)
 }
 
 func (s *Server) internalErr(w http.ResponseWriter, r *http.Request, err error) {
@@ -447,12 +529,14 @@ func (s *Server) RunBackground(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			j, err := s.registry.CheckUpdates(ctx, 0)
-			if err != nil {
-				s.log.Warn("检查上游新版本失败", "err", err)
-			} else if j != nil {
-				s.log.Info("发现上游新版本，已开始同步", "job", j.ID, "count", j.Total)
-			}
+			s.runLeased(ctx, leaseRegistryCheckUpdate, func(ctx context.Context) {
+				j, err := s.registry.CheckUpdates(ctx, 0)
+				if err != nil {
+					s.log.Warn("检查上游新版本失败", "err", err)
+				} else if j != nil {
+					s.log.Info("发现上游新版本，已开始同步", "job", j.ID, "count", j.Total)
+				}
+			})
 			t.Reset(6 * time.Hour)
 		}
 	}

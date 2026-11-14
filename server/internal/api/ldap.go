@@ -601,15 +601,17 @@ func (s *Server) runLDAPSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			cfg, err := s.loadLDAP(ctx)
-			if err != nil || !cfg.Enabled || !cfg.SyncDisable {
-				continue
-			}
-			if res, err := s.syncLDAP(ctx); err != nil {
-				s.log.Warn("LDAP 同步失败", "err", err)
-			} else if !res.OK {
-				s.log.Warn("LDAP 同步未完成", "err", res.Error)
-			}
+			s.runLeased(ctx, leaseLDAPSync, func(ctx context.Context) {
+				cfg, err := s.loadLDAP(ctx)
+				if err != nil || !cfg.Enabled || !cfg.SyncDisable {
+					return
+				}
+				if res, err := s.syncLDAP(ctx); err != nil {
+					s.log.Warn("LDAP 同步失败", "err", err)
+				} else if !res.OK {
+					s.log.Warn("LDAP 同步未完成", "err", res.Error)
+				}
+			})
 		}
 	}
 }

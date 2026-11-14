@@ -19,6 +19,11 @@ scope 只是上限：服务端每次请求都会把 scope 和账号 RBAC 求交�
 
 不要把管理员令牌写进共享脚本；给每个集成方单独发令牌，按需最小化 scope。
 
+无人值守的集成方可以改用 API 客户端：管理员注册 `client_id` / `client_secret` 后，用
+`POST /api/auth/client-token`（`client_credentials`）换 1 小时有效的 `ee_at_` 令牌，不需要人工维护令牌。
+scope 取客户端注册范围 ∩ 所属账号当前权限，创建与换 token 的细节见
+[token-lifecycle.md](./token-lifecycle.md) §6。
+
 ```sh
 export BASE='https://dsh-ee.example.com'
 export TOKEN='ee_at_…'

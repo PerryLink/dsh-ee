@@ -679,22 +679,24 @@ func (s *Server) runExtHealth(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			base := s.systemBase(ctx)
-			if base == "" {
-				continue
-			}
-			exts, specs, err := s.serviceExtensions(ctx)
-			if err != nil {
-				s.log.Warn("列出服务扩展失败", "err", err)
-				continue
-			}
-			for _, a := range exts {
-				if h := s.checkExtHealth(ctx, a, specs[a.ID], base); !h.OK {
-					s.log.Warn("服务扩展健康检查没通过", "extension", specs[a.ID].Extension.ID, "err", h.Error)
-				} else if h.Changed {
-					s.log.Info("服务扩展的清单变了，等管理员确认", "extension", specs[a.ID].Extension.ID, "version", h.NewVersion)
+			s.runLeased(ctx, leaseExtHealth, func(ctx context.Context) {
+				base := s.systemBase(ctx)
+				if base == "" {
+					return
 				}
-			}
+				exts, specs, err := s.serviceExtensions(ctx)
+				if err != nil {
+					s.log.Warn("列出服务扩展失败", "err", err)
+					return
+				}
+				for _, a := range exts {
+					if h := s.checkExtHealth(ctx, a, specs[a.ID], base); !h.OK {
+						s.log.Warn("服务扩展健康检查没通过", "extension", specs[a.ID].Extension.ID, "err", h.Error)
+					} else if h.Changed {
+						s.log.Info("服务扩展的清单变了，等管理员确认", "extension", specs[a.ID].Extension.ID, "version", h.NewVersion)
+					}
+				}
+			})
 		}
 	}
 }

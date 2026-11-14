@@ -89,8 +89,18 @@ const (
 	auditDshReleaseRecommend    = "dsh_release.recommend"
 	auditDshReleaseDelete       = "dsh_release.delete"
 
+	// 刷新令牌（refresh.go）：轮换成功、检测到旧令牌复用（后者会吊销整族，高危）
+	auditTokenRefresh      = "token.refresh"
+	auditTokenRefreshReuse = "token.refresh_reuse"
+
 	auditNpmTokenCreate = "npm_token.create"
 	auditNpmTokenRevoke = "npm_token.revoke"
+
+	// 统一令牌（tokens.go）与 API 客户端（clients.go，client_credentials）
+	auditTokenIssue = "token.issue"
+	// API 客户端注册：client.create 创建 / client.revoke 禁用（docs/token-lifecycle.md）
+	auditAPIClientCreate = "client.create"
+	auditAPIClientRevoke = "client.revoke"
 )
 
 // audit 以当前登录用户的身份记一条操作。写失败只记日志，不影响请求本身。

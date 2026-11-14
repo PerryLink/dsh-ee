@@ -22,6 +22,7 @@ export const AUDIT_CATEGORIES = [
   "device",
   "asset",
   "connection",
+  "extension",
   "connect",
   "brand",
   "kb",
@@ -30,6 +31,7 @@ export const AUDIT_CATEGORIES = [
   "dsh_release",
   "embed",
   "directory",
+  "client",
 ] as const;
 
 /** 动作名；没有翻译的新动作原样显示。 */

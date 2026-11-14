@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import { useApi } from "../lib/use-api";
 import { Badge, Button, Field, Notice, ToggleRow, cx, inputCls } from "./ui";
+import { EmbedOverview } from "./embed-overview";
 
 /** 一行一个：去掉空行与首尾空白。 */
 const lines = (text: string) => text.split("\n").map((x) => x.trim()).filter(Boolean);
@@ -198,6 +199,9 @@ export function EmbedSettings() {
           <span className="font-mono">{effective.allowedOrigins.join(" ")}</span>
         </div>
       )}
+
+      {/* 运行概览：活跃会话/今日新建/过期/吊销/24h 拒绝 + 活跃应用 top 10，手动刷新 */}
+      <EmbedOverview />
     </div>
   );
 }

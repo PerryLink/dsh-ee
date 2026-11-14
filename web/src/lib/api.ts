@@ -74,6 +74,22 @@ export interface AdminEmbedSettings {
   settings: Settings["embed"];
 }
 
+/**
+ * 管理端嵌入运行概览（GET /api/admin/embed/stats）：只有聚合数量，
+ * 不含用户、IP、令牌与宿主 origin；top_apps 最多 10 个低基数应用标识。
+ */
+export interface AdminEmbedStats {
+  generated_at: string;
+  /** 统计口径的「今天零点」；界面按浏览器本地时区请求 */
+  day_start: string;
+  active_sessions: number;
+  created_today: number;
+  expired_today: number;
+  revoked_today: number;
+  denied_24h: number;
+  top_apps: { app: string; sessions: number }[];
+}
+
 export interface Role {
   id: number;
   code: string;
@@ -473,7 +489,7 @@ export interface AuditLog {
   target: string;
   detail: Record<string, unknown> | null;
   ip: string;
-  via: "web" | "token" | "agent" | "system";
+  via: "web" | "token" | "agent" | "system" | "client_credentials";
   token_id: number | null;
   client: string;
   created_at: string;
@@ -1041,6 +1057,198 @@ export interface SigningKeysResp {
   purpose: string;
 }
 
+/** 企业目录（docs/plugin-signing.md §8）：登记过的目录条目 + 安装状态，管理页用。 */
+export interface DirectorySummary {
+  directory_id: string;
+  entries_count: number;
+  document_digest: string;
+  applied_by?: number;
+  applied_at: string;
+}
+
+export interface DirectoryEntry {
+  id: number;
+  directory_id: string;
+  kind: "extension" | "dsh-plugin";
+  name: string;
+  version: string;
+  channel: string;
+  /** 扩展：清单（声明式连同接口文档）的 sha256；插件：npm sha512 SRI */
+  digest: string;
+  source_type: "npm" | "tarball";
+  source_registry?: string;
+  source_url?: string;
+  size?: number;
+  publisher_user_id?: number;
+  publisher_username?: string;
+  publisher_department?: string;
+  notes?: string;
+  /** 条目里声明的签名者（只核对声明；安装时再验包本身） */
+  signature_key_id?: string;
+  signature_key_state?: string;
+  document_digest: string;
+  applied_by?: number;
+  applied_at: string;
+  created_at: string;
+  updated_at: string;
+  /** 已装版本：扩展是连接上生效的版本；插件是企业源里这个版本（或本地最新）的版本 */
+  installed_version?: string;
+  /** 插件：企业源里那个版本的状态（published / pending / rejected / unpublished） */
+  installed_status?: string;
+  /** 扩展：装成的连接标识 */
+  installed_connection?: string;
+  /** 目录登记的版本已经在企业里 */
+  installed: boolean;
+  /** 目录里的版本比企业里现有的新，可以升级 */
+  upgrade_available: boolean;
+}
+
+export interface DirectoryListResp {
+  directories: DirectorySummary[];
+  entries: DirectoryEntry[];
+  count: number;
+  /** 当前 tarball 主机白名单；空表示只接受公网 https 地址 */
+  tarball_hosts: string[];
+}
+
+export interface DirectoryIssue {
+  severity: "error" | "warning";
+  code: string;
+  field: string;
+  index: number;
+  message: string;
+}
+
+export interface DirectoryEntrySource {
+  type: "npm" | "tarball";
+  registry?: string;
+  url?: string;
+}
+
+export interface DirectoryCheckEntry {
+  index: number;
+  id: string;
+  kind: "extension" | "dsh-plugin";
+  name: string;
+  version: string;
+  channel: string;
+  digest: string;
+  source: DirectoryEntrySource;
+  size?: number;
+  publisher?: { user_id?: number; username?: string; department?: string };
+  notes?: string;
+  min_version?: string;
+  signature?: { status: string; key_id?: string; key_state?: string; verified: boolean };
+  issues: DirectoryIssue[];
+}
+
+export interface DirectoryDiff {
+  created: number;
+  updated: number;
+  unchanged: number;
+  removed: number;
+  created_identities?: string[];
+  updated_identities?: string[];
+  removed_identities?: string[];
+}
+
+/** POST /api/admin/directory/check 的计划：目录整体签名 + 逐条校验 + 和已登记内容的差异。 */
+export interface DirectoryPlan {
+  ok: boolean;
+  errors: number;
+  warnings: number;
+  document: {
+    format: number;
+    directory_id: string;
+    title?: ExtText;
+    generated_at?: string;
+    issuer: { name: string; key_id: string };
+    entries_count: number;
+    document_digest: string;
+    signature?: { status: "unsigned" | "valid" | "invalid" | "revoked"; key_id?: string; key_state?: string; digest?: string; message?: string };
+  };
+  entries: DirectoryCheckEntry[];
+  issues: DirectoryIssue[];
+  existing?: { entries_count: number; document_digest?: string; applied_at?: string; applied_by?: number };
+  diff?: DirectoryDiff;
+  /** 登记前要管理员确认的敏感变化（移除条目、同版本换内容、换来源） */
+  sensitive: string[];
+}
+
+export interface DirectoryApplyResult {
+  created: number;
+  updated: number;
+  unchanged: number;
+  removed: number;
+}
+
+export interface DirectoryApplyResp {
+  ok: boolean;
+  directory_id: string;
+  document_digest: string;
+  signature?: DirectoryPlan["document"]["signature"];
+  result: DirectoryApplyResult;
+  confirmed: string[];
+  entries: DirectoryEntry[];
+}
+
+/** 插件条目的安装计划：目标版本、企业源里现在是什么状态、要不要审核。 */
+export interface DirectoryPluginPlan {
+  name: string;
+  version: string;
+  channel: string;
+  digest: string;
+  source: "npm" | "tarball";
+  registry?: string;
+  existing_version?: string;
+  existing_status?: string;
+  sync_version?: string;
+  review_required: boolean;
+  message?: string;
+}
+
+/** 安装 / 升级的返回：计划 + 结果（失败在 ApiError.data.plan 里，形状相同）。 */
+export interface DirectoryInstallPlan {
+  ok: boolean;
+  action: "install" | "upgrade";
+  kind: "extension" | "dsh-plugin";
+  directory_id: string;
+  entry: DirectoryEntry;
+  /** 扩展：完整的扩展安装计划（check / signature / sensitive / existing） */
+  extension?: ExtPlan;
+  /** 插件：同步 / 审核计划 */
+  plugin?: DirectoryPluginPlan;
+  sensitive?: string[];
+  result?: {
+    status?: string;
+    already?: boolean;
+    review_required?: boolean;
+    job?: { id: number; status: string };
+    identity?: string;
+    digest?: string;
+    tools?: number;
+    sync_error?: string;
+    upgraded_from?: string;
+    asset?: { id: number; slug: string };
+    [key: string]: unknown;
+  };
+  message?: string;
+  plan_only?: boolean;
+}
+
+/** 安装 / 升级请求体：只出计划时带 plan_only，确认升级时带 confirm。 */
+export interface DirectoryInstallReq {
+  plan_only?: boolean;
+  confirm?: boolean;
+  slug?: string;
+  url?: string;
+  auth?: { type: "none" | "bearer" | "header"; header?: string; shared_name?: string };
+  secret?: string;
+  admin?: Record<string, unknown>;
+  oauth_client_id?: string;
+  oauth_client_secret?: string;
+}
+
 /** 连接上的员工身份设置：ee_jwt 由 dsh-ee 每次现签，user_secret 由员工自己填。 */
 export interface UserAuth {
   mode: "ee_jwt" | "user_secret" | "oauth";
@@ -1316,6 +1524,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** 出错的响应体：409 / 400 里的 plan、issues 等结构化信息（目录安装、回滚预览） */
+    public data: unknown = null,
   ) {
     super(message);
   }
@@ -1381,7 +1591,7 @@ export async function request<T>(
     const msg =
       (data as { error?: string } | null)?.error ??
       (res.status >= 500 ? i18n.t("api.serverError") : i18n.t("api.requestFailed", { status: res.status }));
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, data);
   }
   return data as T;
 }
@@ -1795,6 +2005,15 @@ export const api = {
   checkExtension: (pkg: ExtPackage) => request<ExtPlan>("POST", "/api/admin/extensions/check", pkg),
   installExtension: (pkg: ExtPackage, r: ExtInstallReq) =>
     request<{ asset: { id: number; slug: string }; identity: string; tools?: number; sync_error?: string; upgraded_from?: string }>("POST", "/api/admin/extensions/install", { ...pkg, ...r }),
+  /** 企业目录（docs/plugin-signing.md §8）：登记来源 + 对单条显式安装 / 升级。 */
+  directory: () => request<DirectoryListResp>("GET", "/api/admin/directory"),
+  checkDirectory: (document: string) => request<DirectoryPlan>("POST", "/api/admin/directory/check", { document }),
+  applyDirectory: (document: string, confirm = false) => request<DirectoryApplyResp>("POST", "/api/admin/directory/apply", { document, confirm }),
+  /** 只出计划：扩展会下载并核对包，插件不启动同步。 */
+  directoryEntryPlan: (id: number, action: "install" | "upgrade", req: DirectoryInstallReq = {}) =>
+    request<DirectoryInstallPlan>("POST", `/api/admin/directory/entries/${id}/${action}`, { ...req, plan_only: true }),
+  directoryEntryInstall: (id: number, action: "install" | "upgrade", req: DirectoryInstallReq = {}) =>
+    request<DirectoryInstallPlan>("POST", `/api/admin/directory/entries/${id}/${action}`, req),
   /** 扩展签名的信任根：列表含换下 / 撤销的历史；私钥不入库，这里只收公钥 PEM。 */
   signingKeys: () => request<SigningKeysResp>("GET", "/api/admin/signing-keys"),
   addSigningKey: (input: { public_key: string; note?: string; purpose?: string }) => request<SigningKey>("POST", "/api/admin/signing-keys", input),
@@ -1837,6 +2056,8 @@ export const api = {
   settings: () => request<Settings>("GET", "/api/settings", undefined, { silent401: true }),
   saveSettings: (s: Settings) => request<Settings>("PUT", "/api/admin/settings", s),
   adminEmbedSettings: () => request<AdminEmbedSettings>("GET", "/api/admin/embed-settings"),
+  /** 嵌入运行概览：按浏览器本地时区算「今天」，只返回聚合数量。 */
+  adminEmbedStats: () => request<AdminEmbedStats>("GET", `/api/admin/embed/stats?tz=${-new Date().getTimezoneOffset()}`),
   embedLogout: () => request<void>("POST", "/api/auth/embed/logout", {}),
 
   catalog: () => request<{ plugins: CatalogPlugin[] }>("GET", "/api/catalog").then((r) => r.plugins),

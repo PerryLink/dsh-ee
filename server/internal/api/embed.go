@@ -207,7 +207,9 @@ func writeEmbedErr(w http.ResponseWriter, requestID, stage string, status int, c
 }
 
 // auditEmbedDenied 记录一次被拒绝的嵌入请求（不记 code / 令牌明文），带上已知的 app/host。
+// 同时累加 /metrics 的进程内拒绝计数（低基数，不按原因/应用拆标签）。
 func (s *Server) auditEmbedDenied(r *http.Request, u *store.User, reason string, detail map[string]any) {
+	s.embedDenied.Add(1)
 	d := map[string]any{"reason": reason}
 	for k, v := range detail {
 		d[k] = v

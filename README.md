@@ -69,6 +69,7 @@ dsh-ee is not an AI runtime. **Inference and tool calls run in each employee's l
 - **Built-in npm registry with review**: hosting and publishing for the company scope, per-version review, and automated checks for install scripts, dependencies, licenses and leaked secrets. The company scope never falls back to the public registry, which blocks dependency confusion. Supports preloading packages from upstream and offline bundle import/export.
 - **OpenAI-compatible model gateway**: plug in DeepSeek or any other OpenAI-compatible upstream and expose one set of model names. A model can sit on several upstreams with automatic failover. Each account gets a monthly token quota and a list of allowed models.
 - **One-command onboarding**: run `curl -fsSL <dsh-ee>/setup.sh | sh` (or `irm <dsh-ee>/setup.ps1 | iex` on Windows) and confirm a device code in the browser. A single unified token (`ee_at_…`) then configures the npm registry, models and capability hub.
+- **Third-party harness access**: register an API client (`client_id` / `client_secret`) per integration; CI or another harness exchanges it for a short-lived `ee_at_` token via `client_credentials` instead of holding an admin token. Scopes are capped by the owning account, the secret is stored as a hash and shown once, and every exchange is audited.
 - **Identity and governance**: local accounts plus LDAP / AD, RBAC, menus you can edit at runtime, an audit log, and analytics broken down by department, capability, model and endpoint.
 - **Runs on domestic infrastructure**: a single static Go binary for linux/amd64 and arm64. Runs on OceanBase or TiDB and works fully offline.
 
@@ -173,7 +174,11 @@ Confirm the device code in the browser, and DSH is connected to the company's ca
 | `DSH_EE_DATA_DSN` / `DSH_EE_DATA_READ_DSN` | Data hub database (writable / read-only); `off` disables the data hub |
 | `DSH_EE_LOGIN_IP_LIMIT` / `DSH_EE_LOGIN_IP_WINDOW` | Failed logins allowed per client IP in a fixed window, default `50` per `15m`; `0` / `off` disables |
 | `DSH_EE_METRICS` | Set to `true` to expose `GET /metrics` (Prometheus text format, loopback / internal networks only); off by default |
+| `DSH_EE_CSP` | Content-Security-Policy mode: `off` (default; only the existing `frame-ancestors` embedding guard), `report` (`Content-Security-Policy-Report-Only`, report only) or `enforce` (`Content-Security-Policy`, block violations). Inline-script hashes are computed from the embedded `index.html` at startup; `frame-ancestors` is merged with `DSH_EE_EMBED_ORIGINS`. Invalid values fail startup. See [docs/operations.md](./docs/operations.md) §10.1 |
+| `DSH_EE_CSP_REPORT_URI` | Optional CSP violation report URL (`http(s)://…`); added as `report-uri` when `DSH_EE_CSP` is not `off`. dsh-ee does not ship a collector |
 | `DSH_EE_TRUSTED_PROXIES` | Reverse-proxy IPs/CIDRs (comma-separated) whose `X-Forwarded-*` headers are trusted; defaults to loopback only. Set it when the proxy runs in another container/host or behind a cloud LB |
+| `DSH_EE_REFRESH_TOKENS` | Opt-in OAuth-style refresh tokens (one-time rotation + reuse detection); default off, so no client behavior changes. When enabled, device/manual issuance also returns an `ee_rt_` refresh token and `POST /api/auth/refresh` is available (404 while off). See [docs/token-lifecycle.md](./docs/token-lifecycle.md) §3 |
+| `DSH_EE_REFRESH_ACCESS_TTL` / `_TOKEN_TTL` / `_FAMILY_TTL` / `_GRACE` | Refresh token TTLs and rotation grace: access `1h`, refresh idle `720h`, family cap `4320h`, grace `0` (strict) by default |
 
 The full list is in [server/README.md](./server/README.md).
 

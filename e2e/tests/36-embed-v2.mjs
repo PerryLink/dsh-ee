@@ -18,7 +18,7 @@ const SLUG = ${JSON.stringify(slug)};
 const DEEPLINK = ${JSON.stringify(deeplink)};
 const TARGET = new URL(EE).origin;
 const state = { hello: null, ready: null, session: null, deeplink: null, loggedOut: null, errors: [],
-  authRequests: [], navigateRequests: [], openExternal: [], mints: 0, loads: 0, lastMintError: null };
+  authRequests: [], navigateRequests: [], openExternal: [], resizes: [], themes: [], mints: 0, loads: 0, lastMintError: null };
 window.__embedState = state;
 const frame = document.getElementById("ee-frame");
 frame.addEventListener("load", () => { state.loads++; });
@@ -54,9 +54,12 @@ window.addEventListener("message", (e) => {
   if (m.type === "dsh-ee:logged-out") state.loggedOut = m;
   if (m.type === "dsh-ee:navigate-request") state.navigateRequests.push(m.path);
   if (m.type === "dsh-ee:open-external") state.openExternal.push(m.url);
+  if (m.type === "dsh-ee:resize") state.resizes.push(m);
+  if (m.type === "dsh-ee:theme") state.themes.push(m);
   if (m.type === "dsh-ee:error") state.errors.push(m);
 });
 window.__embedNavigate = (path) => frame.contentWindow.postMessage({ v: 2, type: "dsh-ee:navigate", path }, TARGET);
+window.__embedTheme = (theme) => frame.contentWindow.postMessage({ v: 1, type: "dsh-ee:theme", theme }, TARGET);
 window.__embedLogout = () => frame.contentWindow.postMessage({ v: 2, type: "dsh-ee:logout" }, TARGET);
 frame.src = EE + "/a/" + SLUG + "?embed=1&host=" + encodeURIComponent(location.origin) + "&fit=auto&theme=light";
 </script></body></html>`;
@@ -122,6 +125,49 @@ export default async function (t) {
     for (const s of SUPPORTS) assert(state.hello.supports?.includes(s), "hello.supports 应包含 " + s + "：" + JSON.stringify(state.hello.supports));
     assert(state.ready?.supports?.includes("connect-v1"), "ready 仍带 connect-v1");
     step("v2 握手：hello/supports（8 项）+ ready 兼容 v1");
+
+    // fit=auto / 视口 / 超时：hello 与 ready 带 viewport，hello 声明 10s 握手 + 8s 宿主兜底；
+    // resize 报内容高度（上限 4000）。宿主按 8s 显示手动兜底、iframe 10s 自行失败，两者对齐。
+    assertEq(state.hello.viewport?.mobile, false, "hello.viewport.mobile（桌面）");
+    assertEq(state.ready.viewport?.mobile, false, "ready.viewport.mobile（桌面）");
+    assertEq(state.hello.timeouts?.handshake_ms, 10000, "hello.timeouts.handshake_ms");
+    assertEq(state.hello.timeouts?.host_fallback_ms, 8000, "hello.timeouts.host_fallback_ms");
+    await guest.waitForFunction(() => (window.__embedState?.resizes ?? []).length > 0, null, { timeout: 10000 });
+    const resize = await guest.evaluate(() => window.__embedState.resizes.at(-1));
+    assert(typeof resize?.height === "number" && resize.height > 0, "resize.height：" + JSON.stringify(resize));
+    assert(resize.height <= 4000, "resize.height 上限 4000：" + resize.height);
+    assert(typeof resize?.width === "number" && resize.width > 0, "resize.width：" + JSON.stringify(resize));
+    assertEq(resize?.mobile, false, "resize.mobile（桌面）");
+    step(`fit=auto：resize 报内容高度 ${resize.height}px（上限 4000），宿主 8s/iframe 10s 超时声明一致`);
+
+    // 主题：URL theme=light 生效；宿主 dsh-ee:theme 仍可覆盖（只改 DOM）。
+    assertEq(state.hello.theme, "light", "hello.theme（URL theme=light）");
+    await guest.evaluate(() => window.__embedTheme("dark"));
+    await guest.waitForFunction(() => window.__embedState?.themes?.at(-1)?.theme === "dark", null, { timeout: 5000 });
+    await guest.frameLocator("#ee-frame").locator("html.dark").waitFor({ timeout: 5000 });
+    await guest.evaluate(() => window.__embedTheme("light"));
+    await guest.waitForFunction(() => window.__embedState?.themes?.at(-1)?.theme === "light", null, { timeout: 5000 });
+    step("theme：URL theme=light 首屏生效，宿主 dsh-ee:theme 覆盖后 iframe 只改 DOM 并回发确认");
+
+    // 移动端：窄屏 iframe 显示常驻「在浏览器打开」兜底，内容保留、不自动顶层打开。
+    const hostURL = guest.url();
+    await guest.evaluate(() => {
+      document.getElementById("ee-frame").style.width = "390px";
+    });
+    await guest.waitForFunction(
+      () => (window.__embedState?.resizes ?? []).some((r) => r.mobile === true),
+      null,
+      { timeout: 10000 },
+    );
+    const frameMobile = guest.frameLocator("#ee-frame");
+    await frameMobile.locator("[data-embed-mobile]").waitFor({ timeout: 10000 });
+    await frameMobile.getByRole("link", { name: "在浏览器打开" }).waitFor();
+    await frameMobile.getByRole("heading", { name: /主面板内容|侧栏内容/ }).first().waitFor();
+    assertEq(guest.url(), hostURL, "移动端不自动在 iframe 里顶层跳转（宿主地址不变）");
+    await guest.evaluate(() => {
+      document.getElementById("ee-frame").style.width = "900px";
+    });
+    step("移动端（<640px）：resize.mobile=true + 常驻「在浏览器打开」，内容保留且不自动顶层打开");
 
     // deeplink：mint 时带的 next 在 exchange 后被消费（pushState，不整页刷新）
     const frameLoc = guest.frameLocator("#ee-frame");

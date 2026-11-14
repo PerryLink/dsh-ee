@@ -11,9 +11,9 @@ import { Card, Notice, Empty, tabCls } from "../components/ui";
 import { WhaleMark } from "../components/whale-mark";
 import { DemoBar } from "../components/demo-site";
 import { LivePane } from "../components/live-pane";
-import { EmbedFailure } from "../components/embed";
+import { EmbedFailure, EmbedMobileNotice } from "../components/embed";
 import { embedErrorForStatus, type EmbedOptions } from "../lib/embed";
-import { useEmbedError, useEmbedOptions } from "../lib/use-embed";
+import { useEmbedError, useEmbedMobile, useEmbedOptions } from "../lib/use-embed";
 import type { WorkbenchPane } from "../lib/workbench-render";
 
 /**
@@ -24,10 +24,14 @@ import type { WorkbenchPane } from "../lib/workbench-render";
  * ?embed=1 供宿主 iframe 嵌入：隐藏返回/管理/演示条/导出等会跳出宿主上下文的入口。
  * postMessage 握手（ready/connect/session/auth-required/error/theme/resize）在 EmbedProvider 里，
  * 协议见 docs/embedding.md；CSP 与来源校验见 server/internal/api/security_headers.go。
+ *
+ * fit=auto：页面改为内容驱动（去掉 min-h-screen，头部不再 sticky），useEmbedResize 上报内容高度，
+ * 宿主按高度撑开 iframe；fill（默认）保持原来的整页布局。
  */
 export default function AppWebPage() {
   const { slug = "" } = useParams();
   const options = useEmbedOptions();
+  const mobile = useEmbedMobile(options);
   const app = useApi(() => api.webApp(slug));
   // 加载失败 / 应用不存在 / 不在可用范围：把可判断的失败码发给宿主（未登录由 RequireAuth 处理）。
   const loadError = app.error ? embedErrorForStatus(app.errorStatus, app.error) : null;
@@ -35,16 +39,17 @@ export default function AppWebPage() {
   if (options.embed && loadError) {
     return <EmbedFailure error={loadError} onRetry={app.reload} />;
   }
+  const autoFit = options.embed && options.fit === "auto";
   return (
-    <div className="min-h-screen bg-neutral-50">
+    <div className={autoFit ? "bg-neutral-50" : "min-h-screen bg-neutral-50"}>
       <LoadState loading={app.loading && !app.data} error={app.error} onRetry={app.reload}>
-        {app.data && <AppWeb app={app.data} options={options} />}
+        {app.data && <AppWeb app={app.data} options={options} mobile={mobile} autoFit={autoFit} />}
       </LoadState>
     </div>
   );
 }
 
-function AppWeb({ app, options }: { app: WebApp; options: EmbedOptions }) {
+function AppWeb({ app, options, mobile, autoFit }: { app: WebApp; options: EmbedOptions; mobile: boolean; autoFit: boolean }) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const { search } = useLocation();
@@ -71,7 +76,8 @@ function AppWeb({ app, options }: { app: WebApp; options: EmbedOptions }) {
   const first = tab === tabs[0]?.id;
   return (
     <>
-      <header className="sticky top-0 z-10 border-b border-neutral-200/70 bg-card/90 backdrop-blur-md">
+      {mobile && <EmbedMobileNotice />}
+      <header className={autoFit ? "border-b border-neutral-200/70 bg-card/90 backdrop-blur-md" : "sticky top-0 z-10 border-b border-neutral-200/70 bg-card/90 backdrop-blur-md"}>
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 pt-3 pb-2 sm:px-6">
           {!embed && (
             <Link to="/apps" aria-label={t("appWeb.back")} className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900">

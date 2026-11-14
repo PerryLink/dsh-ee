@@ -29,6 +29,26 @@ export function EmbedGate() {
 }
 
 /**
+ * 移动端（窄屏 <640px 或移动 UA）在 iframe 里的常驻提示：内容照常显示，不自动顶层跳转，
+ * 只给出手动的「在浏览器打开」入口。是否显示由 useEmbedMobile 判定。
+ */
+export function EmbedMobileNotice() {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="note"
+      data-embed-mobile
+      className="border-b border-amber-200/80 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-200"
+    >
+      <span>{t("embed.mobileHint")}</span>{" "}
+      <a href={nonEmbedURL()} target="_top" rel="noreferrer" className="font-medium underline underline-offset-2">
+        {t("embed.openInBrowser")}
+      </a>
+    </div>
+  );
+}
+
+/**
  * 嵌入模式的失败态（未登录 / 会话过期 / 应用不存在或没权限 / 网络错误）：
  * 不在 iframe 里跳登录页，而是由调用方把 `dsh-ee:error` 发给宿主，这里只负责展示与「在浏览器打开」兜底。
  * 宿主收到错误后可以在顶层窗口走登录，或直接打开这个地址。

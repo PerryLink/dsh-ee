@@ -36,10 +36,25 @@ type Config struct {
 	Metrics bool
 	// 公开协议面（/v1/* 与 /mcp）的每令牌限流，单位「次/分钟」；默认 60，0 或 off 关闭。
 	RateLimitPerMinute int
+	// API 客户端（client_credentials）的每 IP 每分钟签发次数（DSH_EE_CLIENT_TOKEN_PER_MINUTE）；
+	// 默认 120，0 或 off 关闭。只防用错误 secret 撞库 / 刷库，正常集成远低于这个量。
+	ClientTokenPerMinute int
 	// 旧版 npm 令牌（ee_npm_）与 API key（sk-ee-）的 scope 收敛（docs/token-lifecycle.md）。
 	// true 时它们只保留原始用途的 scope：npm 令牌只剩 registry，key 只剩模型网关；
 	// 默认 false 不改变旧行为，避免现有客户端突然失效。
 	RestrictLegacyTokenScopes bool
+	// 刷新令牌（OAuth 风格，docs/token-lifecycle.md §3）。默认关闭：关闭时
+	// POST /api/auth/refresh 返回 404，设备/手工签发的响应也不带 refresh_token。
+	RefreshTokens bool
+	// refresh 换出来的 access token 有效期（DSH_EE_REFRESH_ACCESS_TTL）。
+	RefreshAccessTTL time.Duration
+	// 单枚 refresh token 的空闲有效期（DSH_EE_REFRESH_TOKEN_TTL），轮换时重新计算。
+	RefreshTokenTTL time.Duration
+	// 令牌族绝对有效期（DSH_EE_REFRESH_FAMILY_TTL）：无论怎么轮换都不能超过它。
+	RefreshFamilyTTL time.Duration
+	// 轮换宽限（DSH_EE_REFRESH_GRACE）：>0 时旧 refresh 在轮换后这段时间内重试会原样
+	// 返回上次响应（客户端没收到响应时的幂等重试）；0 表示严格，再次出现即按复用吊销整族。
+	RefreshGrace time.Duration
 	// 首次启动、用户表为空时创建的管理员。
 	BootstrapAdmin         string
 	BootstrapAdminPassword string
@@ -92,11 +107,22 @@ type Config struct {
 	EmbedCrossSite bool
 	// ee_emb_ 嵌入会话有效期（DSH_EE_EMBED_SESSION_TTL），默认 2h；设计建议 1h–8h。
 	EmbedSessionTTL time.Duration
+	// 内容安全策略（DSH_EE_CSP）：off（默认，只加现有的 frame-ancestors）/ report（只报告）/
+	// enforce（阻断）。见 server/internal/api/security_headers.go。
+	CSP string
+	// CSP 违规报告地址（DSH_EE_CSP_REPORT_URI，可选）。必须是 http(s) 绝对地址；只在
+	// DSH_EE_CSP 不是 off 时生效，用于 report 模式收集违规或 enforce 模式观测被拦的请求。
+	CSPReportURI string
 	// mint 的共享固定窗口限流：每 IP 每分钟次数（DSH_EE_EMBED_MINT_PER_MINUTE），默认 30。
 	// 落数据库，多实例部署时是合计额度。
 	EmbedMintPerMinute int
 	// exchange 的共享固定窗口限流：每 IP 每分钟次数（DSH_EE_EMBED_EXCHANGE_PER_MINUTE），默认 60。
 	EmbedExchangePerMinute int
+	// 多实例后台任务租约（DSH_EE_BACKGROUND_LEASE）：周期任务每轮先抢数据库里的一条租约，
+	// 只有抢到的实例执行，避免多副本重复跑。默认开启；单实例也安全。
+	BackgroundLease bool
+	// 后台任务租约有效期（DSH_EE_BACKGROUND_LEASE_TTL），默认 90s；持有者按 1/3 TTL 续约。
+	BackgroundLeaseTTL time.Duration
 }
 
 func Load() (*Config, error) {
@@ -109,9 +135,17 @@ func Load() (*Config, error) {
 		LoginIPLimit:           50,
 		LoginIPWindow:          15 * time.Minute,
 		RateLimitPerMinute:     60,
+		ClientTokenPerMinute:   120,
 		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
 		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
 		DBWait:                 2 * time.Minute,
+		BackgroundLease:        true,
+		BackgroundLeaseTTL:     90 * time.Second,
+		// 刷新令牌的默认参数：access 1 小时、refresh 空闲 30 天、族绝对 180 天、宽限严格。
+		RefreshAccessTTL: time.Hour,
+		RefreshTokenTTL:  30 * 24 * time.Hour,
+		RefreshFamilyTTL: 180 * 24 * time.Hour,
+		RefreshGrace:     0,
 	}
 	if c.DSN == "" {
 		return nil, errors.New("缺少 DSH_EE_DSN，例如 root:@tcp(127.0.0.1:4000)/dsh_ee")
@@ -176,6 +210,45 @@ func Load() (*Config, error) {
 		}
 		c.RestrictLegacyTokenScopes = b
 	}
+	// 刷新令牌（docs/token-lifecycle.md §3）；开关默认关，参数只在开启后生效。
+	if v := os.Getenv("DSH_EE_REFRESH_TOKENS"); v != "" {
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_REFRESH_TOKENS: %w", err)
+		}
+		c.RefreshTokens = b
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_ACCESS_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute || d > 24*time.Hour {
+			return nil, errors.New("DSH_EE_REFRESH_ACCESS_TTL 要在 1m 到 24h 之间，例如 30m")
+		}
+		c.RefreshAccessTTL = d
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_TOKEN_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Hour || d > 365*24*time.Hour {
+			return nil, errors.New("DSH_EE_REFRESH_TOKEN_TTL 要在 1h 到 8760h（365 天）之间，例如 720h")
+		}
+		c.RefreshTokenTTL = d
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_FAMILY_TTL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Hour || d > 10*365*24*time.Hour {
+			return nil, errors.New("DSH_EE_REFRESH_FAMILY_TTL 要在 1h 到 87600h（10 年）之间，例如 4320h")
+		}
+		c.RefreshFamilyTTL = d
+	}
+	if c.RefreshFamilyTTL < c.RefreshTokenTTL {
+		return nil, errors.New("DSH_EE_REFRESH_FAMILY_TTL 不能小于 DSH_EE_REFRESH_TOKEN_TTL：族上限必须能覆盖单枚 refresh 的有效期")
+	}
+	if v := os.Getenv("DSH_EE_REFRESH_GRACE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 || d > 5*time.Minute {
+			return nil, errors.New("DSH_EE_REFRESH_GRACE 要在 0 到 5m 之间；0 表示严格轮换（重试按复用吊销整族）")
+		}
+		c.RefreshGrace = d
+	}
 	if v := os.Getenv("DSH_EE_DEMO_MODE"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -209,6 +282,18 @@ func Load() (*Config, error) {
 				return nil, fmt.Errorf("DSH_EE_RATE_LIMIT 要是正整数（次/分钟），或 0/off 关闭")
 			}
 			c.RateLimitPerMinute = n
+		}
+	}
+	if v := os.Getenv("DSH_EE_CLIENT_TOKEN_PER_MINUTE"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "off", "false":
+			c.ClientTokenPerMinute = 0
+		default:
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("DSH_EE_CLIENT_TOKEN_PER_MINUTE 要是正整数（次/分钟），或 0/off 关闭")
+			}
+			c.ClientTokenPerMinute = n
 		}
 	}
 	if v := os.Getenv("DSH_EE_SESSION_TTL"); v != "" {
@@ -315,6 +400,34 @@ func Load() (*Config, error) {
 	c.EmbedExchangePerMinute, err = positiveIntEnv("DSH_EE_EMBED_EXCHANGE_PER_MINUTE", 60)
 	if err != nil {
 		return nil, err
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_BACKGROUND_LEASE")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("DSH_EE_BACKGROUND_LEASE 要写成 true / false（或 1 / 0）")
+		}
+		c.BackgroundLease = b
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_BACKGROUND_LEASE_TTL")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_BACKGROUND_LEASE_TTL: %w", err)
+		}
+		if d < time.Second || d > time.Hour {
+			return nil, errors.New("DSH_EE_BACKGROUND_LEASE_TTL 要在 1s 到 1h 之间")
+		}
+		c.BackgroundLeaseTTL = d
+	}
+	// 内容安全策略：默认 off，保持现有「只加 frame-ancestors」行为不变。
+	c.CSP, err = parseCSPMode(os.Getenv("DSH_EE_CSP"))
+	if err != nil {
+		return nil, err
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_CSP_REPORT_URI")); v != "" {
+		if err := validateCSPReportURI(v); err != nil {
+			return nil, err
+		}
+		c.CSPReportURI = v
 	}
 	return c, nil
 }

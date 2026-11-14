@@ -117,45 +117,54 @@ type tokenInput struct {
 	ClientName string `json:"client_name"`
 }
 
+// scopeAllowed 判断这个 scope 能不能授给拥有权限 a 的账号。
+// 手工令牌、API 客户端（client_credentials）共用同一套映射，避免两条签发路径的权限口径漂移。
+func scopeAllowed(a *rbac.Access, scope string) bool {
+	switch scope {
+	case rbac.ScopeModels:
+		return a.Has(rbac.LLMUse)
+	case rbac.ScopeRegistryRead:
+		return a.Has(rbac.RegistryUse)
+	case rbac.ScopeRegistryPublish:
+		return a.Has(rbac.RegistryPublish)
+	case rbac.ScopeHub, rbac.ScopeConnections:
+		return a.Has(rbac.PortalView)
+	case rbac.ScopeAgent:
+		return a.Has(rbac.PortalView)
+	case rbac.ScopeConfig:
+		return a.Has(rbac.FieldsManage, rbac.RolesManage)
+	default:
+		// admin 不能通过签发接口下发，未知 scope 也不认
+		return false
+	}
+}
+
 func validTokenScopes(a *rbac.Access, scopes []string) ([]string, bool) {
 	seen := map[string]bool{}
 	out := []string{}
 	for _, scope := range scopes {
-		if scope == rbac.ScopeAdmin || seen[scope] {
+		if seen[scope] || !scopeAllowed(a, scope) {
 			return nil, false
 		}
 		seen[scope] = true
-		switch scope {
-		case rbac.ScopeModels:
-			if !a.Has(rbac.LLMUse) {
-				return nil, false
-			}
-		case rbac.ScopeRegistryRead:
-			if !a.Has(rbac.RegistryUse) {
-				return nil, false
-			}
-		case rbac.ScopeRegistryPublish:
-			if !a.Has(rbac.RegistryPublish) {
-				return nil, false
-			}
-		case rbac.ScopeHub, rbac.ScopeConnections:
-			if !a.Has(rbac.PortalView) {
-				return nil, false
-			}
-		case rbac.ScopeAgent:
-			if !a.Has(rbac.PortalView) {
-				return nil, false
-			}
-		case rbac.ScopeConfig:
-			if !a.Has(rbac.FieldsManage, rbac.RolesManage) {
-				return nil, false
-			}
-		default:
-			return nil, false
-		}
 		out = append(out, scope)
 	}
 	return out, true
+}
+
+// allowedScopes 返回 scopes 里当前账号还能用的那部分（保序、去重）。
+// client_credentials 用它把注册时申请的 scope 收敛到 owner 当前权限：管理员收回权限后立即生效。
+func allowedScopes(a *rbac.Access, scopes []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, scope := range scopes {
+		if seen[scope] || !scopeAllowed(a, scope) {
+			continue
+		}
+		seen[scope] = true
+		out = append(out, scope)
+	}
+	return out
 }
 
 // issueClientKind 决定新令牌的客户端类型。
@@ -223,16 +232,38 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, owner *stor
 		expires := time.Now().UTC().AddDate(0, 0, req.ExpiresInDays).Truncate(time.Millisecond)
 		t.ExpiresAt = &expires
 	}
-	if err := s.store.CreateAccessToken(r.Context(), t, secret.Hash(plain)); err != nil {
+	var refreshID int64
+	var refreshPlain string
+	var refreshExpiresIn int64
+	if s.opts.RefreshTokens {
+		// 开启刷新令牌后，设备登录/手工签发/管理员签发都会多给一枚 refresh token；
+		// 与 access token 在同一个事务里落库，避免只签出其中一半。
+		rt, generated := newRefreshSeed(owner.ID, clientKind, s.clientIP(r), s.opts.RefreshFamilyTTL, s.opts.RefreshTokenTTL)
+		if err := s.store.CreateAccessTokenWithRefresh(r.Context(), t, secret.Hash(plain), rt); err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+		refreshID, refreshPlain, refreshExpiresIn = rt.ID, generated, secondsUntil(rt.ExpiresAt)
+	} else if err := s.store.CreateAccessToken(r.Context(), t, secret.Hash(plain)); err != nil {
 		s.internalErr(w, r, err)
 		return
+	}
+	// accessView 要用落库后的 t（必须已经拿到 id）
+	resp := map[string]any{"token": plain, "info": accessView(t, 0)}
+	if refreshPlain != "" {
+		resp["refresh_token"] = refreshPlain
+		resp["refresh_expires_in"] = refreshExpiresIn
 	}
 	action := "token.create"
 	if source == "issued" {
 		action = "token.issue"
 	}
-	s.audit(r, action, plain[:12], map[string]any{"id": t.ID, "user_id": owner.ID, "scopes": scopes, "client_kind": clientKind, "client_name": t.ClientName})
-	writeJSON(w, http.StatusCreated, map[string]any{"token": plain, "info": accessView(t, 0)})
+	detail := map[string]any{"id": t.ID, "user_id": owner.ID, "scopes": scopes, "client_kind": clientKind, "client_name": t.ClientName}
+	if refreshID > 0 {
+		detail["refresh"] = true
+	}
+	s.audit(r, action, plain[:12], detail)
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleCreateMyToken(w http.ResponseWriter, r *http.Request) {
@@ -390,6 +421,12 @@ func (s *Server) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": nonNil(out)})
 }
 
+// handleIssueToken 给员工 / 机器人签发 ee_at_ 令牌。
+// 调用方式有两种（路由是 authUserToken）：
+//   - 网页会话 + keys.manage / tokens.dept_manage：管理员在「令牌管理」页操作；
+//   - Bearer 令牌（需 keys.manage，即开过管理模式的令牌）：给 CI / 机器人等无人值守场景续发。
+//
+// 两种方式走同一套校验与审计；Bearer 调用的审计由 audit() 自动记 via=token、token_id=调用方令牌。
 func (s *Server) handleIssueToken(w http.ResponseWriter, r *http.Request) {
 	department, ok := s.adminTokenScope(r)
 	if !ok {
