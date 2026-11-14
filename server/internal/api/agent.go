@@ -235,13 +235,15 @@ var agentExcluded = map[string]string{
 	"POST /api/admin/extensions/{target}/rollback": "回滚要管理员在网页上看过回滚计划和差异再确认，不交给模型",
 
 	// 扩展签名的信任根（signing_keys.go）：信任谁能签名只能由管理员决定，不交给模型
-	"GET /api/admin/signing-keys":                  "信任根只在管理页面看，不把受信任公钥清单交给 Agent 批量枚举",
-	"POST /api/admin/signing-keys":                 "加受信任的签名公钥只能由管理员在管理页面做",
-	"POST /api/admin/signing-keys/{key_id}/retire": "换下签名公钥由管理员在管理页面做",
-	"POST /api/admin/signing-keys/{key_id}/revoke": "撤销签名公钥由管理员在管理页面做",
-	"GET /api/admin/directory":                     "企业目录只给管理员在网页上看；目录条目不是模型的工具",
-	"POST /api/admin/directory/check":              "贴进来的目录文档要管理员看校验结果，不交给 Agent 代读/代贴",
-	"POST /api/admin/directory/apply":              "登记企业目录会改变全局来源清单，只能由管理员在网页上确认",
+	"GET /api/admin/signing-keys":                    "信任根只在管理页面看，不把受信任公钥清单交给 Agent 批量枚举",
+	"POST /api/admin/signing-keys":                   "加受信任的签名公钥只能由管理员在管理页面做",
+	"POST /api/admin/signing-keys/{key_id}/retire":   "换下签名公钥由管理员在管理页面做",
+	"POST /api/admin/signing-keys/{key_id}/revoke":   "撤销签名公钥由管理员在管理页面做",
+	"GET /api/admin/directory":                       "企业目录只给管理员在网页上看；目录条目不是模型的工具",
+	"POST /api/admin/directory/check":                "贴进来的目录文档要管理员看校验结果，不交给 Agent 代读/代贴",
+	"POST /api/admin/directory/apply":                "登记企业目录会改变全局来源清单，只能由管理员在网页上确认",
+	"POST /api/admin/directory/entries/{id}/install": "安装目录条目会下载扩展包或从上游同步插件并写库，要管理员看过计划再触发，不交给 Agent",
+	"POST /api/admin/directory/entries/{id}/upgrade": "升级目录条目会改全局连接或企业源里的插件版本，要管理员看过计划再触发，不交给 Agent",
 
 	// 多份命名共享凭据（shared_credentials.go）：密钥不进入模型上下文
 	"GET /api/admin/connections/{id}/shared-credentials":           "命名共享凭据只在管理员页面查看，不把授权清单交给 Agent 批量枚举",

@@ -92,6 +92,10 @@ func proxying(set *store.AppSettings) bool {
 // pluginNeedsReview：白名单模式下，上游插件的版本要先在本地审核上架才对外可见。
 func pluginNeedsReview(set *store.AppSettings) bool { return set.AdmissionMode != "open" }
 
+// PluginNeedsReview 和同步时的审核门是同一个判断：企业目录安装插件时用它告诉管理员
+// 「同步后还要等审核」，不要在两处各写一遍策略。
+func PluginNeedsReview(set *store.AppSettings) bool { return pluginNeedsReview(set) }
+
 // localOnly 判断一个包是否只能用本地数据：企业作用域，或者曾经在这里托管过（防依赖混淆：
 // 即使管理员后来删掉了作用域，已托管的包名也永远不会去上游找）。
 func localOnly(set *store.AppSettings, name string, pkg *store.NpmPackage) bool {

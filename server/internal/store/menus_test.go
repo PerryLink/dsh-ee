@@ -435,3 +435,93 @@ func TestMigrateMenusSigningKeys(t *testing.T) {
 		t.Fatalf("重复迁移后菜单数 %d → %d", len(again), len(third))
 	}
 }
+
+// 0035：已有部署升级后，「企业插件目录」页挂在「企业连接」所在分组（和扩展签名同一组）；
+// 只补一次，重复迁移不会重复插入。
+func TestMigrateMenusDirectory(t *testing.T) {
+	ctx := context.Background()
+	st := openTokenTestStore(t)
+	if err := st.ResetMenus(ctx, rbac.DefaultMenus); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 0034 之前的库：页不存在、迁移记录也没有
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM menus WHERE page_key = 'admin-directory'"); err != nil {
+		t.Fatal(err)
+	}
+	replay := func() {
+		t.Helper()
+		if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0035_admin_directory_menu'"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replay()
+	ms, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[int64]*Menu{}
+	var page, connections *Menu
+	for _, m := range ms {
+		byID[m.ID] = m
+		switch m.PageKey {
+		case "admin-directory":
+			page = m
+		case "admin-connections":
+			connections = m
+		}
+	}
+	if page == nil {
+		t.Fatal("迁移后没有企业插件目录页面")
+	}
+	if connections == nil || connections.ParentID == nil || page.ParentID == nil || *page.ParentID != *connections.ParentID {
+		t.Fatalf("企业插件目录应和企业连接同组：page=%+v connections=%+v", page, connections)
+	}
+	if g := byID[*page.ParentID]; g == nil || g.Title != "能力与连接" {
+		t.Fatalf("企业插件目录应在「能力与连接」里：%+v", g)
+	}
+	if page.Path != "/admin/directory" || page.Permission != rbac.ConnectionsManage || page.Icon != "FolderOpen" {
+		t.Fatalf("企业插件目录菜单字段：%+v", page)
+	}
+	// 管理员把企业连接挪到别的分组：新页面跟着它，而不是硬塞回「能力与连接」
+	other := &Menu{ParentID: nil, Kind: "group", Title: "自定义组", Sort: 999, Visible: true}
+	if err := st.CreateMenu(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "UPDATE menus SET parent_id = ? WHERE page_key = 'admin-connections'", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM menus WHERE page_key = 'admin-directory'"); err != nil {
+		t.Fatal(err)
+	}
+	replay()
+	again, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var moved *Menu
+	for _, m := range again {
+		if m.PageKey == "admin-directory" {
+			moved = m
+		}
+	}
+	if moved == nil || moved.ParentID == nil || *moved.ParentID != other.ID {
+		t.Fatalf("企业连接挪组后企业插件目录应跟过去：%+v", moved)
+	}
+	// 再跑一次迁移不会重复插入
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0035_admin_directory_menu'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	third, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third) != len(again) {
+		t.Fatalf("重复迁移后菜单数 %d → %d", len(again), len(third))
+	}
+}

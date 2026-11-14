@@ -11,6 +11,7 @@ import (
 
 	"github.com/hikariming/dsh-ee/server/internal/directory"
 	"github.com/hikariming/dsh-ee/server/internal/extension"
+	"github.com/hikariming/dsh-ee/server/internal/registry"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
@@ -443,7 +444,71 @@ func signatureAuditDir(v *directory.VerifyResult) string {
 	return v.Status + ":" + v.KeyID
 }
 
+// directoryEntryView 是登记条目 + 安装状态，给管理页展示「是否已安装 / 可升级」。
+// 只给展示用，真正的安装 / 升级仍由 install / upgrade 接口再校验一次。
+type directoryEntryView struct {
+	store.DirectoryEntry
+	// 已装版本：扩展是连接上生效的版本；插件是企业源里这个版本（或本地最新版本）
+	InstalledVersion string `json:"installed_version,omitempty"`
+	// 插件：企业源里那个版本的状态（published / pending / rejected / unpublished）
+	InstalledStatus string `json:"installed_status,omitempty"`
+	// 扩展：装成的连接标识
+	InstalledConnection string `json:"installed_connection,omitempty"`
+	// 目录登记的版本已经在企业里（扩展：连接上就是这一版；插件：企业源里就是这个版本）
+	Installed bool `json:"installed"`
+	// 目录里的版本比企业里现有的新，可以升级
+	UpgradeAvailable bool `json:"upgrade_available"`
+}
+
+// directoryEntryViews 给每条登记条目补上安装状态。扩展按连接查（一种扩展只有一个连接），
+// 插件按企业源里已有的版本查；查询失败时不挡住列表，只少给状态。
+func (s *Server) directoryEntryViews(ctx context.Context, entries []store.DirectoryEntry) []directoryEntryView {
+	out := make([]directoryEntryView, 0, len(entries))
+	for _, e := range entries {
+		v := directoryEntryView{DirectoryEntry: e}
+		switch e.Kind {
+		case directory.KindExtension:
+			a, sp, err := s.findExtension(ctx, e.Name)
+			if err != nil || a == nil || sp == nil || sp.Extension == nil {
+				break
+			}
+			v.InstalledVersion = sp.Extension.Version
+			v.InstalledConnection = a.Slug
+			v.Installed = v.InstalledVersion == e.Version
+			v.UpgradeAvailable = registry.CompareVersions(e.Version, v.InstalledVersion) > 0
+		case directory.KindPlugin:
+			if local, err := s.store.GetVersion(ctx, e.Name, e.Version); err == nil {
+				// 插件「安装了」= 企业源里这个版本已上架；同步了但还在审核的显示为待审核
+				v.InstalledVersion, v.InstalledStatus = local.Version, local.Status
+				v.Installed = local.Status == store.StatusPublished
+				break
+			}
+			// 企业源里没有这个版本：拿本地最新版本给管理员做「可升级」判断
+			versions, err := s.store.ListVersions(ctx, e.Name)
+			if err != nil {
+				break
+			}
+			latest := ""
+			for _, lv := range versions {
+				if lv.Status == store.StatusRejected {
+					continue
+				}
+				if latest == "" || registry.CompareVersions(lv.Version, latest) > 0 {
+					latest, v.InstalledStatus = lv.Version, lv.Status
+				}
+			}
+			if latest != "" {
+				v.InstalledVersion = latest
+				v.UpgradeAvailable = registry.CompareVersions(e.Version, latest) > 0
+			}
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 // GET /api/admin/directory：登记过的目录与条目。只读。
+// 权限：管连接的（看扩展 / 登记目录）或管插件的（看插件条目）都能看，写操作仍按类型校验。
 func (s *Server) handleListDirectory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	entries, err := s.store.ListDirectoryEntries(ctx)
@@ -456,12 +521,18 @@ func (s *Server) handleListDirectory(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
+	views := s.directoryEntryViews(ctx, entries)
+	// 没配白名单时给空数组而不是 null：网页直接读 .length，null 会让页面崩掉。
+	hosts := s.opts.DirectoryTarballHosts
+	if hosts == nil {
+		hosts = []string{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"directories": summaries,
-		"entries":     entries,
-		"count":       len(entries),
+		"entries":     views,
+		"count":       len(views),
 		// 当前 tarball 策略：空表示只接受公网 https 地址；有值表示只接受名单里的主机。
-		// 目录 v1 不下载 tarball，这里给管理员/网页展示用。
-		"tarball_hosts": s.opts.DirectoryTarballHosts,
+		// 安装扩展条目时会按同一策略再核对一次，这里给管理员/网页展示用。
+		"tarball_hosts": hosts,
 	})
 }

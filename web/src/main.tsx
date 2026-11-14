@@ -148,6 +148,9 @@ function AppRoutes() {
       { key: "admin-brand", ok: can("settings.manage") },
       { key: "admin-auth", ok: can("settings.manage") },
       { key: "admin-signing-keys", ok: can("settings.manage", "connections.manage") },
+      // 企业插件目录同时服务「管连接」和「管插件」两种管理员；菜单默认挂在管连接那边，
+      // 只有 plugins.manage 的管理员也能直接打开这个路由。
+      { key: "admin-directory", ok: can("settings.manage", "connections.manage", "plugins.manage") },
     ] as const
   )
     .filter(({ key, ok }) => ok && !pages.some((m) => m.page_key === key))

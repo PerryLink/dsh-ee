@@ -263,9 +263,14 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/signing-keys/{key_id}/retire", s.handleRetireSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/signing-keys/{key_id}/revoke", s.handleRevokeSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		// 企业目录 v1（directory.go）：验签 + 逐条校验后登记来源，只登记不安装
-		prm("GET /api/admin/directory", s.handleListDirectory, rbac.ConnectionsManage, rbac.SettingsManage),
+		prm("GET /api/admin/directory", s.handleListDirectory, rbac.ConnectionsManage, rbac.SettingsManage, rbac.PluginsManage),
 		prm("POST /api/admin/directory/check", s.handleDirectoryCheck, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/directory/apply", s.handleDirectoryApply, rbac.ConnectionsManage, rbac.SettingsManage),
+		// 目录条目的安装 / 升级（directory_install.go）：只对已登记条目、管理员明确触发；
+		// 权限按条目类型在处理器里校验（扩展 connections.manage、插件 plugins.manage），
+		// 所以这里只要求登录，不能用一个静态权限点放宽另一类。
+		usr("POST /api/admin/directory/entries/{id}/install", s.handleDirectoryEntryInstall),
+		usr("POST /api/admin/directory/entries/{id}/upgrade", s.handleDirectoryEntryUpgrade),
 		prm("GET /api/admin/fields", s.handleListFields, rbac.FieldsManage, rbac.UsersView),
 		prm("POST /api/admin/fields", s.handleCreateField, rbac.FieldsManage),
 		prm("PATCH /api/admin/fields/{id}", s.handlePatchField, rbac.FieldsManage),
