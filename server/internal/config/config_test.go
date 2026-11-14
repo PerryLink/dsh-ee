@@ -200,3 +200,45 @@ func TestRateLimitConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadRefreshConfig(t *testing.T) {
+	setRequiredEnv(t)
+	// 默认关闭，参数是保守的默认值
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 报错：%v", err)
+	}
+	if cfg.RefreshTokens || cfg.RefreshAccessTTL != time.Hour || cfg.RefreshTokenTTL != 30*24*time.Hour ||
+		cfg.RefreshFamilyTTL != 180*24*time.Hour || cfg.RefreshGrace != 0 {
+		t.Fatalf("刷新令牌默认配置不对：%+v", cfg)
+	}
+	t.Setenv("DSH_EE_REFRESH_TOKENS", "1")
+	t.Setenv("DSH_EE_REFRESH_ACCESS_TTL", "15m")
+	t.Setenv("DSH_EE_REFRESH_TOKEN_TTL", "720h")
+	t.Setenv("DSH_EE_REFRESH_FAMILY_TTL", "4320h")
+	t.Setenv("DSH_EE_REFRESH_GRACE", "20s")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load 报错：%v", err)
+	}
+	if !cfg.RefreshTokens || cfg.RefreshAccessTTL != 15*time.Minute || cfg.RefreshTokenTTL != 720*time.Hour ||
+		cfg.RefreshFamilyTTL != 4320*time.Hour || cfg.RefreshGrace != 20*time.Second {
+		t.Fatalf("刷新令牌配置没生效：%+v", cfg)
+	}
+	// 族上限必须覆盖单枚 refresh 的有效期
+	t.Setenv("DSH_EE_REFRESH_FAMILY_TTL", "500h")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REFRESH_FAMILY_TTL") {
+		t.Fatalf("族上限小于 refresh 有效期应失败，实际 err=%v", err)
+	}
+	// access TTL 越界
+	t.Setenv("DSH_EE_REFRESH_FAMILY_TTL", "4320h")
+	t.Setenv("DSH_EE_REFRESH_ACCESS_TTL", "25h")
+	if _, err := Load(); err == nil {
+		t.Fatal("超过 24h 的 access TTL 应该失败")
+	}
+	// 宽限期越界
+	t.Setenv("DSH_EE_REFRESH_ACCESS_TTL", "15m")
+	t.Setenv("DSH_EE_REFRESH_GRACE", "6m")
+	if _, err := Load(); err == nil {
+		t.Fatal("超过 5m 的宽限期应该失败")
+	}
+}
