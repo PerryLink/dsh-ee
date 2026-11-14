@@ -66,6 +66,7 @@ dsh-ee 本身不跑 AI：**推理与工具调用都在员工本机的 DSH 里**�
 - **内置 npm 源与审核**：企业作用域的托管与发布、逐版本审核，自动检查安装脚本、依赖、许可证与密钥泄露；企业作用域永不回源，防依赖混淆；支持上游预载与离线包导入导出。
 - **OpenAI 兼容模型网关**：接入 DeepSeek 等上游后对外统一模型名，同名模型可挂多个上游自动故障转移，按账号分配月度 token 额度与可用模型。
 - **一条命令接入**：`curl -fsSL <dsh-ee>/setup.sh | sh`（Windows 用 `irm <dsh-ee>/setup.ps1 | iex`），浏览器确认设备码后，统一令牌 `ee_at_…` 一次配好 npm 源、模型与能力中心。
+- **第三方 Harness 接入**：按集成方注册 API 客户端（`client_id` / `client_secret`），CI 或其它 Harness 用 `client_credentials` 换短期 `ee_at_` 令牌，不必把管理员令牌交给对方；scope 受所属账号权限约束，secret 只存哈希且只显示一次，每次换 token 都有审计。
 - **身份与治理**：本地账号与 LDAP / AD、RBAC、可在线调整的菜单、审计日志，以及按部门、能力、模型、终端统计的运营数据。
 - **信创友好**：单个 Go 静态二进制（linux/amd64、arm64），数据库用 OceanBase 或 TiDB，支持完全离线部署。
 

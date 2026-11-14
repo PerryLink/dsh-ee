@@ -36,6 +36,9 @@ type Config struct {
 	Metrics bool
 	// 公开协议面（/v1/* 与 /mcp）的每令牌限流，单位「次/分钟」；默认 60，0 或 off 关闭。
 	RateLimitPerMinute int
+	// API 客户端（client_credentials）的每 IP 每分钟签发次数（DSH_EE_CLIENT_TOKEN_PER_MINUTE）；
+	// 默认 120，0 或 off 关闭。只防用错误 secret 撞库 / 刷库，正常集成远低于这个量。
+	ClientTokenPerMinute int
 	// 旧版 npm 令牌（ee_npm_）与 API key（sk-ee-）的 scope 收敛（docs/token-lifecycle.md）。
 	// true 时它们只保留原始用途的 scope：npm 令牌只剩 registry，key 只剩模型网关；
 	// 默认 false 不改变旧行为，避免现有客户端突然失效。
@@ -132,6 +135,7 @@ func Load() (*Config, error) {
 		LoginIPLimit:           50,
 		LoginIPWindow:          15 * time.Minute,
 		RateLimitPerMinute:     60,
+		ClientTokenPerMinute:   120,
 		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
 		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
 		DBWait:                 2 * time.Minute,
@@ -278,6 +282,18 @@ func Load() (*Config, error) {
 				return nil, fmt.Errorf("DSH_EE_RATE_LIMIT 要是正整数（次/分钟），或 0/off 关闭")
 			}
 			c.RateLimitPerMinute = n
+		}
+	}
+	if v := os.Getenv("DSH_EE_CLIENT_TOKEN_PER_MINUTE"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "off", "false":
+			c.ClientTokenPerMinute = 0
+		default:
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("DSH_EE_CLIENT_TOKEN_PER_MINUTE 要是正整数（次/分钟），或 0/off 关闭")
+			}
+			c.ClientTokenPerMinute = n
 		}
 	}
 	if v := os.Getenv("DSH_EE_SESSION_TTL"); v != "" {

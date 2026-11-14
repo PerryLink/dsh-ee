@@ -1,7 +1,7 @@
 # 令牌生命周期：类型、自省、续期与旧令牌收敛
 
-> 状态：自省（introspection）、`client_kind`、旧令牌 scope 收敛已实现（`#132`）；刷新令牌（OAuth 风格轮换 + 复用检测）已实现，**默认关闭**，见 §3；管理员 Bearer 程序化签发（最小版）已实现，见 §6。
-> 相关代码：`server/internal/api/introspect.go`、`server/internal/api/refresh.go`、`server/internal/api/principal.go`、`server/internal/api/tokens.go`、`server/internal/store/tokens.go`、`server/internal/store/tokens_refresh.go`、`server/internal/store/migrations/0035_token_refresh_tokens.sql`。
+> 状态：自省（introspection）、`client_kind`、旧令牌 scope 收敛已实现（`#132`）；刷新令牌（OAuth 风格轮换 + 复用检测）已实现，**默认关闭**，见 §3；管理员 Bearer 程序化签发（最小版）已实现，见 §6；API 客户端注册 / `client_credentials` 已实现，见 §7。
+> 相关代码：`server/internal/api/introspect.go`、`server/internal/api/refresh.go`、`server/internal/api/principal.go`、`server/internal/api/tokens.go`、`server/internal/api/clients.go`、`server/internal/store/tokens.go`、`server/internal/store/tokens_refresh.go`、`server/internal/store/clients.go`、`server/internal/store/migrations/0035_token_refresh_tokens.sql`、`server/internal/store/migrations/0036_api_clients.sql`。
 
 ## 1. 令牌类型
 
@@ -163,6 +163,7 @@ DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES=1
 
 ## 5. 网页端
 
+- API 客户端（§6）暂未做管理页，使用管理 API 创建 / 查看 / 注销。
 - 员工「我的令牌」与管理员「令牌管理」的新建表单都有「客户端类型」选择：`DSH 接入`（dsh）/ `第三方 Harness`（third_party），**默认 third_party**；给不用设备码登录的 DSH 手工令牌时显式选 `DSH 接入`。
 - 表单下方按选择给出作用说明：`dsh` 只用于 DSH 接入，写操作先在 DSH 审批卡确认；`third_party` 用于其它 Harness/脚本，写操作始终要员工在网页上人工确认。
 - 两个列表都显示 `client_kind` 徽标，能直接看出某把令牌是给 DSH 还是给第三方客户端的；旧版 npm/key 令牌由服务端按 `dsh` 兼容显示。
@@ -170,8 +171,7 @@ DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES=1
 
 ## 6. 程序化签发（最小版）
 
-机器人 / CI 在无人值守场景不能走网页会话。本版不引入 `client_id` / `client_secret` 注册，
-先让管理员用**带 `keys.manage` 的 Bearer 令牌**调用现有签发接口，给指定员工或机器人续发 `ee_at_`。
+机器人 / CI 在无人值守场景不能走网页会话。最简单的做法是让管理员用**带 `keys.manage` 的 Bearer 令牌**调用现有签发接口，给指定员工或机器人续发 `ee_at_`；不想把管理员令牌交给 CI 时用 §7 的 API 客户端。
 
 ### 6.1 用法
 
@@ -205,23 +205,85 @@ Authorization: Bearer ee_at_…            # 管理员令牌，需 keys.manage
   等价于能铸造任意可签发目标的权限令牌。只应交给受信任的 CI / 自动化，不要发给普通员工或第三方。
 - 调用方令牌被吊销、账号被停用、管理模式到期，都会让后续签发立即失败；签发出来的令牌与网页
   签发完全同源（`source=issued`、同样的吊销 / 审计 / refresh 联动）。
-- 签发不提供「按 client 维度」的独立限流或独立吊销；需要按集成方计量时先看 §6.3。
+- 签发不提供「按 client 维度」的独立限流或独立吊销；需要按集成方计量时用 §7 的 API 客户端。
 
-### 6.3 未实现：`client_id` / `client_secret` 与 client_credentials（设计）
+### 6.3 按集成方计量：API 客户端
 
-若要「按集成方而不是员工」计量 / 吊销，或不能把一枚管理员令牌交给 CI，后续再做：
+需要按集成方而不是员工计量 / 吊销，或不想把管理员令牌交给 CI 时，用 §7 的 API 客户端注册与 `client_credentials`。
 
-- 新表 `api_clients`：`client_id`、`client_secret`（只存哈希，可轮换）、owner（bot 账号）、
-  scopes、状态（启用 / 禁用）；
-- `POST /api/admin/clients` 创建 / 轮换 / 禁用，secret 只在创建或轮换时显示一次；
-- `POST /api/auth/token` 的 `grant_type=client_credentials`，scope = client.scopes ∩ owner RBAC；
-- 审计 `client.*` 与 `token.issue via=client`；
-- 可选 mTLS（由反向代理终止，dsh-ee 只读可信头）。
+## 7. API 客户端注册（client_credentials）
 
-本 PR 不做，避免与 refresh 的令牌族 / 复用检测语义混在一起。迁移号（未来 `0036+`）与接口命名
-需要在维护者确认后定。
+第三方 Harness / CI 这类无人值守的集成方，不应该直接拿一枚管理员令牌。管理员可以按集成方注册一个
+API 客户端：拿到 `client_id` / `client_secret`，由客户端自己换短期 access token。
 
-## 7. 相关测试
+### 7.1 创建与管理（`keys.manage`）
+
+```
+POST /api/admin/clients
+{ "name": "Claude Code CI", "owner_user_id": 42, "scopes": ["models", "hub"] }
+
+→ 201
+{
+  "client": {
+    "id": 1, "client_id": "dshc_…", "name": "Claude Code CI", "owner_user_id": 42,
+    "owner_username": "ci-bot", "owner_department": "研发效能部",
+    "scopes": ["models", "hub"], "client_kind": "third_party",
+    "created_by": 1, "disabled_at": null, "last_used_at": null, "created_at": "2026-11-13T00:00:00Z"
+  },
+  "client_secret": "dshs_…"
+}
+```
+
+- **权限**：网页会话 + `keys.manage`（与「令牌管理」页同一权限点）。
+- **owner**：令牌签给哪个账号，员工或机器人（bot）都可以；owner 被停用后立即停止签发。
+- **scope**：受 owner 当前权限限制（和手工令牌同一套映射，`admin` 永远不能通过签发接口下发）；
+  不填默认 `models, registry:read, hub, connections`。创建时校验一次，之后每次换 token 再和
+  owner 当前权限求交集，管理员收回权限对已注册客户端立即生效。
+- **secret**：只存 sha256，**只在创建响应里出现一次**；列表 / 详情永远不返回明文或哈希。
+  本版没有 secret 轮换：需要换 secret 时注销后重建。
+
+`GET /api/admin/clients` 列出全部客户端（含已禁用），带 owner 用户名 / 部门与最近使用时间。
+`DELETE /api/admin/clients/{client_id}` 注销（幂等）：之后不能再换 token；已经签出的 access token
+按自身有效期自然过期。
+
+### 7.2 换 token（公开端点）
+
+```
+POST /api/auth/client-token
+{ "client_id": "dshc_…", "client_secret": "dshs_…" }
+
+→ 200
+{
+  "access_token": "ee_at_…", "token_type": "Bearer", "expires_in": 3600,
+  "scopes": ["models", "hub"], "client_id": "dshc_…", "client_name": "Claude Code CI",
+  "client_kind": "third_party", "token_id": "at:123"
+}
+```
+
+- 不需要网页会话 / Bearer，凭据只在请求体里。
+- 签出的 access token **1 小时**有效，`source=issued`、`client_kind=third_party`、`client_name=客户端名称`；
+  到期后客户端用同一对凭据再换一枚即可，不需要人工介入。
+- `scope` = 客户端注册的 scopes ∩ owner 当前权限；交集为空时返回 403 `insufficient_scope`，不签发空令牌。
+- **凭据失败统一 401 `{"error":"invalid_client"}`**：client_id 不存在、secret 不对、客户端已禁用、
+  owner 已停用都回同一个响应，不区分原因，避免被用来探测注册信息。
+- **IP 限流**：每 IP 每分钟最多 120 次换 token，`DSH_EE_CLIENT_TOKEN_PER_MINUTE` 可调，`0` / `off` 关闭；
+  超限返回 429 `rate_limited` + `Retry-After: 60`。只防用错误 secret 撞库 / 刷库，正常集成远低于这个量。
+- **审计**：`token.issue`，`via=client_credentials`、`client=客户端名称`，actor 是 owner 账号；
+  detail 含 `client_id`、scope、`client_kind`、到期时间，不含 secret / 令牌明文。管理动作另记
+  `client.create` / `client.revoke`。审计来源字段已加宽到能放下 `client_credentials`。
+
+### 7.3 与刷新令牌的关系
+
+本版换 token 只返回 access token（1 小时），不返回 refresh token：到期后用同一对凭据再换即可。
+刷新令牌（§3）已实现但默认关闭；如需让 client_credentials 也下发 `refresh_token`，在响应里按 §3 的令牌族补上即可，客户端协议不需要改。
+
+### 7.4 未实现
+
+- 管理页前端（当前用管理 API / curl 管理客户端）；
+- secret 轮换 / 多 secret 过渡；
+- OAuth authorization code 流程、按 client 的独立额度与限流维度。
+
+## 8. 相关测试
 
 - `server/internal/api/token_programmatic_test.go`：管理员 Bearer 签发（含 refresh 兼容）、scope / client_kind / client_name / 到期属性、`token.issue` 审计归属（via=token、token_id、目标 user_id）、普通令牌与过期管理模式 403、无效 Bearer 401、目标账号不存在 400。需要数据库。
 - `server/internal/api/refresh_test.go`：开关关闭 404、签发默认不带 refresh、轮换、旧 refresh 复用吊销整族、并发只成功一次、宽限期重放、过期、client_kind 不一致、吊销/停用账号后失效、跨用户隔离、设备登录下发 refresh、审计归属与不含明文/哈希。需要数据库（`DSH_EE_TEST_DSN`）。
@@ -229,4 +291,8 @@ Authorization: Bearer ee_at_…            # 管理员令牌，需 keys.manage
 - `server/internal/api/introspect_test.go`：无凭据/无效令牌 401、越权 403、self 与管理员查询、过期/吊销/不存在、管理员 Bearer、旧 npm/key 自省、scope 收敛开关。
 - `server/internal/api/tokens_test.go`、`device_test.go`：签发默认 `client_kind` 与 whoami。
 - `server/internal/store/tokens_test.go`、`migrations_test.go`：`client_kind` 迁移与默认值、令牌归属字段。
+- `server/internal/api/clients_test.go`（需数据库）：创建 / secret 只回一次 / 错误 secret 与未知 client_id
+  不可区分 / 禁用客户端 / owner 停用 / scope 超权与权限收回后的交集 / 换 token / 固定 1h TTL / IP 限流 /
+  `client.create`、`token.issue via=client_credentials` 审计。
+- `server/internal/store/clients_test.go`：库层创建 / 按 client_id 取 / 列表 owner 信息 / 最近使用 / 禁用幂等。
 - 网页端：`pnpm build`（tsc）覆盖 i18n 与类型；e2e `03-employee-keys` 断言新建默认 third_party、可显式选 dsh、列表显示客户端类型，`10-tokens` 断言管理员签发默认 third_party。
