@@ -6,6 +6,7 @@ Go 写的 dsh-ee 服务端。目前实现：
 - **账号月度额度**：管理员给账号分配每月 token 上限（`NULL` 不限额、`0` 未分配）、允许的模型与有效期；额度按账号共享，账号下所有 key 从同一份里扣，每月 1 日（UTC）重置。
 - **企业 API key 二次分发**：管理员录入企业在上游开通的模型服务（OpenAI 兼容，如 DeepSeek），上游 key 用主密钥 AES-256-GCM 加密存库；`sk-ee-…` 个人 key 由管理员代发或员工自助创建，随时吊销。
 - **OpenAI 兼容网关**：`/v1/chat/completions`（含流式）与 `/v1/models`。员工用个人 key 调用，dsh-ee 换成企业 key 转发，按账号校验额度与模型，并按次记录用量（即调用审计）。
+- **Anthropic Messages 兼容端点**：`POST /v1/messages`（含流式 SSE；别名 `POST /anthropic/v1/messages`，兼容 DeepSeek 的 `/anthropic` base URL 习惯），Claude Code / Anthropic SDK 用 `x-api-key` 或 Bearer 带上同一枚统一令牌即可；复用模型权限、额度、限流与用量记账。优先线路 `vendor=deepseek` 时原生透传到 `<base>/anthropic/v1/messages`（响应逐字节转发，`anthropic-version`/`anthropic-beta` 透传），其它 provider 降级转成 OpenAI chat；故障转移只在同协议内进行。不做 `count_tokens` / Batches / Files / 服务端工具，详见 [../docs/dev/anthropic-api.md](../docs/dev/anthropic-api.md)。
 - **内置 npm 源**（`/npm/`）：企业作用域的托管与发布、逐版本审核、上游回源与镜像、上游预载（连同依赖闭包）、离线包导入导出，以及由已上架插件生成的 DSH 插件索引（`/index/dsh-index.json`）。详见下文「npm 源」。
 - **LDAP / AD 登录**：员工用公司域账号登录网页与 `npm login`；首次登录自动开通，每次登录同步显示名、部门、邮箱与组映射的角色；每小时核对目录，离职（被删除或在 AD 里禁用）的账号自动禁用。详见下文「LDAP / AD」。
 - **运营统计与审计日志**：按本地日期统计能力安装、模型调用与 Token，按部门、能力、模型、终端（npm 客户端 User-Agent 里的系统与架构）汇总；登录、账号与权限、模型接入、设置、发布与审核等操作写入审计日志。
@@ -132,10 +133,17 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | 用户表为空时创建的管理员，默认用户名 `admin` |
 | `DSH_EE_COOKIE_SECURE` | 会话 cookie 是否加 `Secure`；不填时 `DSH_EE_PUBLIC_URL` 是 https 就自动开启，显式设置覆盖 |
 | `DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES` | 设为 `true` 时收敛旧 `ee_npm_` / `sk-ee_` 令牌的 scope（npm 令牌只剩 registry、API key 只剩模型网关）；默认关闭，见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) |
+| `DSH_EE_REFRESH_TOKENS` | 刷新令牌（OAuth 风格轮换 + 复用检测）总开关，**默认关闭**。开启后 `POST /api/auth/refresh` 可用，设备登录 / 手工 / 管理员签发的响应会额外带 `ee_rt_` refresh token；关闭时刷新端点返回 404、签发响应不变。见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) §3 |
+| `DSH_EE_REFRESH_ACCESS_TTL` | 刷新换出的 access token 有效期，默认 `1h`，允许 `1m`–`24h` |
+| `DSH_EE_REFRESH_TOKEN_TTL` | 单枚 refresh token 的空闲有效期，默认 `720h`（30 天），允许 `1h`–`8760h`；轮换时重新计算 |
+| `DSH_EE_REFRESH_FAMILY_TTL` | 令牌族绝对上限，默认 `4320h`（180 天），轮换继承、不会延长；不能小于 `DSH_EE_REFRESH_TOKEN_TTL` |
+| `DSH_EE_REFRESH_GRACE` | 轮换宽限，默认 `0`（严格：旧 refresh 再次出现即按复用吊销整族）；允许 `0`–`5m`，>0 时宽限期内重试原样返回上次响应 |
 | `DSH_EE_SESSION_TTL` | 会话有效期，默认 `168h` |
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、上游缓存），默认 `./data`；容器里是 `/data` |
 | `DSH_EE_PUBLIC_URL` | 对外地址，如 `https://dsh.acme.internal`；npm 的 tarball 地址按它生成，不填时按请求的 Host / `X-Forwarded-*` 推断 |
 | `DSH_EE_DB_WAIT` | 启动时等数据库就绪的最长时间，默认 `2m`（compose 里是 `15m`） |
+| `DSH_EE_BACKGROUND_LEASE` | 多实例后台任务租约开关，默认 `true`：周期任务每轮先抢数据库 `background_leases` 表中的租约，只有 leader 实例执行；单实例也安全。设为 `false` 时每个实例都会执行周期任务，只应在确认单实例部署时关闭 |
+| `DSH_EE_BACKGROUND_LEASE_TTL` | 后台任务租约有效期，默认 `90s`，允许 `1s`–`1h`；持租实例按 1/3 TTL 续约，进程被强杀后最多这么久其他实例才能接管 |
 | `DSH_EE_LOGIN_IP_LIMIT` | 同一客户端 IP 在窗口内允许的登录失败次数，默认 `50`；设为 `0` / `off` 关闭 |
 | `DSH_EE_LOGIN_IP_WINDOW` | 按 IP 统计登录失败的固定窗口，默认 `15m`，取值 `1m`～`24h` |
 | `DSH_EE_METRICS` | 设为 `true` 时开放 `GET /metrics`（Prometheus 文本格式，只允许本机 / 内网抓取）；默认关闭 |
@@ -146,10 +154,12 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_EMBED_CROSS_SITE` | 跨站 iframe 嵌入 v1 总开关，默认关闭。开启后 `POST /api/embed/sessions`、`POST /api/auth/embed/exchange` 才可用，且必须同时设置 `DSH_EE_EMBED_ORIGINS`（否则启动失败）。管理端「系统设置 → 跨站嵌入」可显式覆盖（数据库值优先） |
 | `DSH_EE_EMBED_SESSION_TTL` | `ee_emb_` 嵌入会话有效期，默认 `2h`，允许 `1m`–`8h`；过期后宿主重新 mint 即可，不提供 refresh。管理端设置（分钟）非 0 时覆盖 |
 | `DSH_EE_EXTENSION_TRUSTED_KEYS` | 受信任的扩展签名公钥（PEM 文件，可以放多把；公钥、证书、私钥文件都认）。**这是启动时读的只读兼容来源**：主要的信任根在库里（表 `trusted_signing_keys`，管理员用 `/api/admin/signing-keys` 增 / 换下 / 撤销，撤销后新装拒绝，历史保留）；同一个 key id 以库里的状态为准。不配时签了名的扩展也显示「不受信任」。改这个变量要重启，改库里立即生效 |
-| `DSH_EE_DIRECTORY_TARBALL_HOSTS` | 企业目录 tarball 来源的主机白名单，逗号分隔，支持 `*.example.com`。为空时目录里的 tarball 只接受公网 https 地址（拒绝 localhost / 内网 / 链路本地地址，防 SSRF）；企业自己的内网对象存储要显式列进来。目录 v1 只登记来源、不下载 tarball。见 [docs/plugin-signing.md](../docs/plugin-signing.md) §8 |
+| `DSH_EE_DIRECTORY_TARBALL_HOSTS` | 企业目录 tarball 来源的主机白名单，逗号分隔，支持 `*.example.com`。为空时目录里的 tarball 只接受公网 https 地址（拒绝 localhost / 内网 / 链路本地地址，防 SSRF）；企业自己的内网对象存储要显式列进来。目录只登记来源；管理员显式安装扩展条目时才按这个策略下载 tarball（不自动安装 / 升级）。见 [docs/plugin-signing.md](../docs/plugin-signing.md) §8 |
 | `DSH_EE_EXTENSION_REQUIRE_SIGNATURE` | 设为 `1` 时，没签名或签名无效的扩展不让安装（fail closed）；库里或 `DSH_EE_EXTENSION_TRUSTED_KEYS` 至少要有受信任的公钥，一把都没有时启动只警告、所有扩展都装不了。撤销的签名在任何策略下都不让新装。默认只在安装计划里提示，不阻断。见 [docs/plugins.md](../docs/plugins.md) §9.3 |
 | `DSH_EE_EMBED_MINT_PER_MINUTE` | `POST /api/embed/sessions` 的限流：每 IP 每分钟次数，默认 `30`，允许 1–100000。计数在数据库 `embed_rates` 表里，多实例部署时是合计额度 |
 | `DSH_EE_EMBED_EXCHANGE_PER_MINUTE` | `POST /api/auth/embed/exchange` 的限流：每 IP 每分钟次数，默认 `60`，允许 1–100000。同样跨实例合计；超限返回 `429` + `Retry-After: 60` |
+| `DSH_EE_CSP` | 内容安全策略模式：`off`（默认，只加现有的 `frame-ancestors` 嵌入收口）/ `report`（`Content-Security-Policy-Report-Only`，只报告不阻断）/ `enforce`（`Content-Security-Policy`，阻断违规）。`script-src` 用 index.html 内联脚本的 sha256 哈希（启动时从嵌入的前端产物计算），`frame-ancestors` 与 `DSH_EE_EMBED_ORIGINS` 合并；非法值启动失败。见 [docs/operations.md](../docs/operations.md) §10.1 |
+| `DSH_EE_CSP_REPORT_URI` | CSP 违规报告地址（可选，`http(s)://…`）。`DSH_EE_CSP` 不是 `off` 时写进策略的 `report-uri`；dsh-ee 不自带收集端点。非法地址启动失败 |
 
 ## 健康检查
 
@@ -173,7 +183,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 
 ## 接口
 
-管理与员工接口用会话 cookie；写操作必须 `Content-Type: application/json`（配合 SameSite=Lax 防 CSRF）。
+管理与员工接口默认用会话 cookie；个别给命令行 / 自动化用的接口也接受 Bearer（见各行说明）。写操作必须 `Content-Type: application/json`（配合 SameSite=Lax 防 CSRF）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -181,10 +191,13 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | GET | `/readyz` | 就绪探针：数据库、迁移、数据目录、主密钥；未就绪返回 `503` |
 | POST | `/api/auth/login` | `{username, password}` |
 | POST | `/api/auth/logout` | |
+| POST | `/api/auth/refresh` | 刷新令牌轮换：`{refresh_token, client_kind?}` → 新 `{access_token, refresh_token, expires_in, refresh_expires_in, scopes, client_kind}`；需要开启 `DSH_EE_REFRESH_TOKENS`（关闭时 404）；旧 refresh 复用会吊销整族并返回 401 `invalid_grant` |
+| POST | `/api/auth/introspect` | 令牌自省：Bearer 查自己，管理员用会话 + `{token}` 查任意令牌；只返回元数据（不返回明文 / 哈希） |
 | POST | `/api/embed/sessions` | 宿主后端换一次性嵌入 code：`Authorization: Bearer ee_at_`（需 `agent` scope），`{app, host_origin, next?}`；需要开启 `DSH_EE_EMBED_CROSS_SITE`；60 秒一次性（sha256 落库，跨实例可用），绑定用户+应用+宿主 origin；每 IP 限流 |
 | POST | `/api/auth/embed/exchange` | iframe 同源调用：`{code}` → `{token:"ee_emb_…", limited:true, expires_in}`；不 Set-Cookie；code 跨实例一次性，限流跨实例合计 |
 | POST | `/api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` 撤销本次嵌入会话（`revoked_at` 软删除，所有实例立即生效）；不影响网页会话 |
 | GET | `/api/admin/embed-settings` | 管理端嵌入设置页：部署基线（env，只读）+ 有效值 + 数据库设置；需要 `settings.manage` |
+| GET | `/api/admin/embed/stats?tz=` | 管理端嵌入运行概览：活跃会话、今日新建/过期/吊销、24h 拒绝（`embed.deny` 审计）、活跃应用 top 10；`tz` 是本地时区相对 UTC 的分钟数；只有聚合数量，不含用户/IP/令牌；需要 `settings.manage` |
 | GET/PUT | `/api/settings`（embed 段） | `PUT /api/admin/settings` 的 `embed` 段：`crossSite`/`allowedOrigins`/`apps`/`sessionMinutes`；非管理员读不到该段 |
 | GET | `/api/auth/me` | 当前用户、角色、有效权限点、是否超级管理员 |
 | GET | `/api/me/menus` | 当前用户能访问的菜单（已按权限过滤，含隐藏页面） |
@@ -192,7 +205,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | GET | `/api/me/keys` | 旧版 key、本月用量与额度 |
 | POST | `/api/me/keys` | 自助创建旧版 key `{name, expires_at?}`，明文只返回这一次 |
 | DELETE | `/api/me/keys/{id}` | 吊销自己的旧版 key |
-| GET / POST | `/api/me/tokens` | 统一新旧令牌列表 / 创建 `ee_at_` `{name, scopes, monthly_token_limit?, allowed_models?, expires_in_days?}` |
+| GET / POST | `/api/me/tokens` | 统一新旧令牌列表 / 创建 `ee_at_` `{name, scopes, monthly_token_limit?, allowed_models?, expires_in_days?}`；开启 `DSH_EE_REFRESH_TOKENS` 时创建响应额外带 `refresh_token` |
 | DELETE | `/api/me/tokens/{id}` | 按 `at:` / `npm:` / `key:` 前缀吊销自己的令牌 |
 | GET / POST | `/api/admin/users` | 用户列表（含角色） / 新建 `{username, password, display_name, department, role_ids?, monthly_token_limit?}`；机器人用 `account_type: bot` + `owner_id` 且不设密码；不传 `role_ids` 给默认的「员工」角色，不传额度默认 `0`（未分配） |
 | PATCH | `/api/admin/users/{id}` | `{display_name, department, disabled, password}` 任选 |
@@ -213,12 +226,12 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | PATCH / DELETE | `/api/admin/models/{id}` | 修改 `{name, upstream_model, display_name, enabled}` / 删除 |
 | GET / POST | `/api/admin/keys` | 旧版 key 列表 / 代发 `{user_id, name, expires_at?}`，明文只返回这一次 |
 | DELETE | `/api/admin/keys/{id}` | 吊销旧版 key |
-| GET / POST | `/api/admin/tokens` | 统一令牌筛选 / 给员工或机器人下发令牌 |
+| GET / POST | `/api/admin/tokens` | 统一令牌筛选 / 给员工或机器人下发令牌。POST 也接受 Bearer：需 `keys.manage`（即开过管理模式的令牌），供 CI / 机器人程序化签发，审计 `token.issue` 记 `via=token`；字段 `{user_id, name, scopes?, client_kind?, client_name?, expires_in_days?, monthly_token_limit?, allowed_models?}`。见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) §6 |
 | POST | `/api/admin/tokens/revoke` | 按 id、用户、设备或部门批量吊销 |
 | POST | `/api/auth/client-token` | API 客户端换令牌 `{client_id, client_secret}` → `{access_token, token_type, expires_in, scopes, client_id, client_name, client_kind, token_id}`；1 小时有效，无需会话；凭据错误统一 401 `invalid_client`，按 IP 限流 |
 | GET / POST | `/api/admin/clients` | API 客户端列表（含禁用，带 owner 与最近使用）/ 注册 `{name, owner_user_id, scopes?}`；`client_secret` 只返回一次；需要 `keys.manage` |
 | DELETE | `/api/admin/clients/{client_id}` | 注销 API 客户端（幂等）；已签出的令牌按自身有效期过期 |
-| POST | `/api/device/code`、`/api/device/token` | 设备码发起与轮询领取（无需会话） |
+| POST | `/api/device/code`、`/api/device/token` | 设备码发起与轮询领取（无需会话）；开启 `DSH_EE_REFRESH_TOKENS` 时领取响应额外带 `refresh_token` |
 | GET / POST | `/api/device/{user_code}` | 查看设备信息 / 登录后批准或拒绝 |
 | GET | `/api/settings` | 系统设置（登录即可读） |
 | PUT | `/api/admin/settings` | 整份替换；按改动的段落校验权限（npm 源 / 上游段落也可由对应管理员修改） |
@@ -245,7 +258,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | GET | `/setup.sh`、`/setup.ps1` | 员工电脑的一键接入脚本 |
 | GET | `/v1/models` | `Authorization: Bearer sk-ee-…` |
 | POST | `/v1/chat/completions` | 同上，OpenAI 格式，支持 `stream` |
-| GET | `/metrics` | 最小监控指标（Prometheus 文本格式）。需 `DSH_EE_METRICS=true`，且只允许本机 / 内网来源抓取 |
+| GET | `/metrics` | 最小监控指标（Prometheus 文本格式）。需 `DSH_EE_METRICS=true`，且只允许本机 / 内网来源抓取；含嵌入指标 `dsh_ee_embed_sessions_active` / `dsh_ee_embed_denied_total` |
 
 协议面（`/v1/*` 与 `/mcp`）的限流与 `X-Request-Id` 见上面「能力中心与 DSH 接入」；成功和 429 响应都带 `X-RateLimit-*`，429 另带 `Retry-After`。
 
@@ -279,10 +292,10 @@ curl localhost:8080/v1/chat/completions -H 'Authorization: Bearer sk-ee-…' -H 
 
 - 额度按 UTC 自然月重置，检查在请求前做，单次请求可能略微超出额度。
 - 登录限流在进程内存里，多实例部署时需改为共享存储。登录失败先按用户名锁（15 分钟 5 次），再按客户端 IP 固定窗口限流（默认 15 分钟 50 次，只统计用户名或密码错误），两者都在单实例内存里。
-- 按 IP 限流默认值取得比较宽，避免公司多人共用一个出口 IP 时把整个出口封死；如果出口 IP 背后人数很多，可以调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭。`/metrics` 的登录计数也是进程内累计，重启清零、多实例各自独立。
+- 按 IP 限流默认值取得比较宽，避免公司多人共用一个出口 IP 时把整个出口封死；如果出口 IP 背后人数很多，可以调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭。`/metrics` 的登录计数也是进程内累计，重启清零、多实例各自独立。嵌入的 `dsh_ee_embed_denied_total` 同样是进程内计数；`dsh_ee_embed_sessions_active` 是数据库里的全库活跃会话数，多实例抓取到的是同一个值（Prometheus 用 `max()` 而不是 `sum()`），数据库不可用时这一行省略。
 - `/v1/*` 与 `/mcp` 的每令牌限流同样在进程内存里，多实例部署时按实例各自计数；需要全局一致限流时得改用共享存储。
 - 管理操作（建用户、分配额度、代发 / 吊销 key）尚未写审计日志；网关调用已逐条记录在 `usage_logs`。
 - 只支持本地账号；LDAP / OIDC 后续加。
-- 多实例部署：登录限流、上游 packument 的内存缓存、预载任务都在单个进程里；多个实例同时第一次启动时数据库迁移会互相冲突（先起一个再扩容）。tarball 存在本地磁盘，多实例需要共享存储（NFS 等）或以后改成对象存储。
+- 多实例部署：周期后台任务（LDAP/飞书/知识源同步、上游检查、接入插件发布、Desktop 版本同步、到期与清理）已用数据库租约选主（`background_leases`，默认开启，见 [docs/operations.md](../docs/operations.md) §9.2），同一任务不会重复执行；但登录限流、上游 packument 的内存缓存、MCP 事件流等仍在单个进程里，多个实例同时第一次启动时数据库迁移会互相冲突（先起一个再扩容），tarball 存在本地磁盘，多实例需要共享存储（NFS 等）或以后改成对象存储。启动时的 `FailRunningJobs` 与管理员手动触发的镜像任务仍没有作业级归属。
 - 离线包没有签名（导入时只校验每个 tarball 的 sha512）；dshfind 签名种子包对接后再加 ed25519 校验。
 - 上游 registry 只支持匿名访问，不支持需要认证的 Nexus / Artifactory 代理仓库。

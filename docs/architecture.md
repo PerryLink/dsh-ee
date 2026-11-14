@@ -23,7 +23,7 @@ dsh-ee 的运行时只有三样东西：
 3. Go 构建时把 `web/dist` 拷进 `server/internal/webui/build/`，由 `//go:embed all:build` 嵌进二进制；版本号用 `-ldflags "-X main.version=…"` 写入；
 4. 运行镜像只有 `/usr/local/bin/dsh-ee`，`EXPOSE 8080`，`HEALTHCHECK` 请求 `/healthz`，数据卷 `/data`。
 
-启动顺序（`server/cmd/dsh-ee/main.go`）：读环境变量 → 连数据库（`DSH_EE_DB_WAIT` 内每 3 秒重试）→ 跑迁移 → 创建初始管理员（用户表为空时）→ 初始化主密钥与数据目录 → 把上次进程中断的后台任务标为失败（不自动续跑）→ 起 HTTP 服务。收到 SIGINT/SIGTERM 后最多等 30 秒优雅关闭；流式响应可能持续数分钟，所以 HTTP 服务不设 `WriteTimeout`（`ReadHeaderTimeout` 10s、`IdleTimeout` 120s）。
+启动顺序（`server/cmd/dsh-ee/main.go`）：读环境变量 → 连数据库（`DSH_EE_DB_WAIT` 内每 3 秒重试）→ 跑迁移 → 创建初始管理员（用户表为空时）→ 初始化主密钥与数据目录 → 把上次进程中断的后台任务标为失败（不自动续跑；多实例下仍每实例执行，见 §7）→ 初始化后台任务租约执行器 → 起 HTTP 与后台循环（周期任务每轮先抢 `background_leases` 租约，见 §4.3）。收到 SIGINT/SIGTERM 后最多等 30 秒优雅关闭，并释放本实例持有的后台任务租约；流式响应可能持续数分钟，所以 HTTP 服务不设 `WriteTimeout`（`ReadHeaderTimeout` 10s、`IdleTimeout` 120s）。
 
 ## 2. 代码组件
 
@@ -32,6 +32,7 @@ dsh-ee 的运行时只有三样东西：
 | 进程入口 / CLI | `server/cmd/dsh-ee` | 不带子命令时启动服务；`version`、`extension`、`config`、`schema`、`admin recover` 等子命令见 [cli.md](./cli.md) |
 | HTTP 层 | `server/internal/api` | 路由表、认证中间件、全部 handler；`routes.go` 里一行一条路由，同时生成 Agent 工具 |
 | 存储层 | `server/internal/store` | 主库的业务 SQL 与迁移（`migrations/*.sql`，按文件名顺序执行，失败即启动失败）；换数据库方言主要改这一层 |
+| 后台任务租约 | `server/internal/lease` | 多实例下周期任务的租约执行器：抢租约、按 TTL/3 续约、停机释放、DB 不可用时跳过；租约表 `background_leases` 与访问方法在 store 层 |
 | 权限 | `server/internal/rbac` | 权限点目录、角色求并、scope 与权限求交（`ScopeFilter`） |
 | 模型网关 | `server/internal/api/gateway.go`、`llm.go` | OpenAI 兼容的 `/v1`，上游故障转移、额度、用量记录 |
 | npm 源 | `server/internal/registry` | packument / tarball / 发布 / 审核 / 回源 / 预载 / 离线包；`blobs.go` 管数据目录 |
@@ -123,7 +124,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | 服务扩展 | 一个可访问的 HTTP 服务 | 服务端去 `/.well-known/dsh-ee-extension.json` 取清单；调用时 dsh-ee 给凭据（共享 / `user_secret` / `ee_jwt` / OAuth），按 MCP 或约定接口转发 |
 | 端侧扩展 | 员工本机运行的 npm 包 | 经企业 npm 源下发；本机 MCP 服务 + `/api/local/*` 回报审计 |
 
-- 安装入口是管理员：`POST /api/admin/extensions/check|install`，网页「企业连接 → 安装扩展」。安装即完全信任，没有签名校验和版本回滚（设计，见 §7）。
+- 安装入口是管理员：`POST /api/admin/extensions/check|install`，网页「企业连接 → 安装扩展」。安装即完全信任；签名、信任根与升级回滚见 [plugins.md](./plugins.md) §9.3、§9.4。
 - 服务扩展的 URL 由管理员填写；dsh-ee 会按清单声明的 `servers` 校验接口文档地址，调用时按清单声明的凭据方式带凭据。
 - `ee_jwt` 的签名密钥由 `server/internal/eejwt` 定期从库里重读，轮换时新钥匙延迟生效（默认 10 分钟），避免正在处理的请求验签失败。
 
@@ -149,7 +150,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | 能力中心 | `assets`、`asset_versions`、`asset_subscriptions`、`asset_usage`、`app_rows` |
 | 企业连接 | `connection_tools`、`connection_calls`、`connection_shared_credentials`、`write_confirmations` |
 | 知识库/字段/权限配置 | `kb_*`、`field_defs`、`field_values`、`access_rules`、`change_requests` |
-| 运维与审计 | `audit_logs`、`settings`、`feedback`、`data_*`、`dsh_releases` |
+| 运维与审计 | `audit_logs`、`settings`、`feedback`、`data_*`、`dsh_releases`、`background_leases` |
 
 `schema_migrations` 记录已执行的迁移。**多实例同时首次启动会争抢迁移**：先起一个，等它完成再扩容（[server/README.md](../server/README.md) 已知限制）。
 
@@ -169,7 +170,8 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 - 登录失败限流（按用户名，进程内存；5 次失败锁 15 分钟；设备码按 IP 限流）。
 - 上游 packument 内存缓存、知识库关键词索引、流式响应、MCP 事件流。
 - 预载/导入任务：任务记录在 `sync_jobs`，进程重启时启动阶段会把「运行中」的任务标为失败（`FailRunningJobs`），不会自动续跑。
-- 这些是单实例限制的一部分：多实例部署需要把它们移出进程内存（设计）。
+- 后台周期任务（LDAP/飞书同步、知识源同步、上游新版本检查、接入插件发布、Desktop 版本同步、到期与清理任务）不在进程内存里排队：每轮先抢数据库表 `background_leases` 里的一条租约，只有持租实例执行（`internal/lease`）；执行中续约，任务结束/优雅停机释放，进程崩溃则 TTL 到期后由其他实例接管。数据库不可用时该轮跳过并记日志，不会退化成每个实例都跑。
+- 其余进程内状态（登录限流、packument 缓存、知识库索引、MCP 事件流、能力目录变化通知）仍是每个实例一份：多实例部署需要把它们移出进程内存（设计）。
 
 ## 5. 认证、授权与信任边界
 
@@ -212,7 +214,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | 上游模型 | 上游 key 用主密钥加密存库，网关解密后转发 | 主密钥和数据库要同等保护；换主密钥会让已存凭据解不开 |
 | 企业连接凭据 | 共享凭据/员工 `user_secret` 加密存库；`ee_jwt` 是 dsh-ee 现签的 5 分钟 JWT | 源系统仍要自己鉴权；dsh-ee 只负责「告诉它这是谁」 |
 | 写操作 | 默认 `non_dsh`：非 DSH 客户端先返回确认链接，本人确认后同参数再调一次才执行；方式可设 `off` / `always` | 判断客户端靠 `X-DshEE-Client`，可伪造；这道确认防的是「客户端被设成自动同意」，不是防恶意客户端 |
-| 扩展 | 安装 = 管理员完全信任；服务扩展可拿到 `ee_jwt` / `user_secret`，URL 由管理员填 | 没有签名校验、没有版本回滚（设计） |
+| 扩展 | 安装 = 管理员完全信任；服务扩展可拿到 `ee_jwt` / `user_secret`，URL 由管理员填 | 签名 / 信任根 / 升级回滚见 [plugins.md](./plugins.md) §9.3、§9.4；回滚会把历史快照当新版本重新检查 |
 | 反向代理 | `clientIP` 只在直连对端是回环/内网地址时才取 `X-Forwarded-For` 的最后一跳 | 代理必须正确设置 XFF；否则审计里可能是代理 IP |
 | 公开地址 | `DSH_EE_PUBLIC_URL` 为空时按请求 Host/`X-Forwarded-*` 推断 | 生产必须显式配置，避免 Host 伪造影响生成的外部 URL |
 | 浏览器跨域 | 基线没有 CORS；浏览器内第三方 Harness 的跨站直连见 PR #127（`DSH_EE_CORS_ORIGINS` 白名单，默认关闭，只覆盖 `/v1/*` 与 `/mcp`） | 合并前第三方 Harness 应在服务端/本机进程调用；合并后 CORS 也不是认证边界 |
@@ -236,7 +238,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 
 | 能力 | 现状 | 参考 |
 |---|---|---|
-| 多实例横向扩展 | 限流、缓存、预载任务在进程内存；tarball 在本地磁盘；迁移要求先起一个 | [server/README.md](../server/README.md) 已知限制 |
+| 多实例完整横向扩展 | 周期后台任务已有租约选主（`background_leases`，见 §4.3 与 [operations.md](./operations.md) §9.2）；登录限流、缓存、预载任务、MCP 事件流仍在进程内存，tarball 在本地磁盘，迁移要求先起一个，作业级归属（`FailRunningJobs`、管理员触发的镜像任务）未做 | [operations.md](./operations.md) §9.2、[server/README.md](../server/README.md) 已知限制 |
 | 对象存储 | tarball 只写本地 `DSH_EE_DATA_DIR` | 同上 |
 | 备份/恢复工具 | 仓库没有内置命令；`.env` 必须和数据库一起备份 | [operations.md](./operations.md)、[roadmap.md](./roadmap.md) 阶段 C |
 | 指标/追踪/慢请求日志 | 只有文本日志和 `/healthz` | roadmap 阶段「企业级运行能力」 |
@@ -245,7 +247,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | `/mcp`、`/v1` 每令牌限流/`Retry-After`/`Request-Id` | 没有；MCP 分页与写确认 `_meta` 见 PR #128（合并后生效），限流仍未实现（设计） | [l1-client.md](./l1-client.md) §5；[roadmap.md](./roadmap.md) |
 | MCP `tools/list` 分页、写确认结构化 `_meta` | 基线一次全量 + 文本确认；见 PR #128，合并后生效 | [troubleshooting.md](./troubleshooting.md) §4.2 |
 | CORS（浏览器内第三方 Harness） | 见 PR #127（白名单 `DSH_EE_CORS_ORIGINS`，默认关闭），合并后生效 | [l1-client.md](./l1-client.md) |
-| 扩展签名、版本回滚、Git 安装、作者自助发布 | 没有；安装只经管理员 | [plugins.md](./plugins.md) §9 |
+| Git 安装、自动升级、作者自助发布 | 没有；安装只经管理员。扩展签名、企业目录登记、版本回滚已做最小闭环 | [plugins.md](./plugins.md) §9 |
 | 第三方 Harness 发现/能力/版本头端点 | 见 PR #123（`/.well-known/dsh-ee`、`/v1/capabilities`、`/v1/apps`、`Dsh-EE-API-Version`），合并后生效 | 合入前以 [l1-client.md](./l1-client.md) 与 `/mcp`、`/v1` 为准 |
 | 微应用嵌入 v0/v1 | 见 PR #118：同站 v0（CSP/安全头、`?embed=1&theme=`、`DSH_EE_EMBED_ORIGINS`、postMessage v1）+ 跨站 v1（默认关闭，需 `DSH_EE_EMBED_CROSS_SITE=1` 且配置 `DSH_EE_EMBED_ORIGINS`；会话 TTL `DSH_EE_EMBED_SESSION_TTL`）。宿主接入见 [embedding.md](./embedding.md)，跨站设计与未做项见 [cross-site-embedding.md](./cross-site-embedding.md)（两份文档由 #118/#130 新增，合并后可用）；能力以 #118 合入为准 | 合入前 `server/README.md` 没有这些配置 |
 | 跨站嵌入 v1 | 已由 PR #118 实现，默认关闭，需 `DSH_EE_EMBED_CROSS_SITE=1` + `DSH_EE_EMBED_ORIGINS`；未做项：管理端设置页、完整扩展消息（`navigate`/`navigate-request`/`open-external`/`logout`、深链 tab 同步）、`fit=auto` sticky 头处理、移动端策略、多实例共享 code/会话存储 | [cross-site-embedding.md](./cross-site-embedding.md)（#130 设计/实现参考） |

@@ -175,6 +175,8 @@ irm https://<dsh-ee>/setup.ps1 | iex          # Windows
 | `DSH_EE_DATA_DSN` / `DSH_EE_DATA_READ_DSN` | 数据中台的库（可写 / 只读账号）；设为 `off` 关闭数据中台 |
 | `DSH_EE_LOGIN_IP_LIMIT` / `DSH_EE_LOGIN_IP_WINDOW` | 同一客户端 IP 在固定窗口内允许的登录失败次数，默认 `50` 次 / `15m`；设为 `0` / `off` 关闭 |
 | `DSH_EE_METRICS` | 设为 `true` 时开放 `GET /metrics`（Prometheus 文本格式，只允许本机 / 内网抓取）；默认关闭 |
+| `DSH_EE_CSP` | 内容安全策略模式：`off`（默认，只加现有的 `frame-ancestors` 嵌入收口）/ `report`（`Content-Security-Policy-Report-Only`，只报告不阻断）/ `enforce`（`Content-Security-Policy`，阻断违规）。内联脚本哈希在启动时从嵌入的 `index.html` 计算，`frame-ancestors` 与 `DSH_EE_EMBED_ORIGINS` 合并；非法值启动失败。见 [docs/operations.md](./docs/operations.md) §10.1 |
+| `DSH_EE_CSP_REPORT_URI` | 可选的 CSP 违规报告地址（`http(s)://…`）；`DSH_EE_CSP` 不是 `off` 时写进 `report-uri`。dsh-ee 不自带收集端点 |
 | `DSH_EE_TRUSTED_PROXIES` | 可信反向代理的地址 / CIDR（逗号分隔），只有它们传来的 `X-Forwarded-*` 会被采信；默认只有本机回环地址。代理在别的机器、容器网络或云负载均衡后面时必填 |
 
 完整列表、权限模型与接口说明见 [server/README.md](./server/README.md)。

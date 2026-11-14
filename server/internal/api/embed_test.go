@@ -670,9 +670,16 @@ func TestEmbedSessionPerUserLimitAndRevokeShared(t *testing.T) {
 		"SELECT COUNT(*) FROM embed_sessions WHERE revoked_at IS NOT NULL").Scan(&revoked); err != nil || revoked != 1 {
 		t.Fatalf("revoked_at 应该落库：%d %v", revoked, err)
 	}
-	// 清理会物理删除已吊销/过期的会话。
+	// 保留期内的终态会话先留着（管理端「运行概览」按天统计要用），超过保留期才物理删除。
+	if n, err := f.st.DeleteExpiredEmbedSessions(context.Background()); err != nil || n != 0 {
+		t.Fatalf("保留期内的已吊销会话不应被立即清理：%d %v", n, err)
+	}
+	if _, err := f.st.DB().ExecContext(context.Background(),
+		"UPDATE embed_sessions SET revoked_at = ? WHERE revoked_at IS NOT NULL", time.Now().UTC().Add(-8*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	if n, err := f.st.DeleteExpiredEmbedSessions(context.Background()); err != nil || n < 1 {
-		t.Fatalf("清理已吊销会话：%d %v", n, err)
+		t.Fatalf("超过保留期的已吊销会话应被清理：%d %v", n, err)
 	}
 }
 

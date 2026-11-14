@@ -124,6 +124,13 @@ scope 常量在 `server/internal/rbac/scopes.go`：`models`、`registry:read`、
 
 **错误形状**：OpenAI 兼容 `{"error":{"message","type","code"}}`（`server/internal/api/gateway.go`）。`X-DshEE-Client: dsh-connect/…` 的请求额外把错误映射成 DSH 能直接展示的 400 文案。
 
+**Anthropic 兼容端点** `POST /v1/messages`（别名 `/anthropic/v1/messages`）用 Anthropic 错误壳 `{"type":"error","error":{"type","message"}}`
+（`server/internal/api/anthropic.go`），状态码与 OpenAI 网关相同，`error.type` 按状态码映射：
+401 `authentication_error`、403 `permission_error`、404 `not_found_error`、429 `rate_limit_error`、
+5xx `api_error`、其它 4xx `invalid_request_error`（请求体过大是 `request_too_large`）。
+`/v1/messages/count_tokens` 鉴权后返回 404 `not_found_error`（v0 不实现）。DeepSeek 原生透传路径的上游错误按原状态码与 body 转发（DeepSeek 本身是 Anthropic 错误壳），dsh-ee 侧错误仍按上表。细节见
+[dev/anthropic-api.md](./dev/anthropic-api.md#6-错误)。
+
 | HTTP | code | 触发 | 专页 |
 |---|---|---|---|
 | 401 | `token_invalid` / `token_expired` / `token_revoked` | 缺 Bearer 或令牌无效 | [l1-client.md](./l1-client.md#7-常见错误) |

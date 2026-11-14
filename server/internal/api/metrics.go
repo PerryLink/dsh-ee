@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -45,11 +46,36 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "# HELP dsh_ee_login_username_limited_total 因用户名锁定被 429 拒绝的登录请求数\n")
 	fmt.Fprintf(&b, "# TYPE dsh_ee_login_username_limited_total counter\n")
 	fmt.Fprintf(&b, "dsh_ee_login_username_limited_total %d\n", s.loginUsernameLimited.Load())
+	// 嵌入拒绝计数是进程内累计（与登录计数一样，多实例各自独立、重启清零）。
+	fmt.Fprintf(&b, "# HELP dsh_ee_embed_denied_total 被拒绝的跨站嵌入请求数（与 embed.deny 审计同口径）\n")
+	fmt.Fprintf(&b, "# TYPE dsh_ee_embed_denied_total counter\n")
+	fmt.Fprintf(&b, "dsh_ee_embed_denied_total %d\n", s.embedDenied.Load())
+	// 活跃嵌入会话在数据库里（多实例共享同一份）；数据库没接线或不可用时省略这一行，不影响其它指标。
+	if active, ok := s.activeEmbedSessions(r.Context()); ok {
+		fmt.Fprintf(&b, "# HELP dsh_ee_embed_sessions_active 当前有效（未过期、未吊销）的嵌入会话数\n")
+		fmt.Fprintf(&b, "# TYPE dsh_ee_embed_sessions_active gauge\n")
+		fmt.Fprintf(&b, "dsh_ee_embed_sessions_active %d\n", active)
+	}
 
 	w.Header().Set("Content-Type", metricsContentType)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(b.String()))
+}
+
+// activeEmbedSessions 查数据库里的活跃嵌入会话数（多实例共用一份计数）。
+// 超时或查询失败时返回 false，指标行直接省略：抓取不能因为一个可选指标报错。
+func (s *Server) activeEmbedSessions(ctx context.Context) (int, bool) {
+	if s.store == nil {
+		return 0, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	n, err := s.store.CountActiveEmbedSessionsGlobal(ctx)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // internalPeer 判断请求是否来自本机或内网地址。这里刻意不采信 X-Forwarded-For：

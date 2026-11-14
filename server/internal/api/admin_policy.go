@@ -388,8 +388,10 @@ func (s *Server) runRecoveryExpiry(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.expireRecovery(ctx)
-			s.adminPolicy(ctx)
+			s.runLeased(ctx, leaseRecoveryExpiry, func(ctx context.Context) {
+				s.expireRecovery(ctx)
+				s.adminPolicy(ctx)
+			})
 		}
 	}
 }

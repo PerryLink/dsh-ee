@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "note": "版本快照由 scripts/docs/version-snapshot.mjs 从 git tag 生成：每个版本目录是 tag 上发布白名单文档的静态副本（docs/ + manifest.json + index.json）。站内 /docs 仍以 main 的 docs/ 为单一事实源；这里用于归档与后续版本选择。",
+  "latest": null,
+  "stable_latest": null,
+  "prerelease_latest": null,
+  "versions": []
+}

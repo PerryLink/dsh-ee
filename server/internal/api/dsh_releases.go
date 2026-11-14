@@ -442,8 +442,21 @@ func (s *Server) kickDshReleases() {
 }
 
 func (s *Server) runDshReleases(ctx context.Context) {
-	if err := s.recoverDshReleases(ctx); err != nil {
-		s.log.Warn("恢复 Desktop 下载任务失败", "err", err)
+	// 启动恢复也走租约：别的实例正在下载时不要动它的 .part 文件和 downloading 状态。
+	// 进程被强杀后旧租约要等 TTL 到期，所以这里重试几次再放弃（下一轮 6 小时后仍会同步）。
+	if !s.runLeasedRetry(ctx, leaseDshReleases, func(ctx context.Context) {
+		if err := s.recoverDshReleases(ctx); err != nil {
+			s.log.Warn("恢复 Desktop 下载任务失败", "err", err)
+		}
+	}) && ctx.Err() == nil {
+		s.log.Debug("跳过 Desktop 下载任务的启动恢复（租约由其他实例持有或数据库不可用）")
+	}
+	check := func(ctx context.Context) {
+		s.runLeased(ctx, leaseDshReleases, func(ctx context.Context) {
+			if err := s.syncDshReleases(ctx); err != nil {
+				s.log.Warn("同步 Desktop 版本失败", "err", err)
+			}
+		})
 	}
 	timer := time.NewTimer(time.Minute)
 	defer timer.Stop()
@@ -452,13 +465,9 @@ func (s *Server) runDshReleases(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-s.releaseKick:
-			if err := s.syncDshReleases(ctx); err != nil {
-				s.log.Warn("同步 Desktop 版本失败", "err", err)
-			}
+			check(ctx)
 		case <-timer.C:
-			if err := s.syncDshReleases(ctx); err != nil {
-				s.log.Warn("同步 Desktop 版本失败", "err", err)
-			}
+			check(ctx)
 			timer.Reset(6 * time.Hour)
 		}
 	}

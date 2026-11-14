@@ -117,9 +117,9 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 	})
 }
 
-// rateLimitedPath 只覆盖公开协议面：OpenAI 兼容网关与 MCP。
+// rateLimitedPath 只覆盖公开协议面：OpenAI 兼容网关、Anthropic 兼容端点（含别名）与 MCP。
 func rateLimitedPath(path string) bool {
-	return isV1Path(path) || isMCPPath(path)
+	return isV1Path(path) || isMCPPath(path) || isAnthropicMessagesPath(path)
 }
 
 func isV1Path(path string) bool { return path == "/v1" || strings.HasPrefix(path, "/v1/") }
@@ -127,12 +127,23 @@ func isV1Path(path string) bool { return path == "/v1" || strings.HasPrefix(path
 func isMCPPath(path string) bool { return path == "/mcp" || strings.HasPrefix(path, "/mcp/") }
 
 // rateLimitKey 用令牌决定额度；没有 Authorization 时退回客户端 IP。
-// 只放哈希，进程里的 map 不留令牌明文。
+// Anthropic 兼容端点允许只带 x-api-key：该端点优先按 x-api-key 取令牌（与 auth 一致），
+// 其它端点仍以 Bearer 为准。只放哈希，进程里的 map 不留令牌明文。
 func (s *Server) rateLimitKey(r *http.Request) string {
-	if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-		if token = strings.TrimSpace(token); token != "" {
-			return "token:" + secret.Hash(token)
+	token := ""
+	if isAnthropicMessagesPath(r.URL.Path) {
+		token = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+	}
+	if token == "" {
+		if bearerToken, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+			token = strings.TrimSpace(bearerToken)
 		}
+	}
+	if token == "" {
+		token = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+	}
+	if token != "" {
+		return "token:" + secret.Hash(token)
 	}
 	return "ip:" + s.clientIP(r)
 }
@@ -143,8 +154,8 @@ func setRateLimitHeaders(h http.Header, info rateInfo) {
 	h.Set("X-RateLimit-Reset", strconv.FormatInt(info.Reset.Unix(), 10))
 }
 
-// writeRateLimited 超限时保留原来的错误体形状：/v1 用 OpenAI 错误壳，
-// /mcp 用 JSON-RPC 错误对象（code -32000，-32000 起是服务端自定义错误码）。
+// writeRateLimited 超限时保留原来的错误体形状：/v1 用 OpenAI 错误壳（Anthropic
+// 兼容端点用 Anthropic 错误壳），/mcp 用 JSON-RPC 错误对象（code -32000）。
 func writeRateLimited(w http.ResponseWriter, r *http.Request) {
 	const msg = "请求过于频繁，请稍后重试"
 	switch {
@@ -154,11 +165,20 @@ func writeRateLimited(w http.ResponseWriter, r *http.Request) {
 			"id":      nil,
 			"error":   &mcp.Error{Code: -32000, Message: msg},
 		})
+	case isAnthropicMessagesPath(r.URL.Path):
+		writeAnthropicErr(w, http.StatusTooManyRequests, "rate_limit_error", msg)
 	case isV1Path(r.URL.Path):
 		writeOpenAIErr(w, http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", msg)
 	default:
 		writeErr(w, http.StatusTooManyRequests, msg)
 	}
+}
+
+// isAnthropicMessagesPath 是 Anthropic Messages 兼容面（含 /anthropic/v1/messages 别名）；
+// 限流、鉴权 token 口径与 404 兜底都按它区分错误壳。
+func isAnthropicMessagesPath(path string) bool {
+	return path == "/v1/messages" || strings.HasPrefix(path, "/v1/messages/") ||
+		path == "/anthropic/v1/messages" || strings.HasPrefix(path, "/anthropic/v1/messages/")
 }
 
 // ---- X-Request-Id ----

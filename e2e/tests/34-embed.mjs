@@ -62,10 +62,16 @@ export default async function (t) {
   // ---- 宿主页注入 iframe：ready + 主题 + 隐藏入口 + 页签保留 ----
   await admin.goto(`${BASE}/go`);
   await openHost(admin, iframeSrc(slug, "&fit=auto&theme=dark"));
+  const hello = await waitMsg(admin, "dsh-ee:hello");
+  assertEq(hello?.protocol, 2, "hello.protocol");
+  assertEq(hello?.viewport?.mobile, false, "hello 带视口（桌面上不是移动端）");
+  assertEq(hello?.timeouts?.handshake_ms, 10000, "hello 声明 iframe 握手超时 10s");
+  assertEq(hello?.timeouts?.host_fallback_ms, 8000, "hello 声明宿主兜底 8s");
   const ready = await waitMsg(admin, "dsh-ee:ready");
   assertEq(ready?.v, 1, "协议版本");
   assertEq(ready?.app?.slug, slug, "ready 带应用标识");
   assertEq(ready?.theme, "dark", "ready 带初始主题");
+  assertEq(ready?.viewport?.mobile, false, "ready 带视口（桌面上不是移动端）");
   assert(ready?.supports?.includes("connect-v1"), "ready 声明 connect-v1：" + JSON.stringify(ready));
   const session = await waitMsg(admin, "dsh-ee:session");
   assertEq(session?.limited, false, "同站 cookie 场景 session.limited 为 false");
@@ -83,18 +89,118 @@ export default async function (t) {
   await frame.getByText("备注").first().waitFor();
   assertEq(await frame.getByRole("link", { name: "导出 CSV" }).count(), 0, "嵌入模式隐藏导出");
 
-  // ---- fit=auto：resize 上报高度，带上限 ----
+  // ---- fit=auto：上报的是内容高度，不是 iframe 视口高度；header 不 sticky、页面不再 min-h-screen ----
+  // 把 iframe 拉到 2000px 高：旧实现上报 documentElement.scrollHeight 会得到 2000，新实现仍是内容高度。
+  await admin.evaluate(() => {
+    window.__embedFrame.style.height = "2000px";
+  });
+  await admin.waitForTimeout(300); // 等 iframe 的 window resize 后再上报一轮
   const resize = await waitMsg(admin, "dsh-ee:resize");
   assert(typeof resize?.height === "number" && resize.height > 0, "resize 带内容高度：" + JSON.stringify(resize));
   assert(resize.height <= 4000, "resize 高度有上限：" + resize.height);
+  assert(resize.height < 1500, "resize 报内容高度而不是 iframe 视口高度：" + resize.height);
   assert(typeof resize?.width === "number" && resize.width > 0, "resize 带宽度");
-  step(`fit=auto 上报高度 ${resize.height}px（上限 4000），宿主可按消息撑开`);
+  assertEq(resize?.mobile, false, "resize 带移动端判定");
+  const layout = await admin.evaluate(() => {
+    const doc = window.__embedFrame.contentDocument;
+    const header = doc.querySelector("header");
+    const page = doc.getElementById("root")?.firstElementChild;
+    return {
+      headerPosition: header ? getComputedStyle(header).position : "missing",
+      pageClass: typeof page?.className === "string" ? page.className : "",
+      pageMinHeight: page ? getComputedStyle(page).minHeight : "missing",
+    };
+  });
+  assert(layout.headerPosition !== "sticky", "fit=auto 嵌入时 header 不吸顶，实际：" + layout.headerPosition);
+  assert(!layout.pageClass.includes("min-h-screen"), "fit=auto 嵌入时页面不用 min-h-screen：" + layout.pageClass);
+  assert(layout.pageMinHeight !== "100vh", "fit=auto 嵌入时页面 min-height 不再等于视口：" + layout.pageMinHeight);
+  await admin.evaluate(() => {
+    window.__embedFrame.style.height = "600px";
+  });
+  step(`fit=auto 上报内容高度 ${resize.height}px（上限 4000），header 不吸顶、页面由内容撑开`);
 
   // ---- 宿主 -> iframe 切主题，iframe 回发实际主题 ----
   await admin.evaluate(() => window.__embedFrame.contentWindow.postMessage({ v: 1, type: "dsh-ee:theme", theme: "light" }, location.origin));
   await admin.waitForFunction(() => window.__embedFrame?.contentDocument?.documentElement?.classList.contains("dark") === false, null, { timeout: 5000 });
   await admin.waitForFunction(() => (window.__embedMsgs ?? []).some((m) => m.data?.type === "dsh-ee:theme" && m.data?.theme === "light"), null, { timeout: 5000 });
   step("宿主发 dsh-ee:theme 切浅色：iframe 只改 DOM，并回发 dsh-ee:theme 确认");
+
+  // ---- 移动端：窄屏 iframe 显示常驻「在浏览器打开」兜底，内容不隐藏、不自动顶层跳转 ----
+  const hostURL = admin.url();
+  await admin.evaluate(() => {
+    window.__embedFrame.style.width = "390px";
+  });
+  await admin.waitForFunction(
+    () => (window.__embedMsgs ?? []).some((m) => m.data?.type === "dsh-ee:resize" && m.data?.mobile === true),
+    null,
+    { timeout: 10000 },
+  );
+  const frameMobile = admin.frameLocator("#embed-frame");
+  await frameMobile.locator("[data-embed-mobile]").waitFor({ timeout: 10000 });
+  await frameMobile.getByRole("link", { name: "在浏览器打开" }).waitFor();
+  await frameMobile.getByRole("heading", { name: `嵌入版 ${tag}` }).waitFor();
+  assertEq(admin.url(), hostURL, "移动端不自动在 iframe 里顶层跳转（宿主地址不变）");
+  await admin.evaluate(() => {
+    window.__embedFrame.style.width = "900px";
+  });
+  await admin.waitForFunction(
+    () => window.__embedFrame?.contentDocument?.querySelector("[data-embed-mobile]") == null,
+    null,
+    { timeout: 10000 },
+  );
+  step("移动端（<640px）：显示常驻「在浏览器打开」+ resize.mobile=true，内容保留且不自动顶层打开");
+
+  // ---- theme=system：跟随 prefers-color-scheme（不写 localStorage），宿主 theme 消息仍可覆盖 ----
+  await admin.evaluate(() => localStorage.removeItem("dsh-ee:theme"));
+  await admin.emulateMedia({ colorScheme: "dark" });
+  await admin.evaluate((url) => {
+    window.__embedMsgs = [];
+    const f = document.createElement("iframe");
+    f.id = "embed-frame-system";
+    f.src = url;
+    f.style.cssText = "width: 900px; height: 600px; border: 0; display: block;";
+    document.body.appendChild(f);
+    window.__embedFrame = f;
+  }, iframeSrc(slug, "&theme=system"));
+  const sysReady = await waitMsg(admin, "dsh-ee:ready");
+  assertEq(sysReady?.theme, "dark", "theme=system 首屏跟随系统深色");
+  await admin.waitForFunction(
+    () => document.getElementById("embed-frame-system")?.contentDocument?.documentElement?.classList.contains("dark") === true,
+    null,
+    { timeout: 10000 },
+  );
+  const storedTheme = await admin.evaluate(() => document.getElementById("embed-frame-system").contentWindow.localStorage.getItem("dsh-ee:theme"));
+  assertEq(storedTheme, null, "嵌入页不写 localStorage 主题（theme=system）");
+  await admin.emulateMedia({ colorScheme: "light" });
+  await admin.waitForFunction(
+    () => document.getElementById("embed-frame-system")?.contentDocument?.documentElement?.classList.contains("dark") === false,
+    null,
+    { timeout: 10000 },
+  );
+  await admin.waitForFunction(
+    () => (window.__embedMsgs ?? []).some((m) => m.data?.type === "dsh-ee:theme" && m.data?.theme === "light"),
+    null,
+    { timeout: 10000 },
+  );
+  // 宿主显式指定深色后，系统在深浅之间切换不应覆盖宿主选择。
+  await admin.evaluate(() => {
+    document.getElementById("embed-frame-system").contentWindow.postMessage({ v: 1, type: "dsh-ee:theme", theme: "dark" }, location.origin);
+  });
+  await admin.waitForFunction(
+    () => document.getElementById("embed-frame-system")?.contentDocument?.documentElement?.classList.contains("dark") === true,
+    null,
+    { timeout: 10000 },
+  );
+  await admin.emulateMedia({ colorScheme: "light" });
+  await admin.emulateMedia({ colorScheme: "dark" });
+  await admin.emulateMedia({ colorScheme: "light" });
+  await admin.waitForTimeout(300);
+  const overrideKept = await admin.evaluate(
+    () => document.getElementById("embed-frame-system")?.contentDocument?.documentElement?.classList.contains("dark") === true,
+  );
+  assert(overrideKept, "宿主 theme 消息覆盖 theme=system 后，系统主题变化不应回退");
+  await admin.emulateMedia({ colorScheme: null });
+  step("theme=system：跟随 prefers-color-scheme 且不写 localStorage；宿主 theme 消息覆盖优先");
 
   // ---- 应用不存在 / 不在可用范围：error forbidden ----
   await admin.evaluate((url) => {
@@ -108,7 +214,8 @@ export default async function (t) {
   assertEq(forbidden?.code, "forbidden", "应用不存在/没权限应回 forbidden");
   assertEq(forbidden?.v, 1, "错误消息带协议版本");
   assertEq(typeof forbidden?.message, "string", "错误消息带可读信息");
-  step("应用不存在/没权限：宿主收到 dsh-ee:error {code: forbidden}");
+  assertEq(forbidden?.stage, "load", "错误带 stage（页面/接口加载阶段）");
+  step("应用不存在/没权限：宿主收到 dsh-ee:error {code: forbidden, stage: load}");
 
   // ---- 未登录：不在 iframe 里跳登录，先发 auth-required 请宿主握手，并常驻「在浏览器打开」兜底 ----
   const guest = await newPage(t);

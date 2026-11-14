@@ -20,6 +20,20 @@ var embedded embed.FS
 // 嵌入文件没有修改时间，用进程启动时间做 Last-Modified。
 var startedAt = time.Now()
 
+// IndexHTML 返回嵌入的 index.html（和 Handler 下发的字节完全相同）。
+// 没有嵌入前端时 ok=false；CSP 中间件用它算内联脚本哈希，见 csp.go。
+func IndexHTML() ([]byte, bool) {
+	dist, err := fs.Sub(embedded, "build")
+	if err != nil {
+		return nil, false
+	}
+	index, err := fs.ReadFile(dist, "index.html")
+	if err != nil {
+		return nil, false
+	}
+	return index, true
+}
+
 // Handler 提供静态文件；不是文件的路径一律回退到 index.html，交给前端路由。
 func Handler() http.Handler {
 	dist, _ := fs.Sub(embedded, "build")
