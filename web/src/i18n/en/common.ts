@@ -137,6 +137,7 @@ export default {
     "admin-brand": "Brand & appearance",
     "admin-auth": "Sign-in",
     "admin-signing-keys": "Extension signing",
+    "admin-directory": "Enterprise directory",
     knowledge: "Knowledge Q&A",
   },
   pageDesc: {
@@ -173,6 +174,7 @@ export default {
     "admin-brand": "Company name, logo, home title, and colors in DSH",
     "admin-auth": "LDAP / AD and single sign-on (OIDC)",
     "admin-signing-keys": "Trusted public keys for extension signing: add, retire, revoke",
+    "admin-directory": "Registered enterprise directory: check / register the JSON, install and upgrade entries",
     knowledge: "Policies, handbooks and documents; ask in Knowledge Q&A in DSH",
   },
   menuGroups: {

@@ -117,7 +117,7 @@ func TestCORSDisabledByDefault(t *testing.T) {
 // 白名单来源：实际响应加精确 ACAO + Vary: Origin；/v1/* 与 /mcp 都覆盖。
 func TestCORSAllowedOriginActualResponse(t *testing.T) {
 	s := newCORSServer([]string{corsAllowedOrigin})
-	for _, target := range []string{"/v1/models", "/v1/chat/completions", "/v1/apps/demo", "/mcp"} {
+	for _, target := range []string{"/v1/models", "/v1/chat/completions", "/v1/apps/demo", "/anthropic/v1/messages", "/mcp"} {
 		t.Run(target, func(t *testing.T) {
 			rec, called := runCORS(t, s, http.MethodGet, target, corsAllowedOrigin, nil)
 			if !called || rec.Code != http.StatusOK {
@@ -177,6 +177,7 @@ func TestCORSPreflight(t *testing.T) {
 		target string
 	}{
 		{corsAllowedOrigin, "/v1/chat/completions"},
+		{corsAllowedOrigin, "/anthropic/v1/messages"},
 		{corsAllowedOrigin, "/mcp"},
 		{"http://localhost:5173", "/v1/models"},
 	} {
@@ -247,7 +248,7 @@ func TestCORSOptionsWithoutOriginPassesThrough(t *testing.T) {
 // 只对 /v1/* 与 /mcp 生效：/api、/healthz、/mcp/xxx、/v1 本身都不加头。
 func TestCORSOnlyTargetPaths(t *testing.T) {
 	s := newCORSServer([]string{corsAllowedOrigin})
-	for _, target := range []string{"/api/catalog", "/api/auth/me", "/healthz", "/mcp/extra", "/v1", "/v10/models"} {
+	for _, target := range []string{"/api/catalog", "/api/auth/me", "/healthz", "/mcp/extra", "/v1", "/v10/models", "/anthropic", "/anthropic/v2/models"} {
 		t.Run("GET "+target, func(t *testing.T) {
 			rec, called := runCORS(t, s, http.MethodGet, target, corsAllowedOrigin, nil)
 			if !called {
@@ -281,7 +282,7 @@ func TestCORSErrorResponseKeepsHeaders(t *testing.T) {
 func TestCORSExposeHeadersScope(t *testing.T) {
 	s := newCORSServer([]string{corsAllowedOrigin})
 
-	for _, target := range []string{"/v1/models", "/v1/chat/completions", "/mcp"} {
+	for _, target := range []string{"/v1/models", "/v1/chat/completions", "/anthropic/v1/messages", "/mcp"} {
 		t.Run("actual "+target, func(t *testing.T) {
 			rec, _ := runCORS(t, s, http.MethodGet, target, corsAllowedOrigin, nil)
 			assertCORSExposeHeaders(t, rec.Result().Header)

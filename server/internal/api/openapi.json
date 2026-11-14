@@ -28,7 +28,7 @@
     },
     {
       "name": "models",
-      "description": "OpenAI 兼容模型网关"
+      "description": "模型网关：OpenAI chat completions 与 Anthropic Messages 兼容"
     },
     {
       "name": "apps",
@@ -607,6 +607,140 @@
           }
         }
       }
+    },
+    "/v1/messages": {
+      "post": {
+        "operationId": "createAnthropicMessage",
+        "summary": "Anthropic Messages 兼容（请求转 OpenAI chat；别名 /anthropic/v1/messages）",
+        "tags": [
+          "models"
+        ],
+        "description": "Claude Code / Anthropic SDK 兼容入口：用企业令牌（x-api-key 或 Authorization: Bearer）调用 dsh-ee 已接入的模型。请求转成 OpenAI chat completions 后复用 /v1/chat/completions 的模型权限、月度额度、上游故障转移与用量记账；响应与流式 SSE 转回 Anthropic 形状。只实现 POST /v1/messages（及别名 POST /anthropic/v1/messages，行为完全一致）；count_tokens / batches / Files API 返回 404。候选线路第一条（最高优先级）的 provider vendor=deepseek 时走原生透传：请求直接转发到 <provider.base>/anthropic/v1/messages，只改写 model，anthropic-version/anthropic-beta 原样透传，响应 JSON/SSE 逐字节转发，不解析 server tools/citations/safety 等扩展块；其它 vendor 降级成 OpenAI chat 转换（anthropic-version/anthropic-beta 被忽略）。故障转移只在同 vendor/同协议内进行，不跨协议。Files API 本身不实现。错误体是 Anthropic 形状（AnthropicError）。",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "description": "企业令牌；与 Authorization: Bearer 等价，同时带时优先 x-api-key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnthropicMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Anthropic message；stream=true 时为 Anthropic SSE 事件流（message_start → content_block_* → message_delta → message_stop）",
+            "headers": {
+              "Dsh-EE-API-Version": {
+                "$ref": "#/components/headers/DshEEAPIVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicMessage"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体不是 JSON、缺 model/max_tokens、参数越界或不支持的内容块（invalid_request_error）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺少或无效的令牌（authentication_error）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "令牌缺 models scope、账号缺 llm.use、模型不在范围或额度过期（permission_error）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "对外模型没有可用上游，或 count_tokens 等未实现的兼容端点（not_found_error）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过 16 MiB（request_too_large）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "账号/令牌额度用完、每令牌限流或上游 429（rate_limit_error）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "所有上游线路不可用或上游响应无法解析（api_error）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/anthropic/v1/messages": {
+      "$ref": "#/paths/~1v1~1messages"
     }
   },
   "components": {
@@ -616,6 +750,12 @@
         "scheme": "bearer",
         "bearerFormat": "ee_at_<token>",
         "description": "员工接入令牌；设备码流程或网页「我的令牌」获取。scope 与账号 RBAC 求交。"
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Anthropic 兼容端点也接受 x-api-key: <token>，与 Authorization: Bearer 等价。"
       }
     },
     "headers": {
@@ -845,6 +985,30 @@
             "type": "string",
             "format": "uri",
             "description": "对话补全（OpenAI chat completions 子集）"
+          },
+          "anthropic_messages_endpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "Anthropic Messages 兼容入口（Claude Code / Anthropic SDK；x-api-key 或 Bearer）"
+          },
+          "anthropic_messages_aliases": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "同一 handler 的别名入口；DeepSeek 风格的 Anthropic base URL（<base>/anthropic）会拼出 /anthropic/v1/messages"
+          },
+          "anthropic_messages_native_vendors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "走原生 Anthropic 透传的 provider vendor；这些候选线路直接转发到 <base>/anthropic/v1/messages，响应逐字节转发"
+          },
+          "anthropic_messages_conversion_fallback": {
+            "type": "string",
+            "description": "其它 vendor 的降级方式：转成 OpenAI chat completions 后走现有转换层（openai-chat）"
           }
         }
       },
@@ -1322,6 +1486,212 @@
           },
           "department": {
             "type": "string"
+          }
+        }
+      },
+      "AnthropicMessageRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "max_tokens",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "dsh-ee 的对外模型名（先 GET /v1/models）；不做 claude-* 名称映射"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32768,
+            "description": "必填；单次输出上限与 OpenAI 网关一致"
+          },
+          "system": {
+            "description": "系统提示：字符串或文本块数组",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "Anthropic 消息数组；支持 text / image / tool_use / tool_result / thinking 内容块"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "客户端自定义工具 {name, description?, input_schema}；服务端工具（web_search 等）会被忽略"
+          },
+          "tool_choice": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
+            ],
+            "description": "auto / any / none / tool；any 映射成 OpenAI 的 required"
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "top_p": {
+            "type": "number"
+          },
+          "stop_sequences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "true 时返回 Anthropic SSE 事件流"
+          },
+          "thinking": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "{type: enabled|disabled|adaptive}；budget_tokens 忽略"
+          },
+          "reasoning_effort": {
+            "type": "string",
+            "description": "DeepSeek 风格扩展；也接受 output_config.effort，归一到 OpenAI 的 reasoning_effort"
+          },
+          "output_config": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "user_id 映射成 OpenAI 的 user，其余忽略"
+          }
+        },
+        "additionalProperties": true,
+        "description": "Anthropic Messages 请求体；dsh-ee 转成 OpenAI chat completions 后转发上游，模型权限、额度与用量记账与 /v1/chat/completions 一致。"
+      },
+      "AnthropicMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "role",
+          "model",
+          "content",
+          "stop_reason",
+          "usage"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "msg_… 开头的消息 id"
+          },
+          "type": {
+            "type": "string",
+            "const": "message"
+          },
+          "role": {
+            "type": "string",
+            "const": "assistant"
+          },
+          "model": {
+            "type": "string",
+            "description": "客户端请求的对外模型名"
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "thinking / text / tool_use 内容块数组"
+          },
+          "stop_reason": {
+            "type": "string",
+            "enum": [
+              "end_turn",
+              "max_tokens",
+              "tool_use",
+              "refusal"
+            ]
+          },
+          "stop_sequence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usage": {
+            "type": "object",
+            "required": [
+              "input_tokens",
+              "output_tokens"
+            ],
+            "properties": {
+              "input_tokens": {
+                "type": "integer",
+                "description": "prompt_tokens 去掉缓存命中；流式以 message_delta.usage 为准"
+              },
+              "output_tokens": {
+                "type": "integer"
+              },
+              "cache_creation_input_tokens": {
+                "type": "integer"
+              },
+              "cache_read_input_tokens": {
+                "type": "integer",
+                "description": "上游 prompt_tokens_details.cached_tokens"
+              }
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "AnthropicError": {
+        "type": "object",
+        "required": [
+          "type",
+          "error"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "error"
+          },
+          "error": {
+            "type": "object",
+            "required": [
+              "type",
+              "message"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "按 HTTP 状态码映射：401 authentication_error、403 permission_error、404 not_found_error、429 rate_limit_error、413 request_too_large、5xx api_error/overloaded_error，其余 4xx invalid_request_error"
+              },
+              "message": {
+                "type": "string",
+                "description": "给人看的说明"
+              }
+            }
           }
         }
       }

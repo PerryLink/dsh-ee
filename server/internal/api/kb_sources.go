@@ -243,20 +243,22 @@ func (s *Server) runKBSourceSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			base := s.systemBase(ctx)
-			if base == "" {
-				continue
-			}
-			sources, err := s.store.ListKBSources(ctx, 0, store.KBSourceSync)
-			if err != nil {
-				s.log.Warn("列出知识源失败", "err", err)
-				continue
-			}
-			for _, src := range sources {
-				if res := s.syncKBSource(ctx, src, base); res.Error != "" {
-					s.log.Warn("知识源同步没有完成", "source", src.ID, "err", res.Error)
+			s.runLeased(ctx, leaseKBSourceSync, func(ctx context.Context) {
+				base := s.systemBase(ctx)
+				if base == "" {
+					return
 				}
-			}
+				sources, err := s.store.ListKBSources(ctx, 0, store.KBSourceSync)
+				if err != nil {
+					s.log.Warn("列出知识源失败", "err", err)
+					return
+				}
+				for _, src := range sources {
+					if res := s.syncKBSource(ctx, src, base); res.Error != "" {
+						s.log.Warn("知识源同步没有完成", "source", src.ID, "err", res.Error)
+					}
+				}
+			})
 		}
 	}
 }

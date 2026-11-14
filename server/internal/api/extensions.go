@@ -19,7 +19,10 @@ import (
 // 装成一个 OpenAPI 连接。清单在调用时生效：工具说明、哪些是只读、不由模型填的参数、
 // 返回只保留哪些字段、请求只能发往清单列出的地址。每次调用记下扩展的版本和摘要。
 
-const auditExtInstall = "extension.install"
+const (
+	auditExtInstall  = "extension.install"
+	auditExtRollback = "extension.rollback"
+)
 
 // connExtension 存在连接的版本内容里。清单原文要和接口文档一起算摘要，所以存字符串，不存解析后的 JSON
 // （json.RawMessage 序列化时会被压缩，摘要就对不上了）。
@@ -41,6 +44,12 @@ type connExtension struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	// oauth 模式：管理员填的 OAuth 客户端
 	OAuthClient *extOAuthClient `json:"oauth_client,omitempty"`
+
+	// 安装时验签用的 signature.json 原文和当时的签名状态（audit 口径，如 valid:abc123）。
+	// 回滚要把历史快照当成一次新安装重新检查，凭这两项才能在升级后复核签名、按撤销状态拦下；
+	// 只含公开的签名信息，不含私钥。没签名的扩展这里是空串。
+	Signature       string `json:"signature,omitempty"`
+	SignatureStatus string `json:"signature_status,omitempty"`
 }
 
 // label 是记进调用记录和审计的版本：作者/名字@版本#摘要前 12 位。
@@ -588,6 +597,23 @@ type extInstallReq struct {
 	OAuthClientSecret string `json:"oauth_client_secret"`
 }
 
+// extInstallRun 是「装 / 升级一个扩展」的执行输入。网页上传（handleExtInstall）和企业目录安装
+// （directory_install.go）共用同一条执行路径：连接校验、管理员参数、凭据、OAuth、签名、审计
+// 完全一致，区别只在包从哪里来、审计动作叫什么、返回里多带什么。
+type extInstallRun struct {
+	req   extInstallReq
+	files map[string][]byte
+	// 服务扩展的服务地址；从 zip 装的声明式扩展为空
+	svc string
+	p   *extPlan
+	// 审计动作，空表示 extension.install；企业目录用 directory.install / directory.upgrade
+	auditAction string
+	// 审计目标，空表示 connection:<连接标识>；企业目录用 directory:<目录id>#<条目id>
+	auditTarget string
+	// 额外写进审计的字段（企业目录带登记来源）
+	auditExtra map[string]any
+}
+
 // POST /api/admin/extensions/install：检查通过后装成连接；装过的就升级成新版本。
 func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 	var req extInstallReq
@@ -613,6 +639,18 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "这次升级有需要确认的变化：" + strings.Join(p.Sensitive, "；"), "plan": p})
 		return
 	}
+	resp, err := s.runExtInstall(ctx, r, &extInstallRun{req: req, files: files, svc: svc, p: p})
+	if err != nil {
+		s.writeProblem(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+// runExtInstall 执行扩展安装 / 升级，返回要写回的响应体。失败时返回带状态码的 httpProblem
+// （其余错误按 500 处理）。会改库的动作都在最后：参数、连接、OAuth、管理员参数都校验通过才写。
+func (s *Server) runExtInstall(ctx context.Context, r *http.Request, in *extInstallRun) (map[string]any, error) {
+	p, files, req := in.p, in.files, in.req
 	m := p.Check.Manifest
 	sp := &assetSpec{
 		Title:       truncateStr(m.Name.Any(), 64),
@@ -623,13 +661,15 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		Extension: &connExtension{
 			ID: m.ID, Version: m.Version, Digest: p.Check.Digest,
 			Manifest: string(files[extension.ManifestFile]), Admin: req.Admin,
+			// 存下这次验签的材料和状态：升级后要回滚时，按当时的签名重新核对一遍（见 extensions_rollback.go）
+			Signature: string(files[extension.SignatureFile]), SignatureStatus: signatureAudit(p.Signature),
 		},
 	}
 	var osp *assetSpec
+	var err error
 	if p.Existing != nil {
 		if _, osp, err = s.findExtension(ctx, m.ID); err != nil {
-			s.internalErr(w, r, err)
-			return
+			return nil, err
 		}
 	}
 	if p.OAuthClient {
@@ -639,15 +679,13 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		}
 		client, msg := s.sealOAuthClient(req.OAuthClientID, req.OAuthClientSecret, old)
 		if msg != "" {
-			writeErr(w, http.StatusBadRequest, msg)
-			return
+			return nil, statusErr(http.StatusBadRequest, msg)
 		}
 		sp.Extension.OAuthClient = client
 	}
 	if m.Kind == extension.KindService {
-		if msg := s.prepareServiceInstall(r, m, sp, osp, svc, &req); msg != "" {
-			writeErr(w, http.StatusBadRequest, msg)
-			return
+		if msg := s.prepareServiceInstall(r, m, sp, osp, in.svc, &req); msg != "" {
+			return nil, statusErr(http.StatusBadRequest, msg)
 		}
 	}
 	if sp.URL == "" && p.Existing != nil {
@@ -688,13 +726,11 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if msg := validateSpec(store.KindConnection, sp); msg != "" {
-		writeErr(w, http.StatusBadRequest, msg)
-		return
+		return nil, statusErr(http.StatusBadRequest, msg)
 	}
 	for _, ap := range p.AdminParams {
 		if _, ok := sp.Extension.Admin[ap.Key]; !ok && len(ap.Default) == 0 {
-			writeErr(w, http.StatusBadRequest, "参数「"+ap.Label+"」要由管理员设置，请填上")
-			return
+			return nil, statusErr(http.StatusBadRequest, "参数「"+ap.Label+"」要由管理员设置，请填上")
 		}
 	}
 	raw, _ := json.Marshal(sp)
@@ -703,17 +739,14 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"identity": m.Identity(), "digest": p.Check.Digest, "signature": p.Signature}
 	if p.Existing != nil {
 		if a, err = s.store.GetAsset(ctx, p.Existing.ID); err != nil {
-			s.internalErr(w, r, err)
-			return
+			return nil, err
 		}
 		ver, err := s.store.AddAssetVersion(ctx, a.ID, raw, store.StatusPublished, v.user.ID)
 		if err != nil {
-			s.internalErr(w, r, err)
-			return
+			return nil, err
 		}
 		if err := s.store.UpdateAsset(ctx, a.ID, store.AssetPatch{Title: &sp.Title, Description: &sp.Description}); err != nil {
-			s.internalErr(w, r, err)
-			return
+			return nil, err
 		}
 		resp["version"], resp["upgraded_from"] = ver, p.Existing.Version
 	} else {
@@ -722,8 +755,7 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 			slug = p.Slug
 		}
 		if msg := connSlugProblem(slug); msg != "" {
-			writeErr(w, http.StatusBadRequest, msg)
-			return
+			return nil, statusErr(http.StatusBadRequest, msg)
 		}
 		scope := store.Scope{All: true}
 		if req.Scope != nil {
@@ -733,18 +765,15 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		a = &store.Asset{Kind: store.KindConnection, Slug: slug, Title: sp.Title, Description: sp.Description, OwnerID: &owner, Scope: scope, Delivery: store.DeliveryOptional}
 		if err := s.store.CreateAsset(ctx, a, raw, store.StatusPublished, v.user.ID); err != nil {
 			if errors.Is(err, store.ErrDuplicate) {
-				writeErr(w, http.StatusConflict, "连接标识 "+slug+" 已被占用，换一个")
-				return
+				return nil, statusErr(http.StatusConflict, "连接标识 "+slug+" 已被占用，换一个")
 			}
-			s.internalErr(w, r, err)
-			return
+			return nil, err
 		}
 		_ = s.store.Subscribe(ctx, v.user.ID, a.ID)
 	}
 	if req.Secret != nil {
 		if err := s.saveConnSecret(r, a.ID, *req.Secret); err != nil {
-			s.internalErr(w, r, err)
-			return
+			return nil, err
 		}
 	}
 	s.dropConnClient(a.ID)
@@ -768,12 +797,24 @@ func (s *Server) handleExtInstall(w http.ResponseWriter, r *http.Request) {
 		resp["fields"] = created
 	}
 	resp["asset"] = a
-	s.audit(r, auditExtInstall, "connection:"+a.Slug, map[string]any{
+	detail := map[string]any{
 		"id": a.ID, "extension": sp.Extension.label(), "upgrade": p.Existing != nil, "confirmed": p.Sensitive,
 		"signature": signatureAudit(p.Signature),
-	})
+	}
+	for k, val := range in.auditExtra {
+		detail[k] = val
+	}
+	action := in.auditAction
+	if action == "" {
+		action = auditExtInstall
+	}
+	target := in.auditTarget
+	if target == "" {
+		target = "connection:" + a.Slug
+	}
+	s.audit(r, action, target, detail)
 	s.hub.notify()
-	writeJSON(w, http.StatusCreated, resp)
+	return resp, nil
 }
 
 // extCredential 把清单的凭据模式换成连接的共享凭据和员工身份设置。

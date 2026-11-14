@@ -5,6 +5,7 @@
   "docs": [
     "dev/overview.md",
     "dev/harness-quickstart.md",
+    "dev/anthropic-api.md",
     "dev/plugin-quickstart.md",
     "dev/extension-quickstart.md",
     "dev/access-rules.md",
@@ -49,6 +50,11 @@
         "title": "插件规范与准入",
         "docs": "plugin-quality.md",
         "description": "上游 ENTRY / FLOW / BOOST 与 dsh-ee 预检、审核的边界。"
+      },
+      {
+        "title": "Anthropic Messages 兼容",
+        "url": "/docs/anthropic-api",
+        "description": "Claude Code / Anthropic SDK 用企业令牌调 POST /v1/messages（别名 /anthropic/v1/messages）：DeepSeek provider 原生透传、其他 provider 降级转换，鉴权/SSE/错误壳与 v0 边界。"
       }
     ]
   }

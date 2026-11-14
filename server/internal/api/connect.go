@@ -332,14 +332,30 @@ func (s *Server) kickConnect() {
 	}
 }
 
-// runConnect 启动时与每次被触发时检查接入插件是否需要发新版本。
+// connectRecheckInterval 是多实例下触发型任务的兜底周期：非 leader 实例收到的
+// kick 不会跨实例传递，靠这个周期让抢到租约的实例补跑一次（内容没变时是 no-op）。
+const connectRecheckInterval = time.Hour
+
+// runConnect 启动时、每次被触发时以及每小时检查接入插件是否需要发新版本。
 func (s *Server) runConnect(ctx context.Context) {
-	check := func() {
+	check := func(ctx context.Context) {
+		s.runLeased(ctx, leaseConnectPublish, func(ctx context.Context) {
+			if _, err := s.ensureConnect(ctx, nil, false, 0); err != nil {
+				s.log.Warn("检查 DSH 接入插件失败", "err", err)
+			}
+		})
+	}
+	// 启动检查在另一实例持有租约（例如对方正在发布，或本进程刚被强杀重启、旧租约未到期）时
+	// 隔一会儿重试，避免要等到下一次触发/兜底才发布。
+	if !s.runLeasedRetry(ctx, leaseConnectPublish, func(ctx context.Context) {
 		if _, err := s.ensureConnect(ctx, nil, false, 0); err != nil {
 			s.log.Warn("检查 DSH 接入插件失败", "err", err)
 		}
+	}) && ctx.Err() == nil {
+		s.log.Debug("启动时检查 DSH 接入插件跳过（租约由其他实例持有或数据库不可用）")
 	}
-	check()
+	t := time.NewTicker(connectRecheckInterval)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -351,7 +367,9 @@ func (s *Server) runConnect(ctx context.Context) {
 				return
 			case <-time.After(2 * time.Second):
 			}
-			check()
+			check(ctx)
+		case <-t.C:
+			check(ctx)
 		}
 	}
 }

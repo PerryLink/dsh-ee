@@ -182,15 +182,24 @@ func (s *Server) runElevationExpiry(ctx context.Context) {
 			continue
 		case <-timer.C:
 		}
-		expired, err := s.store.ExpireElevations(ctx)
-		if err != nil {
-			s.log.Warn("清理到期的管理模式失败", "err", err)
-			continue
-		}
-		for _, t := range expired {
-			s.auditSystem(ctx, auditElevateExpire, "at:"+strconv.FormatInt(t.ID, 10), map[string]any{"user_id": t.UserID, "client": t.ClientName})
-		}
-		if len(expired) > 0 {
+		ran := s.runLeased(ctx, leaseElevationExpiry, func(ctx context.Context) {
+			expired, err := s.store.ExpireElevations(ctx)
+			if err != nil {
+				s.log.Warn("清理到期的管理模式失败", "err", err)
+				return
+			}
+			for _, t := range expired {
+				s.auditSystem(ctx, auditElevateExpire, "at:"+strconv.FormatInt(t.ID, 10), map[string]any{"user_id": t.UserID, "client": t.ClientName})
+			}
+			// 本实例上的 DSH 长连接要刷新工具列表；hub 是进程内的，多实例时别的实例的
+			// 连接由它们自己在同一个到期时刻通知（见 !ran 分支）。
+			if len(expired) > 0 {
+				s.hub.notify()
+			}
+		})
+		if !ran && ctx.Err() == nil {
+			// 写库/审计由 leader 负责；本实例只通知自己的 DSH 连接刷新工具列表。
+			// 下一轮会重新读到期时间：leader 清掉后这里不再触发，最多多刷几次。
 			s.hub.notify()
 		}
 	}

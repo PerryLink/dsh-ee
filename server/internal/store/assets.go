@@ -320,6 +320,21 @@ func (s *Store) AddAssetVersion(ctx context.Context, assetID int64, spec json.Ra
 	return v, tx.Commit()
 }
 
+// DeleteAssetVersion 撤销一个刚追加、还没生效的版本（回滚在写库之后失败时用）。
+// 只删这一个版本，不碰其它版本和资产状态；版本不存在时返回 ErrNotFound。
+func (s *Store) DeleteAssetVersion(ctx context.Context, assetID int64, version int) error {
+	res, err := s.db.ExecContext(ctx,
+		"DELETE FROM asset_versions WHERE asset_id = ? AND version = ?", assetID, version)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetAsset(ctx context.Context, id int64) (*Asset, error) {
 	return scanAssetListed(s.db.QueryRowContext(ctx, "SELECT "+assetListCols+" FROM assets a WHERE a.id = ?", id))
 }

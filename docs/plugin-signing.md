@@ -1,8 +1,8 @@
 # 插件/扩展签名、企业目录、自助分发与回滚：设计选项（部分实现）
 
-> **状态：部分实现（#134 扩展签名 + 企业目录 v1，2026-11-13）。** 扩展签名做了最小闭环，并把信任根落了库：`dsh-ee extension keygen / sign / verify`、安装计划显示 `unsigned / valid / invalid / revoked`、`trusted_signing_keys` 表 + `/api/admin/signing-keys` 管理接口（换下 / 撤销保留历史）、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 强制验签；`DSH_EE_EXTENSION_TRUSTED_KEYS` 仍作为只读兼容来源。企业目录 v1 做了「format 2 文档 + 目录整体 Ed25519 签名 + check/apply/list + `directory_entries` 登记」，只登记来源、不安装/不升级，见 §8。
+> **状态：部分实现（#134 扩展签名 + 企业目录 v1，2026-11-13）。** 扩展签名做了最小闭环，并把信任根落了库：`dsh-ee extension keygen / sign / verify`、安装计划显示 `unsigned / valid / invalid / revoked`、`trusted_signing_keys` 表 + `/api/admin/signing-keys` 管理接口（换下 / 撤销保留历史）、`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` 强制验签；`DSH_EE_EXTENSION_TRUSTED_KEYS` 仍作为只读兼容来源。企业目录 v1 做了「format 2 文档 + 目录整体 Ed25519 签名 + check/apply/list + `directory_entries` 登记」；登记后由管理员显式触发条目安装 / 升级（`POST /api/admin/directory/entries/{id}/install|upgrade`：扩展按登记的固定 tarball 下载后复用安装计划，插件只认 npm 固定版本、走现有预载 + 审核），不做自动安装 / 自动升级，见 §8。
 >
-> 管理页面在管理后台「能力与连接 → 扩展签名」（列表 / 新增 PEM 公钥 / 换下 / 撤销、只读环境变量来源）。
+> 管理页面在管理后台「能力与连接 → 扩展签名」（列表 / 新增 PEM 公钥 / 换下 / 撤销、只读环境变量来源）；企业目录的入口是「能力与连接 → 企业插件目录」（导入 / 校验 / 登记目录 JSON，对登记过的条目看计划再安装 / 升级）。
 >
 > **还没做**：从目录 URL 自动拉取 / 缓存 / 离线包导入、作者自助上传扩展、扩展版本回滚、DSH 插件（npm 包）签名。下面「如果要做」的选项、取舍和风险仍然成立，未实现的部分供维护者决定；已实现部分的口径、接口和边界见 §7、§8。
 >
@@ -22,7 +22,7 @@
 | 签名 | 已实现最小闭环（#134）：作者用 `dsh-ee extension sign` 对清单 + 接口文档签 `signature.json`（Ed25519，签 `作者/名字@版本:摘要`）；安装 / 检查计划显示 `unsigned / valid / invalid / revoked`。默认只提示不阻断，`DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1` fail closed | `server/internal/extension/signature.go`、`server/cmd/dsh-ee/cli_sign.go`、`server/internal/api/extensions.go` |
 | 信任根 | 受信任公钥落库（`trusted_signing_keys`：key id / 公钥 / purpose / valid_from / retired_at / revoked_at / created_by / note）；换下、撤销保留历史，撤销后新装 / 升级拒绝。`DSH_EE_EXTENSION_TRUSTED_KEYS` 仍是只读兼容来源 | `server/internal/store/migrations/0032_trusted_signing_keys.sql`、`server/internal/api/signing_keys.go`、`store/signing_keys.go` |
 | 回滚 | **无**：升级就是再装一次；只记录 `upgraded_from`，没有「回到上一版本」的接口或页面；声明式扩展的旧版本 spec 仍存在 `asset_versions` 表里，但只是历史数据，没有回滚入口 | `extensions.go:652`、`store/assets.go`、`store/migrations/0007_hub.sql` |
-| 企业目录 | v1 已实现「管理员贴入整体签过名的 `dsh-ee-directory.json` → 验签 + 逐条校验 → 登记 `directory_entries`」；只登记来源，不安装、不升级，也不从 URL 自动拉取 | `server/internal/directory/`、`server/internal/api/directory.go`、`store/migrations/0034_directory_entries.sql` |
+| 企业目录 | v1 已实现「管理员贴入整体签过名的 `dsh-ee-directory.json` → 验签 + 逐条校验 → 登记 `directory_entries`」；登记后可对单条显式 `install` / `upgrade`：扩展按登记的固定 tarball 地址下载、核对身份/摘要后复用安装计划，插件只认 npm 固定版本并走现有预载 + 审核。不自动安装、不自动升级，也不从 URL 自动拉取目录。管理页在「能力与连接 → 企业插件目录」 | `server/internal/directory/`、`server/internal/api/directory.go`、`server/internal/api/directory_install.go`、`web/src/pages/admin/directory.tsx`、`store/migrations/0034_directory_entries.sql` |
 
 ### 1.2 DSH 插件（npm 包）
 
@@ -73,7 +73,7 @@
 
 **目标**：企业维护一份「审核过的扩展清单」（HTML/JSON 目录），管理员从目录安装，而不是每次手填地址/上传 zip。
 
-> 已实现的部分：format 2 目录文档 + 目录整体 Ed25519 签名 + 管理员贴入 JSON 的 `check / apply / list` + `directory_entries` 登记；tarball 地址强制 https、默认只接受公网（可用 `DSH_EE_DIRECTORY_TARBALL_HOSTS` 白名单放行内网对象存储）。**只登记来源，不自动安装/升级**；从 URL 自动拉取、缓存、ETag、离线包导入仍未实现。
+> 已实现的部分：format 2 目录文档 + 目录整体 Ed25519 签名 + 管理员贴入 JSON 的 `check / apply / list` + `directory_entries` 登记；tarball 地址强制 https、默认只接受公网（可用 `DSH_EE_DIRECTORY_TARBALL_HOSTS` 白名单放行内网对象存储）。登记后由管理员逐条触发 `install` / `upgrade`：扩展从登记的固定 tarball 下载、核对身份/摘要后复用安装计划（含 confirm / 敏感项 / 签名策略，条目声明了签名者的还要求包确实由该钥匙签名）；插件只认 npm 固定包名 + 固定版本，走现有预载 + 审核，不绕过审核。**不自动安装、不自动升级**；从 URL 自动拉取目录、缓存、ETag、离线包导入仍未实现。
 
 | 设计点 | 选项 | 建议（若做） |
 |---|---|---|
@@ -200,7 +200,7 @@
 
 ## 8. 已实现的部分（企业目录 v1，2026-11-13）
 
-企业目录 v1 是「管理员贴入一份整体签过名的 `dsh-ee-directory.json` → dsh-ee 验签 + 逐条校验 → 把条目登记到 `directory_entries`」。**只登记来源，不安装、不升级、不回滚、不拉取 URL**；真正安装仍走现有安装流程（安装计划、审核、§7 的扩展验签）。
+企业目录 v1 是「管理员贴入一份整体签过名的 `dsh-ee-directory.json` → dsh-ee 验签 + 逐条校验 → 把条目登记到 `directory_entries`」，登记之后管理员可以对单条明确点「安装 / 升级」（`install` / `upgrade`）。**不自动安装、不自动升级、不回滚、不自动拉取目录 URL**；安装复用现有流程：扩展走安装计划 + §7 的签名策略，插件走 npm 预载 + 审核。
 
 **目录格式（format 2）**
 
@@ -244,16 +244,20 @@
 - `signature`（条目内，可选）：扩展的签名声明，形状同扩展的 `signature.json`。目录里没有内容，所以只核对「身份/摘要和条目一致、签名者在受信任公钥里」，签名本身在安装时核对。`dsh-plugin` 的包签名还没有定义格式，只登记声明。
 - 目录整体签名：Ed25519，签的是**除 `signature` 之外的 canonical JSON**（`json.Marshal` 的确定性序列化，重新缩进不影响），真正签的字节是 `dsh-ee-directory:<directory_id>:<payload sha256>`；`signature.digest` 是 payload 的 sha256。
 
-**服务端接口**（权限：`connections.manage` 或 `settings.manage`）
+**服务端接口**
 
-| 操作 | 接口 | 说明 |
-|---|---|---|
-| 校验 | `POST /api/admin/directory/check` | 请求体 `{"document": "<目录 JSON 文本>"}`；返回计划：`document.signature`（`unsigned / valid / invalid / revoked` + `key_state`）、逐条 `entries[]` 的字段校验与签名声明状态、`issues[]`、和已登记内容的差异 `diff`、要确认的 `sensitive[]`。**不落库** |
-| 登记 | `POST /api/admin/directory/apply` | 同上请求体；校验通过后写 `directory_entries`。同一个 `directory_id` 覆盖登记：新增 / 更新 / 保留 / 移除。有敏感变化（移除已登记条目、同版本换内容、换来源）时返回 409，要带 `"confirm": true` 再来。**只登记，不安装**；审计 `directory.apply` |
-| 列表 | `GET /api/admin/directory` | 已登记的目录汇总与条目；返回当前 tarball 白名单策略 |
+| 操作 | 接口 | 权限 | 说明 |
+|---|---|---|---|
+| 校验 | `POST /api/admin/directory/check` | `connections.manage` 或 `settings.manage` | 请求体 `{"document": "<目录 JSON 文本>"}`；返回计划：`document.signature`（`unsigned / valid / invalid / revoked` + `key_state`）、逐条 `entries[]` 的字段校验与签名声明状态、`issues[]`、和已登记内容的差异 `diff`、要确认的 `sensitive[]`。**不落库** |
+| 登记 | `POST /api/admin/directory/apply` | `connections.manage` 或 `settings.manage` | 同上请求体；校验通过后写 `directory_entries`。同一个 `directory_id` 覆盖登记：新增 / 更新 / 保留 / 移除。有敏感变化（移除已登记条目、同版本换内容、换来源）时返回 409，要带 `"confirm": true` 再来。**只登记，不安装**；审计 `directory.apply` |
+| 列表 | `GET /api/admin/directory` | `connections.manage`、`settings.manage` 或 `plugins.manage` | 已登记的目录汇总与条目；每条带安装状态：`installed`、`installed_version`、`installed_status`（插件）、`installed_connection`（扩展）、`upgrade_available`；返回当前 tarball 白名单策略。 |
+| 安装 | `POST /api/admin/directory/entries/{id}/install` | 扩展 `connections.manage`；插件 `plugins.manage` | 只对已登记条目；**管理员明确触发，不自动安装**。请求体 `{"plan_only": true}` 只出计划、不写库（扩展仍会下载并核对包，插件不启动同步），网页据此先给管理员看计划；不带 `plan_only` 才执行。扩展：按固定 tarball 地址下载、核对身份/版本/摘要（条目声明签名者时还要求包由该钥匙签名通过）后复用扩展安装计划；有敏感项要 `"confirm": true` 否则 409。插件：只接受 npm 来源的固定包名 + 固定版本，交给现有 registry 预载（`pending` 待审核，不绕过审核），返回 202 和任务 id。返回计划 / 结果；审计 `directory.install` |
+| 升级 | `POST /api/admin/directory/entries/{id}/upgrade` | 同上 | 只对已装过的条目：扩展要求已装的连接存在且目录版本更新（同版本 / 降级 409），确认敏感项后走和网页升级同一条路径；插件要求企业源里已有这个包、目标版本更新，同步新版本进 `pending` 待审核。同样支持 `"plan_only": true` 先出计划。**不自动升级**；审计 `directory.upgrade` |
 
 - 目录签名公钥复用 §7 的信任根（`trusted_signing_keys`）：新增时 `purpose` 可以是 `directory` 或 `extension`（企业只有一套签名钥匙时不用再加一遍）；`active / retired` 可以用来登记（retired 带提示），`revoked` 拒绝。环境变量 `DSH_EE_EXTENSION_TRUSTED_KEYS` 同样作为只读兼容来源。没有配任何公钥时目录不能登记。
-- tarball 来源：必须 `https`、地址里不能带用户名密码、要指向具体文件；默认只接受公网主机，拒绝 localhost、内网/链路本地/保留地址和常见内网域名（防 SSRF）；企业自己的对象存储等内网主机要显式写进 `DSH_EE_DIRECTORY_TARBALL_HOSTS`（逗号分隔，支持 `*.example.com`）白名单。目录 v1 不下载 tarball，条目可声明 `size`，超过插件 100 MiB / 扩展 8 MiB 会被拒绝。
+- tarball 来源：必须 `https`、地址里不能带用户名密码、要指向具体文件；默认只接受公网主机，拒绝 localhost、内网/链路本地/保留地址和常见内网域名（防 SSRF）；企业自己的对象存储等内网主机要显式写进 `DSH_EE_DIRECTORY_TARBALL_HOSTS`（逗号分隔，支持 `*.example.com`）白名单。登记时不下载；管理员安装扩展条目时才下载，下载前按同一策略再核对一次（默认还按 DNS 解析结果拒绝内网地址、不跟随跨主机重定向），条目可声明 `size`，超过插件 100 MiB / 扩展 8 MiB 会被拒绝。
 - 上限：目录文档 2 MiB、最多 500 条；同一目录内 `kind + name + version + channel` 不能重复。
 - 目录内嵌的扩展签名声明只核对「身份/摘要一致 + 签名者状态（active / retired / revoked / unknown）」；不受信任或已撤销的签名者给 warning，不阻断登记（安装时按 §7 的策略处理）。
+- 安装 / 升级的边界：扩展只从条目登记的固定 tarball 地址下载（下载前按当前策略再核对地址、默认按 DNS 解析结果拒绝内网地址、不跟随跨主机重定向），内容必须与登记的版本 + 摘要一致；失败的安装都在写库前拦下，不会留下装了一半的连接。插件只接受 npm 来源，固定版本固定摘要，同步时按目录登记的 integrity 核对上游内容，对不上就失败、不入库；入库状态仍是 `pending`，要在审核页通过才对外可见，`publish`/跳过审核的入口不在这里。**不做**自动安装 / 自动升级、不做 Git 安装；页面只做「导入 / 校验 / 登记 + 看计划再安装 / 升级」，不显示私钥。
+- 管理页面（`web/src/pages/admin/directory.tsx`）：管理后台「能力与连接 → 企业插件目录」，菜单由默认菜单和迁移 `0035_admin_directory_menu.sql` 补（只有 `plugins.manage` 的管理员也能直接打开 `/admin/directory`）。页面分三块：导入目录（粘贴 / 选文件 → 校验，展示目录签名、逐条 issues、差异、要确认的敏感变化 → 登记）、已登记条目列表（类型 / 名称版本 / 来源 / 发布者 / 签名声明 / 已安装 / 可升级）、安装 / 升级对话框（先调 `plan_only` 出计划给管理员看，填管理员参数 / 共享凭据 / OAuth 客户端，确认后才执行，展示结果）。私钥不进入页面也不会显示；权限按条目类型隐藏或禁用操作，失败显示服务端原因。i18n 中英成对；e2e `39-directory.mjs` 覆盖空态、非法 / 未签名目录被拦下、签名目录登记、只出计划不启动同步、确认后同步进待审核、员工无权限。
 - 边界：登记目录不等于审核通过，也不等于已安装；移除条目只影响登记表，不会卸载任何东西。企业目录是新的信任根，被篡改会批量登记错来源，所以目录整体签名是硬门槛，目录不替代审核。
