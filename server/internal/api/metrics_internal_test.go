@@ -53,6 +53,7 @@ func TestMetricsContent(t *testing.T) {
 	s.loginFailures.Add(3)
 	s.loginIPLimited.Add(2)
 	s.loginUsernameLimited.Add(1)
+	s.embedDenied.Add(2)
 	rec := getMetrics(t, s, "127.0.0.1:5555")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("抓取失败：%d %s", rec.Code, rec.Body.String())
@@ -69,10 +70,16 @@ func TestMetricsContent(t *testing.T) {
 		"dsh_ee_login_ip_limited_total 2",
 		"dsh_ee_login_username_limited_total 1",
 		"# TYPE dsh_ee_login_failures_total counter",
+		"# TYPE dsh_ee_embed_denied_total counter",
+		"dsh_ee_embed_denied_total 2",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("指标里缺少 %q：\n%s", want, body)
 		}
+	}
+	// 这个测试的服务端没有数据库：活跃会话指标整行省略，不能让抓取报错。
+	if strings.Contains(body, "dsh_ee_embed_sessions_active") {
+		t.Errorf("没有数据库时不应输出 dsh_ee_embed_sessions_active：\n%s", body)
 	}
 }
 

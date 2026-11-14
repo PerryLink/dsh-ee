@@ -215,6 +215,8 @@ func (s *Server) routes() []route {
 		// 系统设置：登录即可读（前端要用组织名、作用域、评分开关），按段落校验写权限
 		usr("GET /api/settings", s.handleGetSettings),
 		prm("GET /api/admin/embed-settings", s.handleAdminEmbedSettings, rbac.SettingsManage),
+		// 嵌入运行概览（embed_stats.go）：只聚合数量，给设置页的运行概览卡片用
+		prm("GET /api/admin/embed/stats", s.handleAdminEmbedStats, rbac.SettingsManage),
 		prm("PUT /api/admin/settings", s.handlePutSettings, rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage),
 
 		// LDAP / AD 登录：配置里有服务账号，单独存、单独授权

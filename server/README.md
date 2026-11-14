@@ -195,6 +195,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | POST | `/api/auth/embed/exchange` | iframe 同源调用：`{code}` → `{token:"ee_emb_…", limited:true, expires_in}`；不 Set-Cookie；code 跨实例一次性，限流跨实例合计 |
 | POST | `/api/auth/embed/logout` | `Authorization: Bearer ee_emb_…` 撤销本次嵌入会话（`revoked_at` 软删除，所有实例立即生效）；不影响网页会话 |
 | GET | `/api/admin/embed-settings` | 管理端嵌入设置页：部署基线（env，只读）+ 有效值 + 数据库设置；需要 `settings.manage` |
+| GET | `/api/admin/embed/stats?tz=` | 管理端嵌入运行概览：活跃会话、今日新建/过期/吊销、24h 拒绝（`embed.deny` 审计）、活跃应用 top 10；`tz` 是本地时区相对 UTC 的分钟数；只有聚合数量，不含用户/IP/令牌；需要 `settings.manage` |
 | GET/PUT | `/api/settings`（embed 段） | `PUT /api/admin/settings` 的 `embed` 段：`crossSite`/`allowedOrigins`/`apps`/`sessionMinutes`；非管理员读不到该段 |
 | GET | `/api/auth/me` | 当前用户、角色、有效权限点、是否超级管理员 |
 | GET | `/api/me/menus` | 当前用户能访问的菜单（已按权限过滤，含隐藏页面） |
@@ -252,7 +253,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | GET | `/setup.sh`、`/setup.ps1` | 员工电脑的一键接入脚本 |
 | GET | `/v1/models` | `Authorization: Bearer sk-ee-…` |
 | POST | `/v1/chat/completions` | 同上，OpenAI 格式，支持 `stream` |
-| GET | `/metrics` | 最小监控指标（Prometheus 文本格式）。需 `DSH_EE_METRICS=true`，且只允许本机 / 内网来源抓取 |
+| GET | `/metrics` | 最小监控指标（Prometheus 文本格式）。需 `DSH_EE_METRICS=true`，且只允许本机 / 内网来源抓取；含嵌入指标 `dsh_ee_embed_sessions_active` / `dsh_ee_embed_denied_total` |
 
 协议面（`/v1/*` 与 `/mcp`）的限流与 `X-Request-Id` 见上面「能力中心与 DSH 接入」；成功和 429 响应都带 `X-RateLimit-*`，429 另带 `Retry-After`。
 
@@ -286,7 +287,7 @@ curl localhost:8080/v1/chat/completions -H 'Authorization: Bearer sk-ee-…' -H 
 
 - 额度按 UTC 自然月重置，检查在请求前做，单次请求可能略微超出额度。
 - 登录限流在进程内存里，多实例部署时需改为共享存储。登录失败先按用户名锁（15 分钟 5 次），再按客户端 IP 固定窗口限流（默认 15 分钟 50 次，只统计用户名或密码错误），两者都在单实例内存里。
-- 按 IP 限流默认值取得比较宽，避免公司多人共用一个出口 IP 时把整个出口封死；如果出口 IP 背后人数很多，可以调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭。`/metrics` 的登录计数也是进程内累计，重启清零、多实例各自独立。
+- 按 IP 限流默认值取得比较宽，避免公司多人共用一个出口 IP 时把整个出口封死；如果出口 IP 背后人数很多，可以调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭。`/metrics` 的登录计数也是进程内累计，重启清零、多实例各自独立。嵌入的 `dsh_ee_embed_denied_total` 同样是进程内计数；`dsh_ee_embed_sessions_active` 是数据库里的全库活跃会话数，多实例抓取到的是同一个值（Prometheus 用 `max()` 而不是 `sum()`），数据库不可用时这一行省略。
 - `/v1/*` 与 `/mcp` 的每令牌限流同样在进程内存里，多实例部署时按实例各自计数；需要全局一致限流时得改用共享存储。
 - 管理操作（建用户、分配额度、代发 / 吊销 key）尚未写审计日志；网关调用已逐条记录在 `usage_logs`。
 - 只支持本地账号；LDAP / OIDC 后续加。
