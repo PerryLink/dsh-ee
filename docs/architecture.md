@@ -144,7 +144,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 | 域 | 主要表 |
 |---|---|
 | 账号与权限 | `users`、`roles`、`role_permissions`、`permissions`、`user_roles`、`menus`、`recovery_accounts` |
-| 登录与令牌 | `sessions`、`access_tokens`、`api_keys`、`npm_tokens`、`device_codes`、`agent_confirms`、`user_credentials` |
+| 登录与令牌 | `sessions`、`access_tokens`、`api_keys`、`npm_tokens`、`device_codes`、`agent_confirms`、`user_credentials`、`ephemeral_states`（一次性状态：web link / 接入码 / OIDC state） |
 | 模型 | `providers`、`models`、`usage_logs` |
 | npm 源 | `npm_packages`、`npm_versions`、`npm_downloads`、`sync_jobs` |
 | 能力中心 | `assets`、`asset_versions`、`asset_subscriptions`、`asset_usage`、`app_rows` |
@@ -170,6 +170,7 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 - 登录失败限流（按用户名，进程内存；5 次失败锁 15 分钟；设备码按 IP 限流）。
 - 上游 packument 内存缓存、知识库关键词索引、流式响应、MCP 事件流。
 - 预载/导入任务：任务记录在 `sync_jobs`，进程重启时启动阶段会把「运行中」的任务标为失败（`FailRunningJobs`），不会自动续跑。
+- **已经不在进程内**：一次性状态（从 DSH 打开网页的 handoff code、开始使用接入码、OIDC state/PKCE）存在共享表 `ephemeral_states`，多个实例共享同一份语义；一次性和过期判断都在数据库上做，数据库不可用时直接失败（见 [operations.md](./operations.md) §9.2）。
 - 后台周期任务（LDAP/飞书同步、知识源同步、上游新版本检查、接入插件发布、Desktop 版本同步、到期与清理任务）不在进程内存里排队：每轮先抢数据库表 `background_leases` 里的一条租约，只有持租实例执行（`internal/lease`）；执行中续约，任务结束/优雅停机释放，进程崩溃则 TTL 到期后由其他实例接管。数据库不可用时该轮跳过并记日志，不会退化成每个实例都跑。
 - 其余进程内状态（登录限流、packument 缓存、知识库索引、MCP 事件流、能力目录变化通知）仍是每个实例一份：多实例部署需要把它们移出进程内存（设计）。
 

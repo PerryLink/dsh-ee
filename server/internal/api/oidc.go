@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/feishu"
@@ -239,37 +239,73 @@ func (s *Server) handleTestOIDC(w http.ResponseWriter, r *http.Request) {
 
 // ---- 登录流程 ----
 
+const oidcStateKind = "oidc_state"
+
 type oidcPending struct {
 	nonce, verifier, next string
-	exp                   time.Time
 }
 
-type oidcStates struct {
-	mu sync.Mutex
-	m  map[string]oidcPending
+// oidcStatePlain 是 OIDC 登录请求里真正要带过回调的东西；PKCE verifier 与 nonce 是敏感值，
+// 不能明文落库，所以整段密封后才放进 payload。
+type oidcStatePlain struct {
+	Nonce    string `json:"nonce"`
+	Verifier string `json:"verifier"`
+	Next     string `json:"next"`
 }
 
-func (o *oidcStates) put(state string, p oidcPending) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.m == nil {
-		o.m = map[string]oidcPending{}
+// oidcStateSealed 是落库的 payload：enc 是 oidcStatePlain 用主密钥 AES-GCM 加密后的 base64。
+type oidcStateSealed struct {
+	Version int    `json:"v"`
+	Enc     string `json:"enc"`
+}
+
+// putOIDCState 保存一次登录请求（state 只存 sha256，nonce/PKCE verifier 加密后存）。
+// 多实例：回调可能落到任意实例，所以放在共享表 ephemeral_states 里。
+func (s *Server) putOIDCState(ctx context.Context, state string, p oidcPending, ttl time.Duration) error {
+	plain, err := json.Marshal(oidcStatePlain{Nonce: p.nonce, Verifier: p.verifier, Next: p.next})
+	if err != nil {
+		return err
 	}
-	now := time.Now()
-	for k, v := range o.m {
-		if now.After(v.exp) {
-			delete(o.m, k)
-		}
+	sealed, err := s.box.Seal(plain)
+	if err != nil {
+		return err
 	}
-	o.m[state] = p
+	payload, err := json.Marshal(oidcStateSealed{Version: 1, Enc: base64.StdEncoding.EncodeToString(sealed)})
+	if err != nil {
+		return err
+	}
+	return s.store.PutEphemeralState(ctx, store.EphemeralState{
+		Kind:      oidcStateKind,
+		StateHash: secret.Hash(state),
+		Payload:   payload,
+		ExpiresAt: time.Now().UTC().Add(ttl),
+	})
 }
 
-func (o *oidcStates) take(state string) (oidcPending, bool) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	p, ok := o.m[state]
-	delete(o.m, state)
-	return p, ok && time.Now().Before(p.exp)
+// takeOIDCState 原子消费并解密一次登录请求。不存在/已被用掉/过期分别返回
+// store.ErrNotFound / store.ErrEphemeralStateExpired；解密失败通常说明主密钥换了。
+func (s *Server) takeOIDCState(ctx context.Context, state string) (*oidcPending, error) {
+	st, err := s.store.ConsumeEphemeralState(ctx, oidcStateKind, secret.Hash(state))
+	if err != nil {
+		return nil, err
+	}
+	var sealed oidcStateSealed
+	if err := json.Unmarshal(st.Payload, &sealed); err != nil {
+		return nil, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(sealed.Enc)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := s.box.Open(raw)
+	if err != nil {
+		return nil, fmt.Errorf("解密 OIDC state（主密钥是否换过？）: %w", err)
+	}
+	var p oidcStatePlain
+	if err := json.Unmarshal(plain, &p); err != nil {
+		return nil, err
+	}
+	return &oidcPending{nonce: p.Nonce, verifier: p.Verifier, next: p.Next}, nil
 }
 
 func randString(n int) string {
@@ -307,7 +343,12 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, nonce, verifier := randString(24), randString(24), randString(48)
-	s.oidcStates.put(state, oidcPending{nonce: nonce, verifier: verifier, next: safeNext(r.URL.Query().Get("next")), exp: time.Now().Add(oidcStateTTL)})
+	if err := s.putOIDCState(r.Context(), state, oidcPending{nonce: nonce, verifier: verifier, next: safeNext(r.URL.Query().Get("next"))}, oidcStateTTL); err != nil {
+		// 状态落不了库就无法完成登录：不回退到进程内存，按暂时不可用处理。
+		s.log.Warn("保存 OIDC 登录状态失败", "err", err)
+		loginError(w, r, "企业统一登录暂时不可用，请稍后再试或联系管理员")
+		return
+	}
 	// state 同时放进 cookie：回调时比对，防止别人把自己的登录结果塞进你的浏览器
 	http.SetCookie(w, &http.Cookie{Name: oidcStateCookie, Value: state, Path: "/api/auth/oidc", MaxAge: int(oidcStateTTL.Seconds()), HttpOnly: true, Secure: s.opts.CookieSecure, SameSite: http.SameSiteLaxMode})
 	http.Redirect(w, r, oidc.AuthCodeURL(p, cfg, s.oidcRedirect(r), state, nonce, verifier), http.StatusFound)
@@ -327,9 +368,15 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		loginError(w, r, "登录请求已失效，请重新登录")
 		return
 	}
-	pending, ok := s.oidcStates.take(state)
-	if !ok {
+	pending, err := s.takeOIDCState(r.Context(), state)
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrEphemeralStateExpired):
 		loginError(w, r, "登录请求已失效，请重新登录")
+		return
+	case err != nil:
+		// 数据库不可用或主密钥不匹配：不能继续登录，也不能回退到进程内存。
+		s.log.Warn("读取 OIDC 登录状态失败", "err", err)
+		loginError(w, r, "企业统一登录暂时不可用，请稍后再试或联系管理员")
 		return
 	}
 	cfg, ok := s.oidcEnabled(r.Context())

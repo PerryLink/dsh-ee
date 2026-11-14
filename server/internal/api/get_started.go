@@ -3,77 +3,116 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
+	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
 // 「开始使用」页的 Agent 接入：网页生成一个接入码和一段提示词，用户贴进 DSH；
 // DSH 装好接入插件后用 /ee-login <接入码> 发起设备登录，这次登录就出现在这个网页上，就地确认。
 // 接入码只用来把设备登录和网页对上，不是凭据：没有网页上的人点「确认授权」，什么也拿不到。
-// 接入码只放内存，30 分钟有效；服务重启后在网页上重新生成即可。
+// 接入码 30 分钟有效，服务重启后在网页上重新生成即可。
+//
+// 多实例：接入码和「最近一次设备登录」放共享表 ephemeral_states（同一员工只保留一条，
+// owner_key=user:<id>），A 实例生成、B 实例发起 /ee-login 或轮询进度都能对上。
+// 数据库不可用时接入码功能直接失败（不回退到进程内存）。
 
-const setupCodeTTL = 30 * time.Minute
+const (
+	setupCodeTTL  = 30 * time.Minute
+	setupCodeKind = "setup_code"
+	// 同一个员工只保留一个有效接入码；换新码时旧码立即作废。
+	setupCodeOwnerPrefix = "user:"
+)
 
+// setupCodePayload 是接入码落库的内容；接入码本身只存 sha256。
+type setupCodePayload struct {
+	UserID int64 `json:"user_id"`
+	Admin  bool  `json:"admin"`
+	// 用这个接入码发起的最近一次设备登录（规范化后的 user_code）
+	UserCode string `json:"user_code,omitempty"`
+}
+
+// setupCode 是接入码在内存里的视图。
 type setupCode struct {
 	Code      string // 规范化后的 8 位，无连字符
 	UserID    int64
 	Admin     bool
 	ExpiresAt time.Time
-	// 用这个接入码发起的最近一次设备登录
-	UserCode string
+	UserCode  string
 }
 
-type setupCodes struct {
-	mu    sync.Mutex
-	items map[string]*setupCode
+func setupCodeOwner(userID int64) string {
+	return setupCodeOwnerPrefix + strconv.FormatInt(userID, 10)
 }
 
-func (c *setupCodes) issue(userID int64, admin bool) *setupCode {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.items == nil {
-		c.items = map[string]*setupCode{}
-	}
-	now := time.Now()
-	// 每人只留一个有效接入码，顺手清掉过期的
-	for k, v := range c.items {
-		if v.UserID == userID || v.ExpiresAt.Before(now) {
-			delete(c.items, k)
+// issueSetupCode 生成并保存一个新接入码；同一员工旧的接入码在同一事务里删掉。
+// 随机码撞车（或两个实例同时给同一员工换码）时换一个随机值重试。
+func (s *Server) issueSetupCode(ctx context.Context, userID int64, admin bool) (*setupCode, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		code := newSetupCode()
+		expires := time.Now().UTC().Add(setupCodeTTL)
+		payload, err := json.Marshal(setupCodePayload{UserID: userID, Admin: admin})
+		if err != nil {
+			return nil, err
 		}
+		err = s.store.ReplaceEphemeralState(ctx, store.EphemeralState{
+			Kind:      setupCodeKind,
+			StateHash: secret.Hash(store.NormalizeUserCode(code)),
+			OwnerKey:  setupCodeOwner(userID),
+			Payload:   payload,
+			ExpiresAt: expires,
+		})
+		if errors.Is(err, store.ErrEphemeralStateExists) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &setupCode{Code: store.NormalizeUserCode(code), UserID: userID, Admin: admin, ExpiresAt: expires}, nil
 	}
-	sc := &setupCode{Code: newSetupCode(), UserID: userID, Admin: admin, ExpiresAt: now.Add(setupCodeTTL)}
-	c.items[sc.Code] = sc
-	return sc
+	return nil, errors.New("生成接入码失败，请重试")
 }
 
-// get 返回接入码的副本；不存在或过期返回 nil。
-func (c *setupCodes) get(code string) *setupCode {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	sc := c.items[store.NormalizeUserCode(code)]
-	if sc == nil || sc.ExpiresAt.Before(time.Now()) {
-		return nil
+// getSetupCode 读取接入码。不存在返回 store.ErrNotFound，过期返回 store.ErrEphemeralStateExpired。
+func (s *Server) getSetupCode(ctx context.Context, raw string) (*setupCode, error) {
+	code := store.NormalizeUserCode(raw)
+	st, err := s.store.GetEphemeralState(ctx, setupCodeKind, secret.Hash(code))
+	if err != nil {
+		return nil, err
 	}
-	cp := *sc
-	return &cp
+	var p setupCodePayload
+	if err := json.Unmarshal(st.Payload, &p); err != nil {
+		return nil, err
+	}
+	return &setupCode{Code: code, UserID: p.UserID, Admin: p.Admin, ExpiresAt: st.ExpiresAt, UserCode: p.UserCode}, nil
 }
 
-func (c *setupCodes) attach(code, userCode string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	sc := c.items[store.NormalizeUserCode(code)]
-	if sc == nil || sc.ExpiresAt.Before(time.Now()) {
-		return false
+// attachSetupCode 把这次设备登录的 user_code 记到接入码上（网页据此显示进度）。
+// 接入码不存在/已过期/在这期间被重新生成时返回 store.ErrNotFound，不算错误。
+func (s *Server) attachSetupCode(ctx context.Context, raw, userCode string) (bool, error) {
+	code := store.NormalizeUserCode(raw)
+	st, err := s.store.GetEphemeralState(ctx, setupCodeKind, secret.Hash(code))
+	if err != nil {
+		return false, err
 	}
-	sc.UserCode = store.NormalizeUserCode(userCode)
-	return true
+	var p setupCodePayload
+	if err := json.Unmarshal(st.Payload, &p); err != nil {
+		return false, err
+	}
+	p.UserCode = store.NormalizeUserCode(userCode)
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return false, err
+	}
+	return s.store.UpdateEphemeralPayload(ctx, setupCodeKind, secret.Hash(code), payload)
 }
 
 func newSetupCode() string {
@@ -166,7 +205,11 @@ func (s *Server) handleCreateSetupCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base, _ := s.connectBase(r.Context(), r)
-	sc := s.setupCodes.issue(currentUser(r).ID, req.Admin)
+	sc, err := s.issueSetupCode(r.Context(), currentUser(r).ID, req.Admin)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
 	first, next := setupPrompts(set, info, base, sc.Code, req.Admin)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"code": store.FormatUserCode(sc.Code), "expires_at": sc.ExpiresAt.UTC(), "prompt": first, "next_prompt": next,
@@ -178,8 +221,16 @@ func (s *Server) handleCreateSetupCode(w http.ResponseWriter, r *http.Request) {
 // GET /api/me/get-started/{code}：网页轮询这个接入码的进度。
 // stage：waiting 还没有 DSH 用它登录 / pending 等你确认 / approved 已确认、等 DSH 取令牌 / connected 已接入 / denied 已拒绝。
 func (s *Server) handleSetupCodeStatus(w http.ResponseWriter, r *http.Request) {
-	sc := s.setupCodes.get(r.PathValue("code"))
-	if sc == nil || sc.UserID != currentUser(r).ID {
+	sc, err := s.getSetupCode(r.Context(), r.PathValue("code"))
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrEphemeralStateExpired):
+		writeErr(w, http.StatusNotFound, "接入码不存在或已过期，请重新生成")
+		return
+	case err != nil:
+		s.internalErr(w, r, err)
+		return
+	}
+	if sc.UserID != currentUser(r).ID {
 		writeErr(w, http.StatusNotFound, "接入码不存在或已过期，请重新生成")
 		return
 	}
@@ -258,7 +309,18 @@ func (s *Server) handlePutWelcome(w http.ResponseWriter, r *http.Request) {
 const setupCodeExpired = "接入码不存在或已过期，请在 dsh-ee 网页的「开始使用」页重新生成"
 
 // validSetupCode：设备登录请求里没带接入码，或带的接入码有效。
-func (s *Server) validSetupCode(code string) bool {
+// 数据库错误返回 error（fail closed，不能当成有效/无效蒙混过去）。
+func (s *Server) validSetupCode(ctx context.Context, code string) (bool, error) {
 	code = strings.TrimSpace(code)
-	return code == "" || s.setupCodes.get(code) != nil
+	if code == "" {
+		return true, nil
+	}
+	_, err := s.getSetupCode(ctx, code)
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrEphemeralStateExpired):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }

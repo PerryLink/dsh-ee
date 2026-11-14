@@ -65,6 +65,35 @@ func TestTokenClientKindMigration(t *testing.T) {
 	}
 }
 
+// 0036：多实例共享的一次性状态表（web link / 接入码 / OIDC state）。
+func TestEphemeralStatesMigration(t *testing.T) {
+	body, err := migrationFS.ReadFile("migrations/0036_ephemeral_states.sql")
+	if err != nil {
+		t.Fatalf("读 0036 迁移: %v", err)
+	}
+	stmts := splitStatements(string(body))
+	if len(stmts) == 0 {
+		t.Fatal("0036 迁移没有可执行语句")
+	}
+	joined := strings.Join(stmts, "\n")
+	for _, want := range []string{
+		"CREATE TABLE ephemeral_states",
+		"kind        VARCHAR(32)  NOT NULL",
+		"state_hash  CHAR(64)     NOT NULL",
+		"owner_key   VARCHAR(191) NULL",
+		"payload     JSON         NOT NULL",
+		"expires_at  DATETIME(3)  NOT NULL",
+		"created_at  DATETIME(3)  NOT NULL",
+		"consumed_at DATETIME(3)  NULL",
+		"PRIMARY KEY (kind, state_hash)",
+		"UNIQUE KEY uk_ephemeral_states_owner (kind, owner_key)",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("0036 迁移缺少 %q：\n%s", want, joined)
+		}
+	}
+}
+
 // 0036：API 客户端注册（client_credentials）与审计来源加宽。
 func TestAPIClientsMigration(t *testing.T) {
 	body, err := migrationFS.ReadFile("migrations/0036_api_clients.sql")

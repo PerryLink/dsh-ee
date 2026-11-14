@@ -290,6 +290,7 @@ cp /path/to/当前目录/.env .
 - **共享存储**：`DSH_EE_DATA_DIR` 里的 npm tarball、品牌图、Desktop 安装包镜像都是本地磁盘；多实例要么挂同一份共享存储（NFS 等），要么在负载均衡上做粘性，否则下载/发布请求会落到没有文件的实例。对象存储仍是设计，没有实现。
 - **进程内状态仍按实例独立**：登录失败限流、上游 packument 内存缓存、知识库关键词索引、MCP 事件流与「能力目录变化」通知（hub）都在各自进程里。后台任务只在 leader 实例写库/审计；管理模式到期的刷新通知由每个实例各自推给连到自己的 DSH 长连接（审计只写一份）。
 - **触发型任务**（`connect.publish`、`dsh.releases`）：kick 只在收到请求的实例内存里，非 leader 收到后不会跨实例转发；靠 leader 的周期兜底补跑（connect 每小时、Desktop 版本 6 小时）。管理员在非 leader 实例点「立即发布/下载」由该实例直接处理（不是周期任务），多实例下同一资源的并发写仍按原有幂等/锁逻辑。
+- **一次性状态已多实例安全**：从 DSH 打开网页的 handoff code、开始使用接入码、OIDC state/PKCE 存在数据库表 `ephemeral_states`，多个实例共享：A 实例生成，B 实例打开链接、收回调或轮询接入进度都能用。一次性由 `UPDATE … SET consumed_at=now() WHERE consumed_at IS NULL AND expires_at>now()` 的 affected rows 保证；过期状态由 `sweepEmbed` 每分钟清理一次（清理只回收空间，有效性判断不依赖它）。要求所有实例连同一个数据库、使用同一个 `DSH_EE_SECRET_KEY`（OIDC state 的 nonce/PKCE verifier 加密后落库）、系统时钟同步（TTL 按应用时间判断）。数据库不可用时这些功能直接失败（fail closed），**不会**回退到进程内存。
 - **作业级归属未做**：启动时 `FailRunningJobs` 会把 `sync_jobs` 里所有 running 任务标成中断，这一步仍由每个实例启动时执行；Desktop 安装包的启动恢复已走租约。多实例滚动重启仍可能打断另一实例上管理员手动触发的镜像任务——需要更强一致性时，在低峰重启或暂停同步。
 
 此外仍属单实例边界：多个实例同时首次启动会争抢数据库迁移；`/mcp`、`/v1` 的每令牌限流在进程内存里按实例各自计数；没有独立的队列/worker 进程。
@@ -380,7 +381,7 @@ frame-ancestors 'self' <仅 /a/*：DSH_EE_EMBED_ORIGINS 与设置里追加的来
 | 指标（Prometheus）、链路追踪、慢请求日志、请求 ID | 没有；只有文本日志与 `/healthz` |
 | 日志级别/轮转/syslog/Webhook | 没有；在外部日志设施处理 |
 | 审计导出、保留期、外发 | 没有；只有 `/admin/audit` 页面查询 |
-| 多实例完整水平扩展 | 周期后台任务已用 `background_leases` 租约选主（§9.2）；登录限流、缓存、预载任务、MCP 事件流仍在进程内存，tarball 在本地磁盘，迁移要求先起一个，作业级归属未做；共享存储/对象存储没有 |
+| 多实例完整水平扩展 | 周期后台任务已用 `background_leases` 租约选主、一次性状态已入数据库 `ephemeral_states`（§9.2）；登录限流、缓存、预载任务、MCP 事件流仍在进程内存，tarball 在本地磁盘，迁移要求先起一个，作业级归属未做；共享存储/对象存储没有 |
 | 零停机升级、滚动升级 | 没有；升级期间服务不可用 |
 | 容量/限流面板、每令牌限流 | 没有；见 [architecture.md](./architecture.md) §7 |
 | 备份一致性编排（数据库 + blobs 同一快照） | 没有；靠运维窗口与流程约束 |

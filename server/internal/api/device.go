@@ -127,7 +127,12 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "scope 不受支持")
 		return
 	}
-	if !s.validSetupCode(req.SetupCode) {
+	setupCodeOK, err := s.validSetupCode(r.Context(), req.SetupCode)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	if !setupCodeOK {
 		writeErr(w, http.StatusBadRequest, setupCodeExpired)
 		return
 	}
@@ -142,7 +147,10 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.SetupCode != "" {
-		s.setupCodes.attach(req.SetupCode, d.UserCode)
+		if _, err := s.attachSetupCode(r.Context(), req.SetupCode, d.UserCode); err != nil && !notFound(err) {
+			// 接入码可能在两步之间被重新生成；设备登录本身已建好，不因此失败。
+			s.log.Warn("记录接入码的设备登录失败", "err", err)
+		}
 	}
 	uri := s.publicBase(r) + "/device"
 	writeJSON(w, http.StatusOK, map[string]any{
