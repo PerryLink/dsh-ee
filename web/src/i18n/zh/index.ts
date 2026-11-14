@@ -24,6 +24,7 @@ import requests from "./requests";
 import studio from "./studio";
 import appGuide from "./app-guide";
 import { sharedCredentials } from "./shared-credentials";
+import apiErrors from "./api-errors";
 import ext from "./ext";
 import signingKeys from "./signing-keys";
 import directory from "./directory";
@@ -34,6 +35,7 @@ import embed from "./embed";
 export default {
   ...common,
   sharedCredentials,
+  apiErrors,
   ...config,
   ...infra,
   ...ops,

@@ -22,6 +22,8 @@ const (
 	sessionCookie  = "dsh_ee_session"
 	bcryptCost     = 12
 	minPasswordLen = 10
+	// bcrypt 只看前 72 字节，更长的密码直接拒绝，免得用户以为后半截有用。
+	maxPasswordLen = 72
 )
 
 // 用户不存在时也做一次比对，避免靠响应时间判断用户名是否存在。
@@ -31,8 +33,7 @@ func HashPassword(pw string) (string, error) {
 	if utf8.RuneCountInString(pw) < minPasswordLen {
 		return "", errWeakPassword
 	}
-	// bcrypt 只看前 72 字节，更长的密码直接拒绝，免得用户以为后半截有用。
-	if len(pw) > 72 {
+	if len(pw) > maxPasswordLen {
 		return "", errLongPassword
 	}
 	b, err := bcrypt.GenerateFromPassword([]byte(pw), bcryptCost)
@@ -160,7 +161,9 @@ func (s *Server) usernameLocked(w http.ResponseWriter, username string) bool {
 		return false
 	}
 	s.loginUsernameLimited.Add(1)
-	writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 15 分钟后再试")
+	// 文案里的 15 分钟与 lockFor 一致；params 给前端多语言文案插值用。
+	writeErrCode(w, http.StatusTooManyRequests, codeAuthTooManyAttempts,
+		map[string]any{"minutes": int(lockFor / time.Minute)}, "失败次数过多，请 15 分钟后再试")
 	return true
 }
 
@@ -216,7 +219,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, username, passwor
 	// 同一出口 IP 失败次数过多时直接拒绝，省掉后面昂贵的密码校验。
 	if retry, blocked := s.loginIPLimiter.blocked(ip); blocked {
 		s.loginIPLimited.Add(1)
-		writeLoginRateLimited(w, retry, "登录失败次数过多，请稍后再试")
+		writeLoginRateLimited(w, retry, codeAuthIPRateLimited,
+			map[string]any{"retry_after": retryAfterSeconds(retry)}, "登录失败次数过多，请稍后再试")
 		return nil, false
 	}
 	u, err := s.authenticate(r.Context(), username, password)
@@ -226,14 +230,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, username, passwor
 		s.loginIPLimiter.fail(ip)
 		s.limiter.fail(username)
 		s.auditAs(r, nil, auditLoginFailed, username, map[string]any{"via": via})
-		writeErr(w, http.StatusUnauthorized, err.Error())
+		writeErrCode(w, http.StatusUnauthorized, codeAuthBadCredentials, nil, err.Error())
 		return nil, false
 	case errors.Is(err, errNotProvisioned):
 		s.auditAs(r, nil, auditLoginFailed, username, map[string]any{"via": via, "reason": "not_provisioned"})
-		writeErr(w, http.StatusForbidden, err.Error())
+		writeErrCode(w, http.StatusForbidden, codeAuthNotProvisioned, nil, err.Error())
 		return nil, false
 	case errors.Is(err, errDirectory):
-		writeErr(w, http.StatusBadGateway, err.Error())
+		writeErrCode(w, http.StatusBadGateway, codeAuthDirectoryUnavailable, nil, err.Error())
 		return nil, false
 	case err != nil:
 		s.internalErr(w, r, err)
@@ -333,16 +337,27 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	u := currentUser(r)
 	if u.AuthSource == store.AuthLDAP || u.AuthSource == store.AuthOIDC {
-		writeErr(w, http.StatusBadRequest, "这个账号的密码由企业目录或统一登录管理，请在公司的账号系统里修改")
+		writeErrCode(w, http.StatusBadRequest, codeAuthPasswordManagedExternally, nil,
+			"这个账号的密码由企业目录或统一登录管理，请在公司的账号系统里修改")
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.OldPassword)) != nil {
-		writeErr(w, http.StatusBadRequest, "原密码不正确")
+		writeErrCode(w, http.StatusBadRequest, codeAuthBadOldPassword, nil, "原密码不正确")
 		return
 	}
 	hash, err := HashPassword(req.NewPassword)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		// 只有「太短 / 太长」两种可预期的失败带 code；其它（理论上不会发生）保持原行为。
+		switch {
+		case errors.Is(err, errWeakPassword):
+			writeErrCode(w, http.StatusBadRequest, codeAuthWeakPassword,
+				map[string]any{"min": minPasswordLen}, err.Error())
+		case errors.Is(err, errLongPassword):
+			writeErrCode(w, http.StatusBadRequest, codeAuthPasswordTooLong,
+				map[string]any{"max": maxPasswordLen}, err.Error())
+		default:
+			writeErr(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 	if err := s.store.UpdateUser(r.Context(), u.ID, store.UserPatch{PasswordHash: &hash}); err != nil {
@@ -369,12 +384,12 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 				s.requireEmbedUser(w, r, next, token)
 				return
 			}
-			writeErr(w, http.StatusUnauthorized, "请先登录")
+			writeErrCode(w, http.StatusUnauthorized, codeAuthLoginRequired, nil, "请先登录")
 			return
 		}
 		u, limited, err := s.store.SessionInfo(r.Context(), secret.Hash(c.Value))
 		if notFound(err) {
-			writeErr(w, http.StatusUnauthorized, "登录已过期，请重新登录")
+			writeErrCode(w, http.StatusUnauthorized, codeAuthSessionExpired, nil, "登录已过期，请重新登录")
 			return
 		}
 		if err != nil {
@@ -438,7 +453,7 @@ func (s *Server) requirePerm(codes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !currentAccess(r).Has(codes...) {
-				writeErr(w, http.StatusForbidden, "没有权限执行这个操作")
+				writeErrCode(w, http.StatusForbidden, codeAuthForbidden, nil, "没有权限执行这个操作")
 				return
 			}
 			next.ServeHTTP(w, r)
