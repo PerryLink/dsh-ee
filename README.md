@@ -67,7 +67,7 @@ dsh-ee is not an AI runtime. **Inference and tool calls run in each employee's l
 - **Data hub**: shared datasets in a separate database, queried through a read-only account, with per-user parameters such as `:me_department`. Customers, people, products and other shared reference data live in one place.
 - **Knowledge base**: Q&A where every answer cites its sources, with no vector database involved. An agent runs several rounds of keyword search and reads the original documents. Supports PDF, Word and Markdown, with versions and rollback.
 - **Built-in npm registry with review**: hosting and publishing for the company scope, per-version review, and automated checks for install scripts, dependencies, licenses and leaked secrets. The company scope never falls back to the public registry, which blocks dependency confusion. Supports preloading packages from upstream and offline bundle import/export.
-- **OpenAI-compatible model gateway**: plug in DeepSeek or any other OpenAI-compatible upstream and expose one set of model names. A model can sit on several upstreams with automatic failover. Each account gets a monthly token quota and a list of allowed models.
+- **OpenAI-compatible model gateway**: plug in DeepSeek or any other OpenAI-compatible upstream and expose one set of model names. A model can sit on several upstreams with automatic failover. Each account gets a monthly token quota and a list of allowed models. DeepSeek's beta FIM and chat-prefix completions are passed through as-is under `/beta/*`.
 - **One-command onboarding**: run `curl -fsSL <dsh-ee>/setup.sh | sh` (or `irm <dsh-ee>/setup.ps1 | iex` on Windows) and confirm a device code in the browser. A single unified token (`ee_at_…`) then configures the npm registry, models and capability hub.
 - **Third-party harness access**: register an API client (`client_id` / `client_secret`) per integration; CI or another harness exchanges it for a short-lived `ee_at_` token via `client_credentials` instead of holding an admin token. Scopes are capped by the owning account, the secret is stored as a hash and shown once, and every exchange is audited.
 - **Identity and governance**: local accounts plus LDAP / AD, RBAC, menus you can edit at runtime, an audit log, and analytics broken down by department, capability, model and endpoint.
@@ -179,6 +179,7 @@ Confirm the device code in the browser, and DSH is connected to the company's ca
 | `DSH_EE_TRUSTED_PROXIES` | Reverse-proxy IPs/CIDRs (comma-separated) whose `X-Forwarded-*` headers are trusted; defaults to loopback only. Set it when the proxy runs in another container/host or behind a cloud LB |
 | `DSH_EE_REFRESH_TOKENS` | Opt-in OAuth-style refresh tokens (one-time rotation + reuse detection); default off, so no client behavior changes. When enabled, device/manual issuance also returns an `ee_rt_` refresh token and `POST /api/auth/refresh` is available (404 while off). See [docs/token-lifecycle.md](./docs/token-lifecycle.md) §3 |
 | `DSH_EE_REFRESH_ACCESS_TTL` / `_TOKEN_TTL` / `_FAMILY_TTL` / `_GRACE` | Refresh token TTLs and rotation grace: access `1h`, refresh idle `720h`, family cap `4320h`, grace `0` (strict) by default |
+| `DSH_EE_DEEPSEEK_PROVIDER` | Enabled upstream (provider name or id, `vendor` must be `deepseek`) used by the beta `/beta/completions` and `/beta/chat/completions` passthrough; defaults to the highest-priority enabled DeepSeek upstream. `/beta/*` returns 503 when no such upstream exists |
 
 The full list is in [server/README.md](./server/README.md).
 
@@ -196,7 +197,7 @@ cp .env.example .env.local        # fill in DSH_EE_SECRET_KEY and the admin pass
 set -a; . ./.env.local; set +a
 go run ./cmd/dsh-ee
 
-# 3. Web UI (proxies /api, /v1, /npm, /index to :8080)
+# 3. Web UI (proxies /api, /v1, /beta, /npm, /index to :8080)
 cd web
 pnpm install
 pnpm dev                          # http://localhost:5188

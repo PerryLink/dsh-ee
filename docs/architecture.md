@@ -65,6 +65,7 @@ dsh-ee 的运行时只有三样东西：
   │  Authorization: Bearer <ee_at_ / ee_npm_ / sk-ee->
   ▼
 GET /v1/models · POST /v1/chat/completions      server/internal/api/gateway.go
+POST /beta/completions · /beta/chat/completions  server/internal/api/beta_completions.go（DeepSeek FIM / Chat Prefix beta 透传）
   │  1. resolveBearer：令牌 → 账号；2. 账号 RBAC ∩ 令牌 scope
   │  3. 账号额度、令牌额度、可用模型
   ▼

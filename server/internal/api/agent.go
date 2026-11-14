@@ -183,6 +183,8 @@ var agentExcluded = map[string]string{
 	"POST /anthropic/v1/messages":               "Anthropic 兼容的模型网关协议入口（DeepSeek 风格 base URL 别名）",
 	"POST /v1/messages/count_tokens":            "Anthropic 兼容端点（v0 明确不支持，返回 404）",
 	"POST /anthropic/v1/messages/count_tokens":  "Anthropic 兼容端点（v0 明确不支持，返回 404）",
+	"POST /beta/completions":                    "DeepSeek FIM 补全给编辑器 / 客户端直接调，模型不替员工写代码补全",
+	"POST /beta/chat/completions":               "DeepSeek Chat Prefix 续写给客户端直接调，不在模型工具面暴露",
 	// 第三方 Harness 契约（harness.go）：发现与只读能力摘要，不是模型工具
 	"GET /.well-known/dsh-ee":     "中立发现文档，给第三方 Harness 读取服务能力",
 	"GET /v1/capabilities":        "中立能力摘要，给第三方 Harness 生成自己的配置与系统提示",

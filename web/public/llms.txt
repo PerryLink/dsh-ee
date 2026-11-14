@@ -12,6 +12,7 @@
 - [权限与访问规则速查 / Permissions and access rules: a quick reference](/docs/access-rules): 权限点、字段访问规则、管理约束三层的判断顺序与配置入口。
 - [发布入口与预检结果怎么读 / Publish entries and how to read the precheck](/docs/publish-precheck): 三个发布入口、预检的扫描键、结果语义与提交前自查清单。
 - [规范与检查：ENTRY / FLOW / BOOST / Standards and checks: ENTRY / FLOW / BOOST](/docs/quality-standards): 上游规范三层与 dsh-ee 预检的边界：哪些是作者自证，哪些是企业准入。
+- [DeepSeek FIM / 前缀续写 beta 透传 / DeepSeek FIM / chat-prefix beta passthrough](/docs/beta-completions): dsh-ee 把 DeepSeek 的两个 beta 能力（FIM 补全、Chat Prefix 续写）挂到 /beta/* 透传：复用同一个员工令牌、模型权限、额度与限流，仅转发给一个 vendor=deepseek 的上游。
 
 ## 契约与错误入口
 
@@ -23,6 +24,7 @@
 - [非 DSH 客户端接入 L1](https://github.com/hikariming/dsh-ee/blob/main/docs/l1-client.md): 第三方 Harness / 自研客户端使用 /v1 与 /mcp 的中立契约与限制。
 - [插件规范与准入](https://github.com/hikariming/dsh-ee/blob/main/docs/plugin-quality.md): 上游 ENTRY / FLOW / BOOST 与 dsh-ee 预检、审核的边界。
 - [Anthropic Messages 兼容](/docs/anthropic-api): Claude Code / Anthropic SDK 用企业令牌调 POST /v1/messages（别名 /anthropic/v1/messages）：DeepSeek provider 原生透传、其他 provider 降级转换，鉴权/SSE/错误壳与 v0 边界。
+- [DeepSeek beta 能力（FIM / Chat Prefix）](/beta/completions): OpenAI 兼容的 beta 透传：FIM 补全与 Chat Prefix 续写；只转发给 vendor=deepseek 的启用上游。
 
 ## 仓库
 

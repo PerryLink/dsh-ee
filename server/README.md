@@ -5,7 +5,7 @@ Go 写的 dsh-ee 服务端。目前实现：
 - **用户登录**：本地账号（bcrypt），HttpOnly 会话 cookie，同一用户名连续失败 5 次锁定 15 分钟；管理员可建用户、禁用、重置密码（禁用 / 重置后立即踢下线）。
 - **账号月度额度**：管理员给账号分配每月 token 上限（`NULL` 不限额、`0` 未分配）、允许的模型与有效期；额度按账号共享，账号下所有 key 从同一份里扣，每月 1 日（UTC）重置。
 - **企业 API key 二次分发**：管理员录入企业在上游开通的模型服务（OpenAI 兼容，如 DeepSeek），上游 key 用主密钥 AES-256-GCM 加密存库；`sk-ee-…` 个人 key 由管理员代发或员工自助创建，随时吊销。
-- **OpenAI 兼容网关**：`/v1/chat/completions`（含流式）与 `/v1/models`。员工用个人 key 调用，dsh-ee 换成企业 key 转发，按账号校验额度与模型，并按次记录用量（即调用审计）。
+- **OpenAI 兼容网关**：`/v1/chat/completions`（含流式）与 `/v1/models`。员工用个人 key 调用，dsh-ee 换成企业 key 转发，按账号校验额度与模型，并按次记录用量（即调用审计）。DeepSeek 的两个 beta 能力（FIM 补全 `/beta/completions`、Chat Prefix 续写 `/beta/chat/completions`）按原协议透传给一个 `vendor=deepseek` 的启用上游，复用同一套鉴权 / 额度 / 限流 / 用量记录，不做多厂商语义翻译。
 - **Anthropic Messages 兼容端点**：`POST /v1/messages`（含流式 SSE；别名 `POST /anthropic/v1/messages`，兼容 DeepSeek 的 `/anthropic` base URL 习惯），Claude Code / Anthropic SDK 用 `x-api-key` 或 Bearer 带上同一枚统一令牌即可；复用模型权限、额度、限流与用量记账。优先线路 `vendor=deepseek` 时原生透传到 `<base>/anthropic/v1/messages`（响应逐字节转发，`anthropic-version`/`anthropic-beta` 透传），其它 provider 降级转成 OpenAI chat；故障转移只在同协议内进行。不做 `count_tokens` / Batches / Files / 服务端工具，详见 [../docs/dev/anthropic-api.md](../docs/dev/anthropic-api.md)。
 - **内置 npm 源**（`/npm/`）：企业作用域的托管与发布、逐版本审核、上游回源与镜像、上游预载（连同依赖闭包）、离线包导入导出，以及由已上架插件生成的 DSH 插件索引（`/index/dsh-index.json`）。详见下文「npm 源」。
 - **LDAP / AD 登录**：员工用公司域账号登录网页与 `npm login`；首次登录自动开通，每次登录同步显示名、部门、邮箱与组映射的角色；每小时核对目录，离职（被删除或在 AD 里禁用）的账号自动禁用。详见下文「LDAP / AD」。
@@ -39,7 +39,7 @@ Go 写的 dsh-ee 服务端。目前实现：
 设计依据与取舍见 [docs/capability-hub.md](../docs/capability-hub.md)。
 
 - **统一接入令牌**：`ee_at_…` 同时用于 npm 源、模型网关（`/v1`）、技能目录（`/api/dsh/*`）与企业连接（`/mcp`）。每次请求按账号 RBAC 与令牌 scope 求交集，可配置令牌级月度额度、模型范围和有效期；明文只显示一次，服务端只存 sha256。旧 `ee_npm_…`、`sk-ee-…` 保持原有权限与额度行为。
-- **接入限流与请求 ID**：`/v1/*` 与 `/mcp` 按令牌做固定窗口限流（同一令牌共用一份额度），默认每分钟 60 次，可用 `DSH_EE_RATE_LIMIT` 调整，`0` 或 `off` 关闭。超限返回 429，带 `Retry-After` 与 `X-RateLimit-Limit/Remaining/Reset`；正常响应也带 `X-RateLimit-*`，便于客户端提前退避。所有响应带 `X-Request-Id`：请求里已有合法值时原样沿用（不覆盖），否则服务端生成；同一个 id 会写进访问日志，方便和客户端 / 反向代理对账。限流只影响错误头，不改 `/v1` 的 OpenAI 错误体与 `/mcp` 的 JSON-RPC 错误体形状。
+- **接入限流与请求 ID**：`/v1/*`、`/beta/*` 与 `/mcp` 按令牌做固定窗口限流（同一令牌共用一份额度），默认每分钟 60 次，可用 `DSH_EE_RATE_LIMIT` 调整，`0` 或 `off` 关闭。超限返回 429，带 `Retry-After` 与 `X-RateLimit-Limit/Remaining/Reset`；正常响应也带 `X-RateLimit-*`，便于客户端提前退避。所有响应带 `X-Request-Id`：请求里已有合法值时原样沿用（不覆盖），否则服务端生成；同一个 id 会写进访问日志，方便和客户端 / 反向代理对账。限流只影响错误头，不改 `/v1` 的 OpenAI 错误体与 `/mcp` 的 JSON-RPC 错误体形状。
 - **API 客户端（client_credentials）**：给第三方 Harness / CI 按集成方注册 `client_id` / `client_secret`（`POST /api/admin/clients`，需要 `keys.manage`），客户端用 `POST /api/auth/client-token` 换 1 小时有效的 `ee_at_`，不必把管理员令牌交给对方。scope 取注册范围 ∩ owner 账号当前权限（收权立即生效）；secret 只存 sha256、只在创建时显示一次；凭据失败统一 `invalid_client`，换 token 按 IP 限流。详见 [docs/token-lifecycle.md](../docs/token-lifecycle.md) §6。
 - **设备登录**：`POST /api/device/code` 发起 RFC 8628 设备码流程，员工在 `/device` 登录并确认；设备令牌只能领取一次，默认滑动有效 90 天，同账号同设备再次登录会吊销旧令牌。机器人账号由管理员创建并指定负责人，不能会话登录。
 - **技能、提示词、微应用**：存在 `assets` / `asset_versions`；员工提交的版本在白名单模式下要审核。DSH 通过 `GET /api/dsh/catalog`（带 ETag，没变化回 304）拿到自己此刻应有的目录，`GET /api/dsh/skills/{name}` 取正文。提示词与微应用以「只给人调用」的 skill 下发（DSH 里输入 `/名字`）。
@@ -147,8 +147,9 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_LOGIN_IP_LIMIT` | 同一客户端 IP 在窗口内允许的登录失败次数，默认 `50`；设为 `0` / `off` 关闭 |
 | `DSH_EE_LOGIN_IP_WINDOW` | 按 IP 统计登录失败的固定窗口，默认 `15m`，取值 `1m`～`24h` |
 | `DSH_EE_METRICS` | 设为 `true` 时开放 `GET /metrics`（Prometheus 文本格式，只允许本机 / 内网抓取）；默认关闭 |
-| `DSH_EE_RATE_LIMIT` | `/v1/*` 与 `/mcp` 的每令牌限流，单位「次/分钟」，默认 `60`；`0` 或 `off` 关闭 |
+| `DSH_EE_RATE_LIMIT` | `/v1/*`、`/beta/*` 与 `/mcp` 的每令牌限流，单位「次/分钟」，默认 `60`；`0` 或 `off` 关闭 |
 | `DSH_EE_CLIENT_TOKEN_PER_MINUTE` | `POST /api/auth/client-token`（API 客户端 client_credentials）每 IP 每分钟最多换几次 token，默认 `120`；`0` 或 `off` 关闭。只防用错误 secret 撞库 / 刷库 |
+| `DSH_EE_DEEPSEEK_PROVIDER` | DeepSeek beta 透传（`/beta/completions`、`/beta/chat/completions`）使用的上游 name 或 id，必须是启用中的 `vendor=deepseek` 上游；不填时取优先级最高的启用 DeepSeek 上游，没有可用上游时 `/beta/*` 返回 503。见 [docs/dev/beta-completions.md](../docs/dev/beta-completions.md) |
 | `DSH_EE_TRUSTED_PROXIES` | 可信反向代理的地址 / CIDR（逗号分隔）。只有来自这些对端的 `X-Forwarded-For`、`X-Forwarded-Host`、`X-Forwarded-Proto` 才会被采信；默认只有 `127.0.0.1/32` 与 `::1/128`。代理在别的机器、容器网络或云负载均衡后面时必须配置 |
 | `DSH_EE_EMBED_ORIGINS` | 允许用 iframe 嵌入微应用网页（`/a/*`）的宿主来源，逗号分隔的完整 origin，如 `https://harness.acme.internal,http://localhost:5173`；只接受 https（`http://localhost` 等回环地址例外），非法值启动失败；不设时只允许同站嵌入（`frame-ancestors 'self'`）。接入方式、embed 参数与 postMessage 协议见 [docs/embedding.md](../docs/embedding.md) |
 | `DSH_EE_EMBED_CROSS_SITE` | 跨站 iframe 嵌入 v1 总开关，默认关闭。开启后 `POST /api/embed/sessions`、`POST /api/auth/embed/exchange` 才可用，且必须同时设置 `DSH_EE_EMBED_ORIGINS`（否则启动失败）。管理端「系统设置 → 跨站嵌入」可显式覆盖（数据库值优先） |
@@ -258,9 +259,11 @@ curl -fsS http://127.0.0.1:8080/readyz    # 依赖就绪；-f 让 503 以非 0 �
 | GET | `/setup.sh`、`/setup.ps1` | 员工电脑的一键接入脚本 |
 | GET | `/v1/models` | `Authorization: Bearer sk-ee-…` |
 | POST | `/v1/chat/completions` | 同上，OpenAI 格式，支持 `stream` |
+| POST | `/beta/completions` | DeepSeek FIM beta 透传（`model`/`prompt`/`suffix`/`max_tokens`/`stream`），Bearer 同上；只转发给一个 `vendor=deepseek` 上游，不故障转移 |
+| POST | `/beta/chat/completions` | DeepSeek Chat Prefix beta 透传，最后一条 `assistant` 消息要带 `prefix: true`；Bearer 同上 |
 | GET | `/metrics` | 最小监控指标（Prometheus 文本格式）。需 `DSH_EE_METRICS=true`，且只允许本机 / 内网来源抓取；含嵌入指标 `dsh_ee_embed_sessions_active` / `dsh_ee_embed_denied_total` |
 
-协议面（`/v1/*` 与 `/mcp`）的限流与 `X-Request-Id` 见上面「能力中心与 DSH 接入」；成功和 429 响应都带 `X-RateLimit-*`，429 另带 `Retry-After`。
+协议面（`/v1/*`、`/beta/*` 与 `/mcp`）的限流与 `X-Request-Id` 见上面「能力中心与 DSH 接入」；成功和 429 响应都带 `X-RateLimit-*`，429 另带 `Retry-After`。
 
 ### 走一遍
 
@@ -293,7 +296,7 @@ curl localhost:8080/v1/chat/completions -H 'Authorization: Bearer sk-ee-…' -H 
 - 额度按 UTC 自然月重置，检查在请求前做，单次请求可能略微超出额度。
 - 登录限流在进程内存里，多实例部署时需改为共享存储。登录失败先按用户名锁（15 分钟 5 次），再按客户端 IP 固定窗口限流（默认 15 分钟 50 次，只统计用户名或密码错误），两者都在单实例内存里。
 - 按 IP 限流默认值取得比较宽，避免公司多人共用一个出口 IP 时把整个出口封死；如果出口 IP 背后人数很多，可以调大 `DSH_EE_LOGIN_IP_LIMIT`，或设成 `0` / `off` 关闭。`/metrics` 的登录计数也是进程内累计，重启清零、多实例各自独立。嵌入的 `dsh_ee_embed_denied_total` 同样是进程内计数；`dsh_ee_embed_sessions_active` 是数据库里的全库活跃会话数，多实例抓取到的是同一个值（Prometheus 用 `max()` 而不是 `sum()`），数据库不可用时这一行省略。
-- `/v1/*` 与 `/mcp` 的每令牌限流同样在进程内存里，多实例部署时按实例各自计数；需要全局一致限流时得改用共享存储。
+- `/v1/*`、`/beta/*` 与 `/mcp` 的每令牌限流同样在进程内存里，多实例部署时按实例各自计数；需要全局一致限流时得改用共享存储。
 - 管理操作（建用户、分配额度、代发 / 吊销 key）尚未写审计日志；网关调用已逐条记录在 `usage_logs`。
 - 只支持本地账号；LDAP / OIDC 后续加。
 - 多实例部署：一次性状态（web link handoff、开始使用接入码、OIDC state/PKCE）已放共享表 `ephemeral_states`，A 实例生成、B 实例可用；但登录限流、上游 packument 的内存缓存、预载任务、后台任务与进程内锁仍在单个进程里，多个实例同时第一次启动时数据库迁移会互相冲突（先起一个再扩容）。tarball 存在本地磁盘，多实例需要共享存储（NFS 等）或以后改成对象存储。
