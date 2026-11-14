@@ -147,7 +147,7 @@
 | 500 `provider_misconfigured` | 上游 key 解密失败（主密钥换过/数据损坏） | 重新录入上游 key（主密钥不能随便换） |
 | DSH 里显示 `dshee_login_required` 等 | 接入插件收到 400 映射文案 | 按文案：重新 `/ee-login`、找管理员开权限/额度 |
 
-注意：`/v1` 是 OpenAI chat-completions 子集，**不是** Claude Code（Anthropic Messages）或 Codex（Responses）可直接用的模型后端；也没有 `/v1/embeddings`、`/v1/responses`。
+注意：`/v1/chat/completions` 是 OpenAI chat-completions 子集；Claude Code / Anthropic SDK 走 **Anthropic Messages 兼容端点** `POST /v1/messages`（用同一个企业令牌，模型名填 `/v1/models` 的对外名，见 [dev/anthropic-api.md](./dev/anthropic-api.md)）。Codex（Responses）、`/v1/embeddings`、`/v1/responses` 仍没有。
 
 ### 4.2 `/mcp`
 

@@ -124,6 +124,157 @@ type tokenUsage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+// llmErrWriter 写一条模型网关错误。同一套校验/故障转移逻辑供 OpenAI 与 Anthropic
+// 两个端点复用，差别只在错误壳与状态码文案，由各端点传入自己的写法。
+type llmErrWriter func(status int, typ, code, msg string)
+
+// openaiErrorWriter 是 OpenAI 兼容网关错误的写法：普通客户端拿 OpenAI 壳，
+// DSH 接入插件额外映射成 400 的可展示文案（见 writeGatewayError）。
+func (s *Server) openaiErrorWriter(w http.ResponseWriter, r *http.Request) llmErrWriter {
+	return func(status int, typ, code, msg string) { writeGatewayError(w, r, status, typ, code, msg) }
+}
+
+// openaiUpstreamErrorWriter 是故障转移过程里的上游错误写法：保持 OpenAI 壳，
+// 不做 DSH 文案映射（与抽出公共逻辑前的行为一致）。
+func (s *Server) openaiUpstreamErrorWriter(w http.ResponseWriter) llmErrWriter {
+	return func(status int, typ, code, msg string) { writeOpenAIErr(w, status, typ, code, msg) }
+}
+
+// checkLLMQuota 校验账号与令牌的月度额度。生成参数（max_tokens / n）的校验在调用前
+// 由各端点自己完成：OpenAI 网关用 completionLimitError，Anthropic 端点在转换请求时校验。
+func (s *Server) checkLLMQuota(w http.ResponseWriter, r *http.Request, k *Principal, quota *store.UserQuota, writeErr llmErrWriter) bool {
+	if quota.MonthlyTokenLimit != nil {
+		used, err := s.store.MonthTokensByUser(r.Context(), k.User.ID)
+		if err != nil {
+			s.log.Error("month tokens", "user", k.User.ID, "err", err)
+			writeErr(http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
+			return false
+		}
+		if used >= *quota.MonthlyTokenLimit {
+			msg := "本月 token 额度已用完，请联系管理员"
+			if *quota.MonthlyTokenLimit == 0 {
+				msg = "管理员还没有给你分配额度，请联系管理员"
+			}
+			writeErr(http.StatusTooManyRequests, "insufficient_quota", "monthly_quota_exceeded", msg)
+			return false
+		}
+	}
+	if k.Limit != nil {
+		used, err := s.store.TokenMonthUsage(r.Context(), k.TokenID)
+		if err != nil {
+			s.log.Error("token month tokens", "token", k.TokenID, "err", err)
+			writeErr(http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
+			return false
+		}
+		if used >= *k.Limit {
+			writeErr(http.StatusTooManyRequests, "insufficient_quota", "monthly_quota_exceeded", "本月 token 额度已用完（此令牌），请联系管理员")
+			return false
+		}
+	}
+	return true
+}
+
+// loadModelCandidates 读对外模型的候选线路；出错或没有线路时已经按 writeErr 写好响应。
+func (s *Server) loadModelCandidates(w http.ResponseWriter, r *http.Request, model string, writeErr llmErrWriter) ([]store.Candidate, bool) {
+	cands, err := s.store.ModelCandidates(r.Context(), model)
+	if err != nil {
+		s.log.Error("model candidates", "err", err)
+		writeErr(http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
+		return nil, false
+	}
+	if len(cands) == 0 {
+		writeErr(http.StatusNotFound, "invalid_request_error", "model_not_found", "没有可用的上游提供模型 "+model)
+		return nil, false
+	}
+	return cands, true
+}
+
+// openChatUpstream 按模型候选列表依次尝试上游，返回可用的上游响应和实际使用的 provider。
+// body 会按候选改写 model 字段；一旦开始向客户端写响应就不再切换。失败时它已经用 writeErr
+// 写好响应并返回 ok=false，调用方只需关闭 resp.Body 并继续转发/转换。
+func (s *Server) openChatUpstream(w http.ResponseWriter, r *http.Request, k *Principal, model string, body map[string]any, stream bool, start time.Time, writeErr llmErrWriter) (*http.Response, *store.Provider, bool) {
+	cands, ok := s.loadModelCandidates(w, r, model, writeErr)
+	if !ok {
+		return nil, nil, false
+	}
+	return s.openChatUpstreamCandidates(w, r, k, model, body, stream, start, cands, writeErr)
+}
+
+// openChatUpstreamCandidates 是 openChatUpstream 的候选线路版本，供已经取过候选列表的调用方
+// （Anthropic 端点要先按 vendor 决定原生透传还是降级转换）复用，避免重复查库。
+func (s *Server) openChatUpstreamCandidates(w http.ResponseWriter, r *http.Request, k *Principal, model string, body map[string]any, stream bool, start time.Time, cands []store.Candidate, writeErr llmErrWriter) (*http.Response, *store.Provider, bool) {
+	// 按优先级逐个尝试：连不上、429、5xx 时换下一条线路；一旦开始给客户端写响应就不再切换。
+	var resp *http.Response
+	var p *store.Provider
+	for i, c := range cands {
+		last := i == len(cands)-1
+		p = c.Provider
+		cooldownKey := providerCooldownKey{providerID: p.ID, model: c.UpstreamModel}
+		cooldown := s.providerCD.snapshot(cooldownKey, time.Now())
+		// 冷却中的线路直接跳过，免得冷却期内每个请求都先撞一次 429/超时；
+		// 全部冷却时仍会尝试最后一条兜底，不会因为冷却而直接失败。
+		if !last && cooldown.cooling() {
+			continue
+		}
+		upstreamKey, err := s.box.Open(p.APIKeyEnc)
+		if err != nil {
+			s.log.Error("decrypt provider key", "provider", p.Name, "err", err)
+			if last {
+				writeErr(http.StatusInternalServerError, "server_error", "provider_misconfigured", "上游配置有误，请联系管理员")
+				return nil, nil, false
+			}
+			continue
+		}
+		body["model"] = c.UpstreamModel
+		out, err := json.Marshal(body)
+		if err != nil {
+			writeErr(http.StatusBadRequest, "invalid_request_error", "invalid_json", "请求体无法转发")
+			return nil, nil, false
+		}
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, p.BaseURL+"/chat/completions", bytes.NewReader(out))
+		if err != nil {
+			s.log.Error("build upstream request", "err", err)
+			writeErr(http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
+			return nil, nil, false
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+string(upstreamKey))
+		if stream {
+			req.Header.Set("Accept", "text/event-stream")
+		}
+		resp, err = s.upstream.Do(req)
+		if err != nil {
+			if r.Context().Err() == nil {
+				s.providerCD.mark(providerCooldownKey{providerID: p.ID}, providerCooldownDefault, time.Now())
+			}
+			s.log.Warn("upstream request failed", "provider", p.Name, "err", err)
+			s.recordUsage(r.Context(), k, p, model, tokenUsage{}, http.StatusBadGateway, start)
+			if r.Context().Err() != nil {
+				return nil, nil, false // 客户端已断开
+			}
+			if last {
+				writeErr(http.StatusBadGateway, "server_error", "upstream_unreachable", "上游服务不可达")
+				return nil, nil, false
+			}
+			continue
+		}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			s.providerCD.mark(cooldownKey, cooldownFor(resp.Header.Get("Retry-After")), time.Now())
+			if !last {
+				s.log.Warn("upstream failover", "provider", p.Name, "status", resp.StatusCode)
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+				resp.Body.Close()
+				s.recordUsage(r.Context(), k, p, model, tokenUsage{}, resp.StatusCode, start)
+				continue
+			}
+		} else if resp.StatusCode < http.StatusBadRequest {
+			s.providerCD.clear(cooldownKey, cooldown)
+		}
+		break
+	}
+	return resp, p, true
+}
+
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	k, quota, ok := s.authKey(w, r)
@@ -157,43 +308,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, r, http.StatusBadRequest, "invalid_request_error", code, msg)
 		return
 	}
-	if quota.MonthlyTokenLimit != nil {
-		used, err := s.store.MonthTokensByUser(r.Context(), k.User.ID)
-		if err != nil {
-			s.log.Error("month tokens", "user", k.User.ID, "err", err)
-			writeOpenAIErr(w, http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
-			return
-		}
-		if used >= *quota.MonthlyTokenLimit {
-			msg := "本月 token 额度已用完，请联系管理员"
-			if *quota.MonthlyTokenLimit == 0 {
-				msg = "管理员还没有给你分配额度，请联系管理员"
-			}
-			writeGatewayError(w, r, http.StatusTooManyRequests, "insufficient_quota", "monthly_quota_exceeded", msg)
-			return
-		}
-	}
-	if k.Limit != nil {
-		used, err := s.store.TokenMonthUsage(r.Context(), k.TokenID)
-		if err != nil {
-			s.log.Error("token month tokens", "token", k.TokenID, "err", err)
-			writeOpenAIErr(w, http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
-			return
-		}
-		if used >= *k.Limit {
-			writeGatewayError(w, r, http.StatusTooManyRequests, "insufficient_quota", "monthly_quota_exceeded", "本月 token 额度已用完（此令牌），请联系管理员")
-			return
-		}
-	}
-
-	cands, err := s.store.ModelCandidates(r.Context(), model)
-	if err != nil {
-		s.log.Error("model candidates", "err", err)
-		writeOpenAIErr(w, http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
-		return
-	}
-	if len(cands) == 0 {
-		writeOpenAIErr(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "没有可用的上游提供模型 "+model)
+	if !s.checkLLMQuota(w, r, k, quota, s.openaiErrorWriter(w, r)) {
 		return
 	}
 
@@ -208,74 +323,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		body["stream_options"] = opts
 	}
 
-	// 按优先级逐个尝试：连不上、429、5xx 时换下一条线路；一旦开始给客户端写响应就不再切换。
-	var resp *http.Response
-	var p *store.Provider
-	for i, c := range cands {
-		last := i == len(cands)-1
-		p = c.Provider
-		cooldownKey := providerCooldownKey{providerID: p.ID, model: c.UpstreamModel}
-		cooldown := s.providerCD.snapshot(cooldownKey, time.Now())
-		// 冷却中的线路直接跳过，免得冷却期内每个请求都先撞一次 429/超时；
-		// 全部冷却时仍会尝试最后一条兜底，不会因为冷却而直接失败。
-		if !last && cooldown.cooling() {
-			continue
-		}
-		upstreamKey, err := s.box.Open(p.APIKeyEnc)
-		if err != nil {
-			s.log.Error("decrypt provider key", "provider", p.Name, "err", err)
-			if last {
-				writeOpenAIErr(w, http.StatusInternalServerError, "server_error", "provider_misconfigured", "上游配置有误，请联系管理员")
-				return
-			}
-			continue
-		}
-		body["model"] = c.UpstreamModel
-		out, err := json.Marshal(body)
-		if err != nil {
-			writeOpenAIErr(w, http.StatusBadRequest, "invalid_request_error", "invalid_json", "请求体无法转发")
-			return
-		}
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, p.BaseURL+"/chat/completions", bytes.NewReader(out))
-		if err != nil {
-			s.log.Error("build upstream request", "err", err)
-			writeOpenAIErr(w, http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+string(upstreamKey))
-		if stream {
-			req.Header.Set("Accept", "text/event-stream")
-		}
-		resp, err = s.upstream.Do(req)
-		if err != nil {
-			if r.Context().Err() == nil {
-				s.providerCD.mark(providerCooldownKey{providerID: p.ID}, providerCooldownDefault, time.Now())
-			}
-			s.log.Warn("upstream request failed", "provider", p.Name, "err", err)
-			s.recordUsage(r.Context(), k, p, model, tokenUsage{}, http.StatusBadGateway, start)
-			if r.Context().Err() != nil {
-				return // 客户端已断开
-			}
-			if last {
-				writeOpenAIErr(w, http.StatusBadGateway, "server_error", "upstream_unreachable", "上游服务不可达")
-				return
-			}
-			continue
-		}
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-			s.providerCD.mark(cooldownKey, cooldownFor(resp.Header.Get("Retry-After")), time.Now())
-			if !last {
-				s.log.Warn("upstream failover", "provider", p.Name, "status", resp.StatusCode)
-				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-				resp.Body.Close()
-				s.recordUsage(r.Context(), k, p, model, tokenUsage{}, resp.StatusCode, start)
-				continue
-			}
-		} else if resp.StatusCode < http.StatusBadRequest {
-			s.providerCD.clear(cooldownKey, cooldown)
-		}
-		break
+	// 复用与 Anthropic 端点相同的候选选择、故障转移与冷却逻辑。
+	resp, p, ok := s.openChatUpstream(w, r, k, model, body, stream, start, s.openaiUpstreamErrorWriter(w))
+	if !ok {
+		return
 	}
 	defer resp.Body.Close()
 

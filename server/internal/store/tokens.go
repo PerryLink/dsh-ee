@@ -26,16 +26,18 @@ func NormalizeClientKind(kind string) string {
 }
 
 type AccessToken struct {
-	ID                int64      `json:"id"`
-	UserID            int64      `json:"user_id"`
-	Username          string     `json:"username"`
-	Department        string     `json:"department"`
-	AccountType       string     `json:"account_type"`
-	Name              string     `json:"name"`
-	Prefix            string     `json:"prefix"`
-	TokenHash         string     `json:"-"`
-	Source            string     `json:"source"`
-	ClientKind        string     `json:"client_kind"`
+	ID          int64  `json:"id"`
+	UserID      int64  `json:"user_id"`
+	Username    string `json:"username"`
+	Department  string `json:"department"`
+	AccountType string `json:"account_type"`
+	Name        string `json:"name"`
+	Prefix      string `json:"prefix"`
+	TokenHash   string `json:"-"`
+	Source      string `json:"source"`
+	ClientKind  string `json:"client_kind"`
+	// 令牌族（refresh 轮换出来的代际共用）；未开启 refresh 的令牌为 nil
+	FamilyID          *string    `json:"-"`
 	Scopes            []string   `json:"scopes"`
 	MonthlyTokenLimit *int64     `json:"monthly_token_limit"`
 	AllowedModels     []string   `json:"allowed_models"`
@@ -54,7 +56,7 @@ type AccessToken struct {
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
-const accessTokenColumns = `t.id, t.user_id, t.name, t.prefix, t.token_hash, t.source, t.client_kind, t.scopes, t.monthly_token_limit,
+const accessTokenColumns = `t.id, t.user_id, t.name, t.prefix, t.token_hash, t.source, t.client_kind, t.family_id, t.scopes, t.monthly_token_limit,
 	t.allowed_models, t.expires_at, t.sliding_days, t.admin_until, t.client_name, t.client_os, t.client_version,
 	t.last_used_at, t.last_client, t.last_host, t.last_ip, t.revoked_at, t.created_by, t.created_at`
 
@@ -62,10 +64,11 @@ func scanAccessToken(row interface{ Scan(...any) error }, joined ...any) (*Acces
 	var t AccessToken
 	var limit sql.NullInt64
 	var models, scopes sql.NullString
+	var family sql.NullString
 	var expires, adminUntil, used, revoked sql.NullTime
 	var sliding sql.NullInt32
 	err := row.Scan(append([]any{
-		&t.ID, &t.UserID, &t.Name, &t.Prefix, &t.TokenHash, &t.Source, &t.ClientKind, &scopes, &limit,
+		&t.ID, &t.UserID, &t.Name, &t.Prefix, &t.TokenHash, &t.Source, &t.ClientKind, &family, &scopes, &limit,
 		&models, &expires, &sliding, &adminUntil, &t.ClientName, &t.ClientOS, &t.ClientVersion,
 		&used, &t.LastClient, &t.LastHost, &t.LastIP, &revoked, &t.CreatedBy, &t.CreatedAt,
 	}, joined...)...)
@@ -77,6 +80,9 @@ func scanAccessToken(row interface{ Scan(...any) error }, joined ...any) (*Acces
 	}
 	// 旧数据/旧迁移里没有 kind：按 DSH 兼容处理
 	t.ClientKind = NormalizeClientKind(t.ClientKind)
+	if family.Valid && family.String != "" {
+		t.FamilyID = &family.String
+	}
 	if len(joined) == 3 {
 		t.Username = *joined[0].(*string)
 		t.Department = *joined[1].(*string)
@@ -125,11 +131,11 @@ func createAccessToken(ctx context.Context, db execContext, t *AccessToken, hash
 	t.TokenHash = hash
 	t.ClientKind = NormalizeClientKind(t.ClientKind)
 	t.CreatedAt = now()
-	res, err := db.ExecContext(ctx, `INSERT INTO access_tokens (user_id, name, prefix, token_hash, source, client_kind, scopes, monthly_token_limit,
+	res, err := db.ExecContext(ctx, `INSERT INTO access_tokens (user_id, name, prefix, token_hash, source, client_kind, family_id, scopes, monthly_token_limit,
 		allowed_models, expires_at, sliding_days, admin_until, client_name, client_os, client_version,
 		last_used_at, last_ip, revoked_at, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.UserID, t.Name, t.Prefix, hash, t.Source, t.ClientKind, strings.Join(t.Scopes, ","), t.MonthlyTokenLimit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.UserID, t.Name, t.Prefix, hash, t.Source, t.ClientKind, t.FamilyID, strings.Join(t.Scopes, ","), t.MonthlyTokenLimit,
 		models, t.ExpiresAt, t.SlidingDays, t.AdminUntil, t.ClientName, t.ClientOS, t.ClientVersion,
 		t.LastUsedAt, t.LastIP, t.RevokedAt, t.CreatedBy, t.CreatedAt)
 	if err != nil {
@@ -271,15 +277,36 @@ func scanAccessTokens(rows *sql.Rows) ([]*AccessToken, error) {
 	return out, rows.Err()
 }
 
+// RevokeToken 吊销一枚 access token。带令牌族（refresh 开启时签发）的令牌会连带吊销
+// 整族的 refresh token 与其它代际 access token，避免「吊销了 access 还能用 refresh 续期」。
 func (s *Store) RevokeToken(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, "UPDATE access_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", now(), id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var family sql.NullString
+	err = tx.QueryRowContext(ctx, "SELECT family_id FROM access_tokens WHERE id = ? FOR UPDATE", id).Scan(&family)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	t := now()
+	res, err := tx.ExecContext(ctx, "UPDATE access_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", t, id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if family.Valid && family.String != "" {
+		if _, _, err := revokeRefreshFamilyTx(ctx, tx, family.String, t); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 type TokenRevokeFilter struct {
@@ -295,9 +322,11 @@ func (f TokenRevokeFilter) Empty() bool {
 	return f.UserID == nil && f.ClientName == nil && f.Department == nil
 }
 
-func (s *Store) RevokeTokensBy(ctx context.Context, f TokenRevokeFilter) (int64, error) {
-	q := "UPDATE access_tokens t JOIN users u ON u.id = t.user_id SET t.revoked_at = ? WHERE t.revoked_at IS NULL"
-	args := []any{now()}
+// tokenRevokeConditions 把 TokenRevokeFilter 拼成 WHERE 片段（每段都以 AND 开头），
+// 批量吊销与「先查出要波及的令牌族」共用，避免两处条件漂移。
+func tokenRevokeConditions(f TokenRevokeFilter) (string, []any) {
+	var q string
+	var args []any
 	if f.UserID != nil {
 		q += " AND t.user_id = ?"
 		args = append(args, *f.UserID)
@@ -314,14 +343,64 @@ func (s *Store) RevokeTokensBy(ctx context.Context, f TokenRevokeFilter) (int64,
 		q += " AND u.account_type = ?"
 		args = append(args, AccountBot)
 	}
+	return q, args
+}
+
+func (s *Store) RevokeTokensBy(ctx context.Context, f TokenRevokeFilter) (int64, error) {
 	if f.Empty() {
 		return 0, errors.New("吊销令牌必须带筛选条件")
+	}
+	where, filterArgs := tokenRevokeConditions(f)
+	q := "UPDATE access_tokens t JOIN users u ON u.id = t.user_id SET t.revoked_at = ? WHERE t.revoked_at IS NULL" + where
+	args := append([]any{now()}, filterArgs...)
+	// 先记下这次会波及的令牌族：批量吊销后整族的 refresh token 也要一起作废。
+	families, err := s.tokenFamiliesBy(ctx, f)
+	if err != nil {
+		return 0, err
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return 0, err
 	}
+	if len(families) > 0 {
+		t := now()
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(families)), ",")
+		familyArgs := make([]any, 0, len(families)+2)
+		familyArgs = append(familyArgs, t)
+		for _, family := range families {
+			familyArgs = append(familyArgs, family)
+		}
+		// 族里的其它代际 access token 与全部 refresh token 一起吊销
+		if _, err := s.db.ExecContext(ctx,
+			"UPDATE access_tokens SET revoked_at = ? WHERE revoked_at IS NULL AND family_id IN ("+placeholders+")", familyArgs...); err != nil {
+			return 0, err
+		}
+		if _, err := s.db.ExecContext(ctx,
+			"UPDATE token_refresh_tokens SET revoked_at = ? WHERE revoked_at IS NULL AND family_id IN ("+placeholders+")", familyArgs...); err != nil {
+			return 0, err
+		}
+	}
 	return res.RowsAffected()
+}
+
+// tokenFamiliesBy 返回符合吊销条件的令牌当前所属的族 id（去重）。
+func (s *Store) tokenFamiliesBy(ctx context.Context, f TokenRevokeFilter) ([]string, error) {
+	where, args := tokenRevokeConditions(f)
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT DISTINCT t.family_id FROM access_tokens t JOIN users u ON u.id = t.user_id WHERE t.family_id IS NOT NULL"+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var family string
+		if err := rows.Scan(&family); err != nil {
+			return nil, err
+		}
+		out = append(out, family)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) TokenMonthUsage(ctx context.Context, id int64) (int64, error) {
@@ -404,24 +483,8 @@ func (s *Store) CountTokensBy(ctx context.Context, f TokenRevokeFilter) (int64, 
 		return 0, errors.New("必须带筛选条件")
 	}
 	q := "SELECT COUNT(*) FROM access_tokens t JOIN users u ON u.id = t.user_id WHERE t.revoked_at IS NULL"
-	var args []any
-	if f.UserID != nil {
-		q += " AND t.user_id = ?"
-		args = append(args, *f.UserID)
-	}
-	if f.ClientName != nil {
-		q += " AND t.client_name = ?"
-		args = append(args, *f.ClientName)
-	}
-	if f.Department != nil {
-		q += " AND u.department = ?"
-		args = append(args, *f.Department)
-	}
-	if f.BotOnly {
-		q += " AND u.account_type = ?"
-		args = append(args, AccountBot)
-	}
+	where, args := tokenRevokeConditions(f)
 	var n int64
-	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
+	err := s.db.QueryRowContext(ctx, q+where, args...).Scan(&n)
 	return n, err
 }

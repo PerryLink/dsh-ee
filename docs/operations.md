@@ -109,6 +109,8 @@ go run ./cmd/seed                  # 可选：演示数据（角色、员工、�
 | `DSH_EE_DATA_READ_DSN` | 自动创建只读账号 | 否 | 数据中台只读账号；账号没权限建用户时由 DBA 提供 |
 | `DSH_EE_ADMIN_MODE_UNIT` | `1h` | 否 | **只给自动化测试**调整「管理模式 1/8 小时」里「1 小时」的长度，生产不要设 |
 | `DSH_EE_DEMO_MODE` 等 `DSH_EE_DEMO_*` | 关闭 | 否 | 仅公开演示站使用（登录页显示初始账号、限制访问本机等）；`server/internal/config/config.go` 有完整列表 |
+| `DSH_EE_CSP` | `off` | 否 | 内容安全策略：`off` / `report` / `enforce`。默认只加现有的 `frame-ancestors` 嵌入收口；`report` 用 `Content-Security-Policy-Report-Only` 只报告，`enforce` 用 `Content-Security-Policy` 阻断。非法值启动失败。见 §10.1 |
+| `DSH_EE_CSP_REPORT_URI` | 空 | 否 | CSP 违规报告地址（`http(s)://…`，可选）。`DSH_EE_CSP` 不是 `off` 时写进策略的 `report-uri`；非法地址启动失败 |
 
 说明：
 
@@ -297,6 +299,31 @@ cp /path/to/当前目录/.env .
   密码：  …
 用它登录网页，把管理角色重新分好后就不要再用。
 ```
+
+### 10.1 内容安全策略（CSP）
+
+默认 `DSH_EE_CSP=off`：HTML 出口只加「微应用嵌入」那套 `frame-ancestors` 收口，行为与之前完全一致。设为 `report` / `enforce` 后会在这之上再给 HTML 加一份完整策略；`frame-ancestors` 与嵌入配置**合并**，不会因为开 CSP 把嵌入收口覆盖掉。
+
+| `DSH_EE_CSP` | 响应头 | 效果 |
+|---|---|---|
+| `off`（默认） | `Content-Security-Policy: frame-ancestors …` | 不启用完整策略 |
+| `report` | `Content-Security-Policy-Report-Only: <完整策略>` + 仍带 `Content-Security-Policy: frame-ancestors …` | 不阻断页面；浏览器控制台与 `report-uri` 收集违规。嵌入边界仍强制执行 |
+| `enforce` | `Content-Security-Policy: <完整策略，含合并后的 frame-ancestors>` | 阻断违规请求 |
+
+完整策略（两种模式相同）：
+
+```text
+default-src 'self'; script-src 'self' 'sha256-<index.html 内联脚本哈希>'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self';
+frame-ancestors 'self' <仅 /a/*：DSH_EE_EMBED_ORIGINS 与设置里追加的来源>
+```
+
+- `script-src` 的哈希在启动时从**实际嵌入、实际下发的那份** `index.html` 计算（首屏主题脚本），构建产物变了哈希跟着变，不需要手工维护；不会用 `'unsafe-inline'` 兜底。没有嵌入前端（HTML 不由本进程提供）时 `script-src` 只有 `'self'`。
+- `DSH_EE_CSP_REPORT_URI`（可选）：写进策略的 `report-uri`，浏览器把违规 POST 过去（`Content-Type: application/csp-report`）。dsh-ee 不自带收集端点，用现有日志/网关或反向代理接；建议 `report` 模式先配它。
+- 只作用于本进程下发的 `text/html`：JSON、静态资源、3xx 重定向、SSE 流不受影响。前端单独部署（HTML 由 nginx 等提供）时，本进程不会给那些 HTML 加 CSP，要在实际提供 HTML 的那层配置。
+- 上线顺序：`off` → `report` 观察 1–2 周（看浏览器控制台或报告端点）→ `enforce`。切换需要重启；回滚把变量改回 `off` 重启即可。
+- 已知边界（`enforce` 下按当前策略可能被拦，先看 `report` 再决定是否放开）：品牌设置里本地图片裁剪用 `blob:` URL 预览，而 `img-src` 不含 `blob:`；外部字体/CDN 不在 `font-src` / `connect-src` 放行之列；内联事件属性与 `javascript:` URL 不能靠哈希放行（当前前端没有）。
+- 反代不要再写第二份 `Content-Security-Policy`（多份会按交集执行，可能让这里的配置静默失效）；也不要加 `X-Frame-Options`。验收：`curl -sI https://ee.example.com/login | grep -i 'content-security-policy'`，`report` 模式下同时能看到 `content-security-policy-report-only`。
 
 ## 11. 常见运维任务速查
 

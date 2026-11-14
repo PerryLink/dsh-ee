@@ -6,12 +6,111 @@ import (
 	"strings"
 )
 
+// cspFrameAncestorsSelf 是默认（CSP 关闭时）的 Content-Security-Policy：只保留 #118 合入的
+// frame-ancestors 收口，与之前完全一致。
+const cspFrameAncestorsSelf = "frame-ancestors 'self'"
+
+// cspPolicyTemplate 是可配置 CSP 的固定指令；%s 处填入 index.html 内联脚本的 sha256 源。
+// frame-ancestors 不写死在这里：它要和嵌入配置合并，见 cspPolicy。
+const cspPolicyTemplate = "default-src 'self'; script-src 'self'%s; " +
+	"style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; " +
+	"connect-src 'self'; base-uri 'self'; form-action 'self'"
+
+// cspMode 归一化 Options.CSP：只认 off / report / enforce（大小写、空白不敏感），
+// 其它值按 off 处理。config 层已经 fail closed，这里只是防御内部调用方写错。
+func cspMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "report":
+		return "report"
+	case "enforce":
+		return "enforce"
+	default:
+		return "off"
+	}
+}
+
+// cspPolicy 生成完整的策略字符串：固定指令 + 内联脚本哈希 + 合并进来的 frame-ancestors
+// + 可选的 report-uri。frame-ancestors 只追加，不覆盖嵌入配置。
+func cspPolicy(hashes []string, frameAncestors, reportURI string) string {
+	policy := strings.Replace(cspPolicyTemplate, "%s", cspScriptSources(hashes), 1)
+	policy += "; " + frameAncestors
+	if directive := cspReportURI(reportURI); directive != "" {
+		policy += "; " + directive
+	}
+	return policy
+}
+
+// cspScriptSources 把 sha256 源列表拼成 " 'sha256-…' 'sha256-…'"；空列表只留 'self'。
+func cspScriptSources(hashes []string) string {
+	var b strings.Builder
+	for _, h := range hashes {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		b.WriteString(" '")
+		b.WriteString(h)
+		b.WriteString("'")
+	}
+	return b.String()
+}
+
+// cspReportURI 生成 report-uri 指令；地址里出现空白、控制字符或指令分隔符时直接丢弃：
+// 这个值直接拼进响应头，不能让它破坏策略或造成头注入（config 层已 fail closed，这里兜底）。
+func cspReportURI(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	for _, r := range raw {
+		if r < 0x21 || r == 0x7f || strings.ContainsRune(";,\"'<>", r) {
+			return ""
+		}
+	}
+	return "report-uri " + raw
+}
+
+// cspFor 算出这次请求要加的两个 CSP 头。
+//
+//   - off（默认）：只把现有的 frame-ancestors 收口放进 Content-Security-Policy，行为不变。
+//   - report：Content-Security-Policy 仍然保留 frame-ancestors（嵌入收口是强制的，不能因为
+//     开报告模式就失效）；完整策略放进 Content-Security-Policy-Report-Only，只报告不阻断。
+//   - enforce：完整策略（含合并后的 frame-ancestors）放进 Content-Security-Policy。
+func (s *Server) cspFor(r *http.Request) cspHeaders {
+	frameAncestors := s.frameAncestors(r)
+	switch cspMode(s.opts.CSP) {
+	case "report":
+		return cspHeaders{
+			enforce:    frameAncestors,
+			reportOnly: cspPolicy(s.opts.CSPInlineScriptHashes, frameAncestors, s.opts.CSPReportURI),
+		}
+	case "enforce":
+		return cspHeaders{enforce: cspPolicy(s.opts.CSPInlineScriptHashes, frameAncestors, s.opts.CSPReportURI)}
+	default:
+		return cspHeaders{enforce: frameAncestors}
+	}
+}
+
+// frameAncestors 决定哪些页面可以用 iframe 嵌入 dsh-ee 的网页。只有微应用网页版
+// （/a/<标识>）放行有效配置里的宿主 origin；其它页面（尤其是 /admin 管理页）一律 'self'，
+// 免得把管理后台也框进配置过的宿主里。
+func (s *Server) frameAncestors(r *http.Request) string {
+	csp := cspFrameAncestorsSelf
+	if isEmbedPage(r.URL.Path) {
+		if cfg, err := s.embedConfig(r.Context()); err == nil {
+			for _, origin := range cfg.origins {
+				csp += " " + origin
+			}
+		}
+	}
+	return csp
+}
+
 // securityHeaders 给 HTML 文档加安全头。
 //
-// CSP 的 frame-ancestors 决定哪些页面可以用 iframe 嵌入 dsh-ee 的网页。只有微应用网页版
-// （/a/<标识>）放行有效配置里的宿主 origin；其它页面（尤其是 /admin 管理页）一律 'self'，
-// 免得把管理后台也框进配置过的宿主里。其余三个头是通用的低风险加固。
-// 只加在 HTML 出口上：静态资源、JSON、3xx 重定向、SSE 流都不受影响。
+// CSP 的 frame-ancestors 决定哪些页面可以用 iframe 嵌入 dsh-ee 的网页（#118）；在其之上，
+// DSH_EE_CSP=report|enforce 会再给 HTML 加一份完整的内容安全策略（默认 off，不改变现有行为）。
+// 其余三个头是通用的低风险加固。只加在 HTML 出口上：静态资源、JSON、3xx 重定向、SSE 流都不受影响。
 //
 // 不设 X-Frame-Options：ALLOW-FROM 已被废弃，现代浏览器看 frame-ancestors；两边各写一份
 // （反代一份、Go 一份）反而容易出现「改了其中一边以为放行了」的歧义，CSP 是唯一事实源。
@@ -19,15 +118,7 @@ import (
 // 来源每请求从「env ∪ settings.embed」解析（appSettings 有 5 秒缓存），管理端保存后立即生效。
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		csp := "frame-ancestors 'self'"
-		if isEmbedPage(r.URL.Path) {
-			if cfg, err := s.embedConfig(r.Context()); err == nil {
-				for _, origin := range cfg.origins {
-					csp += " " + origin
-				}
-			}
-		}
-		next.ServeHTTP(&securityHeadersWriter{ResponseWriter: w, csp: csp}, r)
+		next.ServeHTTP(&securityHeadersWriter{ResponseWriter: w, csp: s.cspFor(r)}, r)
 	})
 }
 
@@ -37,12 +128,20 @@ func isEmbedPage(path string) bool {
 	return strings.HasPrefix(path, "/a/")
 }
 
+// cspHeaders 是这次请求要写的 CSP 头；空字符串表示不加对应的头。
+type cspHeaders struct {
+	// enforce 写 Content-Security-Policy（会执行）。
+	enforce string
+	// reportOnly 写 Content-Security-Policy-Report-Only（只报告）。
+	reportOnly string
+}
+
 // securityHeadersWriter 在第一次写响应前检查 Content-Type，只给 HTML 加头。
 // 响应头必须先于 WriteHeader 落到 header map 里，所以 WriteHeader 和 Write 两个入口都要判断
 // （handler 不调 WriteHeader 时由第一次 Write 隐式写 200）。
 type securityHeadersWriter struct {
 	http.ResponseWriter
-	csp   string
+	csp   cspHeaders
 	wrote bool
 }
 
@@ -79,7 +178,12 @@ func (w *securityHeadersWriter) setSecurityHeaders() {
 		return
 	}
 	h := w.Header()
-	h.Set("Content-Security-Policy", w.csp)
+	if w.csp.enforce != "" {
+		h.Set("Content-Security-Policy", w.csp.enforce)
+	}
+	if w.csp.reportOnly != "" {
+		h.Set("Content-Security-Policy-Report-Only", w.csp.reportOnly)
+	}
 	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")

@@ -32,6 +32,7 @@ lang: zh-CN
 |---|---|---|
 | [overview.md](./overview.md) | 开始 | 三条开发路径的入口与阅读顺序 |
 | [harness-quickstart.md](./harness-quickstart.md) | Harness 接入 | 一个 `ee_at_` 令牌接 `/v1`、`/mcp` 与写确认 |
+| [anthropic-api.md](./anthropic-api.md) | Harness 接入 | Claude Code / Anthropic SDK 调 `POST /v1/messages`：鉴权、转换、流式与错误壳 |
 | [plugin-quickstart.md](./plugin-quickstart.md) | DSH 插件 | 插件骨架、清单、自查与发布入口 |
 | [extension-quickstart.md](./extension-quickstart.md) | dsh-ee 扩展 | 三种扩展形态、CLI 与交付前检查 |
 | [access-rules.md](./access-rules.md) | 权限 | 权限点、字段访问规则、管理约束速查 |
@@ -63,6 +64,7 @@ lang: zh-CN
 | [errors-faq.md](./errors-faq.md) | 发布、扩展、接入常见错误与 FAQ | draft |
 | [overview.md](./overview.md) | 站内导读：三条开发路径、插件与扩展的区别、阅读顺序 | draft |
 | [harness-quickstart.md](./harness-quickstart.md) | 站内导读：第三方 Harness / 自研客户端的五分钟路径与限制 | draft |
+| [anthropic-api.md](./anthropic-api.md) | Anthropic Messages 兼容端点：Claude Code 接入、请求/响应/SSE 转换、错误与 v0 边界 | draft |
 | [plugin-quickstart.md](./plugin-quickstart.md) | 站内导读：插件骨架、清单字段、本地自查与发布入口 | draft |
 | [extension-quickstart.md](./extension-quickstart.md) | 站内导读：扩展清单、CLI 命令与交付前检查 | draft |
 | [access-rules.md](./access-rules.md) | 站内导读：权限点、字段访问规则、管理约束速查 | draft |

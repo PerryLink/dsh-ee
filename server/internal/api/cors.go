@@ -15,7 +15,7 @@ import (
 // 而是按白名单精确回显请求的 Origin。
 const (
 	corsAllowMethods = "GET, POST, DELETE, OPTIONS"
-	corsAllowHeaders = "Authorization, Content-Type, Mcp-Protocol-Version, Mcp-Session-Id, X-DshEE-Client, Dsh-EE-API-Version"
+	corsAllowHeaders = "Authorization, Content-Type, X-Api-Key, Mcp-Protocol-Version, Mcp-Session-Id, X-DshEE-Client, Dsh-EE-API-Version"
 	corsMaxAge       = "600"
 	// 浏览器里的 JS 只能读 CORS 安全列表内的响应头，其余（大小写不敏感的）非简单响应头
 	// 必须在实际响应里用 Access-Control-Expose-Headers 放出来。这里放的是第三方 Harness
@@ -62,9 +62,10 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
-// isCORSRoute 是 CORS 白名单的作用范围：第三方 Harness 的两个协议入口 /v1/* 与 /mcp。
+// isCORSRoute 是 CORS 白名单的作用范围：第三方 Harness 的协议入口 /v1/*、Anthropic 别名
+// /anthropic/v1/* 与 /mcp。
 func isCORSRoute(path string) bool {
-	return path == "/mcp" || strings.HasPrefix(path, "/v1/")
+	return path == "/mcp" || strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/anthropic/v1/")
 }
 
 // setCORSGrant 精确回显请求的 Origin，并声明响应随 Origin 变化。

@@ -1508,7 +1508,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    /** 出错的响应体（409 / 400 里的 plan、issues 等要给管理员看） */
+    /** 出错的响应体：409 / 400 里的 plan、issues 等结构化信息（目录安装、回滚预览） */
     public data: unknown = null,
   ) {
     super(message);
