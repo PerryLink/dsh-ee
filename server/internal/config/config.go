@@ -115,6 +115,11 @@ type Config struct {
 	EmbedMintPerMinute int
 	// exchange 的共享固定窗口限流：每 IP 每分钟次数（DSH_EE_EMBED_EXCHANGE_PER_MINUTE），默认 60。
 	EmbedExchangePerMinute int
+	// 多实例后台任务租约（DSH_EE_BACKGROUND_LEASE）：周期任务每轮先抢数据库里的一条租约，
+	// 只有抢到的实例执行，避免多副本重复跑。默认开启；单实例也安全。
+	BackgroundLease bool
+	// 后台任务租约有效期（DSH_EE_BACKGROUND_LEASE_TTL），默认 90s；持有者按 1/3 TTL 续约。
+	BackgroundLeaseTTL time.Duration
 }
 
 func Load() (*Config, error) {
@@ -130,6 +135,8 @@ func Load() (*Config, error) {
 		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
 		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
 		DBWait:                 2 * time.Minute,
+		BackgroundLease:        true,
+		BackgroundLeaseTTL:     90 * time.Second,
 		// 刷新令牌的默认参数：access 1 小时、refresh 空闲 30 天、族绝对 180 天、宽限严格。
 		RefreshAccessTTL: time.Hour,
 		RefreshTokenTTL:  30 * 24 * time.Hour,
@@ -377,6 +384,23 @@ func Load() (*Config, error) {
 	c.EmbedExchangePerMinute, err = positiveIntEnv("DSH_EE_EMBED_EXCHANGE_PER_MINUTE", 60)
 	if err != nil {
 		return nil, err
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_BACKGROUND_LEASE")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.New("DSH_EE_BACKGROUND_LEASE 要写成 true / false（或 1 / 0）")
+		}
+		c.BackgroundLease = b
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_BACKGROUND_LEASE_TTL")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_BACKGROUND_LEASE_TTL: %w", err)
+		}
+		if d < time.Second || d > time.Hour {
+			return nil, errors.New("DSH_EE_BACKGROUND_LEASE_TTL 要在 1s 到 1h 之间")
+		}
+		c.BackgroundLeaseTTL = d
 	}
 	// 内容安全策略：默认 off，保持现有「只加 frame-ancestors」行为不变。
 	c.CSP, err = parseCSPMode(os.Getenv("DSH_EE_CSP"))

@@ -141,6 +141,8 @@ OceanBase 单机最低也要几 GB 内存，本地机器紧张时先用 TiDB 调
 | `DSH_EE_DATA_DIR` | 数据目录（npm tarball、上游缓存），默认 `./data`；容器里是 `/data` |
 | `DSH_EE_PUBLIC_URL` | 对外地址，如 `https://dsh.acme.internal`；npm 的 tarball 地址按它生成，不填时按请求的 Host / `X-Forwarded-*` 推断 |
 | `DSH_EE_DB_WAIT` | 启动时等数据库就绪的最长时间，默认 `2m`（compose 里是 `15m`） |
+| `DSH_EE_BACKGROUND_LEASE` | 多实例后台任务租约开关，默认 `true`：周期任务每轮先抢数据库 `background_leases` 表中的租约，只有 leader 实例执行；单实例也安全。设为 `false` 时每个实例都会执行周期任务，只应在确认单实例部署时关闭 |
+| `DSH_EE_BACKGROUND_LEASE_TTL` | 后台任务租约有效期，默认 `90s`，允许 `1s`–`1h`；持租实例按 1/3 TTL 续约，进程被强杀后最多这么久其他实例才能接管 |
 | `DSH_EE_LOGIN_IP_LIMIT` | 同一客户端 IP 在窗口内允许的登录失败次数，默认 `50`；设为 `0` / `off` 关闭 |
 | `DSH_EE_LOGIN_IP_WINDOW` | 按 IP 统计登录失败的固定窗口，默认 `15m`，取值 `1m`～`24h` |
 | `DSH_EE_METRICS` | 设为 `true` 时开放 `GET /metrics`（Prometheus 文本格式，只允许本机 / 内网抓取）；默认关闭 |
@@ -288,6 +290,6 @@ curl localhost:8080/v1/chat/completions -H 'Authorization: Bearer sk-ee-…' -H 
 - `/v1/*` 与 `/mcp` 的每令牌限流同样在进程内存里，多实例部署时按实例各自计数；需要全局一致限流时得改用共享存储。
 - 管理操作（建用户、分配额度、代发 / 吊销 key）尚未写审计日志；网关调用已逐条记录在 `usage_logs`。
 - 只支持本地账号；LDAP / OIDC 后续加。
-- 多实例部署：登录限流、上游 packument 的内存缓存、预载任务都在单个进程里；多个实例同时第一次启动时数据库迁移会互相冲突（先起一个再扩容）。tarball 存在本地磁盘，多实例需要共享存储（NFS 等）或以后改成对象存储。
+- 多实例部署：周期后台任务（LDAP/飞书/知识源同步、上游检查、接入插件发布、Desktop 版本同步、到期与清理）已用数据库租约选主（`background_leases`，默认开启，见 [docs/operations.md](../docs/operations.md) §9.2），同一任务不会重复执行；但登录限流、上游 packument 的内存缓存、MCP 事件流等仍在单个进程里，多个实例同时第一次启动时数据库迁移会互相冲突（先起一个再扩容），tarball 存在本地磁盘，多实例需要共享存储（NFS 等）或以后改成对象存储。启动时的 `FailRunningJobs` 与管理员手动触发的镜像任务仍没有作业级归属。
 - 离线包没有签名（导入时只校验每个 tarball 的 sha512）；dshfind 签名种子包对接后再加 ed25519 校验。
 - 上游 registry 只支持匿名访问，不支持需要认证的 Nexus / Artifactory 代理仓库。

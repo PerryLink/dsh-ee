@@ -201,6 +201,41 @@ func TestRateLimitConfig(t *testing.T) {
 	}
 }
 
+func TestBackgroundLeaseDefaults(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.BackgroundLease || c.BackgroundLeaseTTL != 90*time.Second {
+		t.Fatalf("后台任务租约默认应开启、TTL 90s，得到 %v / %v", c.BackgroundLease, c.BackgroundLeaseTTL)
+	}
+}
+
+func TestBackgroundLeaseEnv(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("DSH_EE_BACKGROUND_LEASE", "false")
+	t.Setenv("DSH_EE_BACKGROUND_LEASE_TTL", "15s")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BackgroundLease || c.BackgroundLeaseTTL != 15*time.Second {
+		t.Fatalf("配置没生效：%v / %v", c.BackgroundLease, c.BackgroundLeaseTTL)
+	}
+
+	setRequiredEnv(t)
+	t.Setenv("DSH_EE_BACKGROUND_LEASE_TTL", "500ms")
+	if _, err := Load(); err == nil {
+		t.Fatal("过短的 TTL 应让启动失败")
+	}
+	setRequiredEnv(t)
+	t.Setenv("DSH_EE_BACKGROUND_LEASE", "maybe")
+	if _, err := Load(); err == nil {
+		t.Fatal("非法的开关值应让启动失败")
+	}
+}
+
 func TestLoadRefreshConfig(t *testing.T) {
 	setRequiredEnv(t)
 	// 默认关闭，参数是保守的默认值

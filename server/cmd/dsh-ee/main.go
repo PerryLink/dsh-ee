@@ -17,6 +17,7 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/api"
 	"github.com/hikariming/dsh-ee/server/internal/config"
 	"github.com/hikariming/dsh-ee/server/internal/extension"
+	"github.com/hikariming/dsh-ee/server/internal/lease"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 	"github.com/hikariming/dsh-ee/server/internal/webui"
@@ -56,6 +57,21 @@ func run(log *slog.Logger) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
+	// 多实例后台任务租约：周期任务每轮先抢一条数据库租约，只有 leader 实例执行。
+	// 默认开启，单实例也安全；优雅停机时释放，进程崩溃时靠 TTL 到期让其他实例接管。
+	leases := lease.New(st, lease.OwnerID(cfg.Addr), cfg.BackgroundLease, cfg.BackgroundLeaseTTL, log)
+	if leases.Enabled() {
+		log.Info("后台任务租约已启用（多实例下同一周期任务只有一个实例执行）", "owner", leases.Owner(), "ttl", cfg.BackgroundLeaseTTL)
+	} else {
+		log.Info("后台任务租约已关闭：每个实例都会执行周期任务，请确认是单实例部署", "env", "DSH_EE_BACKGROUND_LEASE")
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := leases.Close(closeCtx); err != nil {
+			log.Warn("释放后台任务租约失败", "err", err)
+		}
+	}()
 
 	created, err := api.Bootstrap(ctx, st, cfg.BootstrapAdmin, cfg.BootstrapAdminPassword)
 	if err != nil {
@@ -163,6 +179,8 @@ func run(log *slog.Logger) error {
 
 		// 企业目录（directory.go）：tarball 来源的主机白名单
 		DirectoryTarballHosts: cfg.DirectoryTarballHosts,
+		// 多实例后台任务租约；后台循环与清理任务共用同一个租约执行器
+		BackgroundLeases: leases,
 	}, log)
 	if cfg.CSP != config.CSPOff {
 		log.Info("内容安全策略已启用", "mode", cfg.CSP, "inline_script_hashes", len(inlineScriptHashes), "report_uri", cfg.CSPReportURI)
@@ -179,8 +197,8 @@ func run(log *slog.Logger) error {
 		log.Warn("公开协议面限流已关闭", "reason", "DSH_EE_RATE_LIMIT=0/off")
 	}
 
-	go sweepSessions(ctx, st, log)
-	go sweepEmbed(ctx, st, log)
+	go sweepSessions(ctx, st, log, leases)
+	go sweepEmbed(ctx, st, log, leases)
 	go srv.RunBackground(ctx)
 
 	httpSrv := &http.Server{
@@ -231,8 +249,14 @@ func openStore(ctx context.Context, cfg *config.Config, log *slog.Logger) (*stor
 	}
 }
 
-// sweepSessions 每小时清理过期会话与设备码。
-func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
+// 清理任务的租约名；与 internal/api 里的周期任务共用 background_leases 表，不要改名。
+const (
+	leaseSweepSessions = "sessions.sweep"
+	leaseSweepEmbed    = "embed.sweep"
+)
+
+// sweepSessions 每小时清理过期会话与设备码（多实例下只有 leader 执行）。
+func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger, leases *lease.Runner) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
@@ -240,44 +264,47 @@ func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if n, err := st.DeleteExpiredSessions(ctx); err != nil {
-				log.Warn("清理过期会话失败", "err", err)
-			} else if n > 0 {
-				log.Info("已清理过期会话", "count", n)
-			}
-			if n, err := st.DeleteExpiredEmbedSessions(ctx); err != nil {
-				log.Warn("清理过期嵌入会话失败", "err", err)
-			} else if n > 0 {
-				log.Info("已清理过期嵌入会话", "count", n)
-			}
-			if _, err := st.DeleteExpiredAgentConfirms(ctx); err != nil {
-				log.Warn("清理过期确认码失败", "err", err)
-			}
-			if n, err := st.DeleteExpiredDeviceCodes(ctx); err != nil {
-				log.Warn("清理过期设备码失败", "err", err)
-			} else if n > 0 {
-				log.Info("已清理过期设备码", "count", n)
-			}
-			// 刷新令牌（docs/token-lifecycle.md）：清掉宽限已过的重放密文（明文窗口尽量短）；
-			// 过期且已轮换/吊销的 refresh 记录保留 30 天后删除，access token 的记录不受影响。
-			if n, err := st.ClearRefreshSuccessors(ctx, time.Now().Add(-time.Hour)); err != nil {
-				log.Warn("清理刷新令牌重放密文失败", "err", err)
-			} else if n > 0 {
-				log.Info("已清理刷新令牌重放密文", "count", n)
-			}
-			if n, err := st.DeleteExpiredRefreshTokens(ctx, time.Now().Add(-30*24*time.Hour)); err != nil {
-				log.Warn("清理过期刷新令牌失败", "err", err)
-			} else if n > 0 {
-				log.Info("已清理过期刷新令牌", "count", n)
-			}
+			leases.Run(ctx, leaseSweepSessions, func(ctx context.Context) {
+				if n, err := st.DeleteExpiredSessions(ctx); err != nil {
+					log.Warn("清理过期会话失败", "err", err)
+				} else if n > 0 {
+					log.Info("已清理过期会话", "count", n)
+				}
+				if n, err := st.DeleteExpiredEmbedSessions(ctx); err != nil {
+					log.Warn("清理过期嵌入会话失败", "err", err)
+				} else if n > 0 {
+					log.Info("已清理过期嵌入会话", "count", n)
+				}
+				if _, err := st.DeleteExpiredAgentConfirms(ctx); err != nil {
+					log.Warn("清理过期确认码失败", "err", err)
+				}
+				if n, err := st.DeleteExpiredDeviceCodes(ctx); err != nil {
+					log.Warn("清理过期设备码失败", "err", err)
+				} else if n > 0 {
+					log.Info("已清理过期设备码", "count", n)
+				}
+				// 刷新令牌（docs/token-lifecycle.md）：清掉宽限已过的重放密文（明文窗口尽量短）；
+				// 过期且已轮换/吊销的 refresh 记录保留 30 天后删除，access token 的记录不受影响。
+				if n, err := st.ClearRefreshSuccessors(ctx, time.Now().Add(-time.Hour)); err != nil {
+					log.Warn("清理刷新令牌重放密文失败", "err", err)
+				} else if n > 0 {
+					log.Info("已清理刷新令牌重放密文", "count", n)
+				}
+				if n, err := st.DeleteExpiredRefreshTokens(ctx, time.Now().Add(-30*24*time.Hour)); err != nil {
+					log.Warn("清理过期刷新令牌失败", "err", err)
+				} else if n > 0 {
+					log.Info("已清理过期刷新令牌", "count", n)
+				}
+			})
 		}
 	}
 }
 
 // sweepEmbed 启动时清理一次、之后每分钟清理过期的一次性 embed code 与限流窗口。
-// code TTL 只有 60 秒，靠每小时的总清理太慢；多实例各自跑一遍是幂等的（DELETE 条件相同）。
-func sweepEmbed(ctx context.Context, st *store.Store, log *slog.Logger) {
-	clean := func() {
+// code TTL 只有 60 秒，靠每小时的总清理太慢；DELETE 条件相同，多实例重复执行也是幂等的，
+// 这里仍走租约：只有 leader 执行，省掉多份无意义的写。
+func sweepEmbed(ctx context.Context, st *store.Store, log *slog.Logger, leases *lease.Runner) {
+	clean := func(ctx context.Context) {
 		if n, err := st.DeleteExpiredEmbedCodes(ctx); err != nil {
 			log.Warn("清理过期嵌入 code 失败", "err", err)
 		} else if n > 0 {
@@ -290,7 +317,7 @@ func sweepEmbed(ctx context.Context, st *store.Store, log *slog.Logger) {
 			log.Info("已清理嵌入限流窗口", "count", n)
 		}
 	}
-	clean()
+	leases.Run(ctx, leaseSweepEmbed, clean)
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -298,7 +325,7 @@ func sweepEmbed(ctx context.Context, st *store.Store, log *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			clean()
+			leases.Run(ctx, leaseSweepEmbed, clean)
 		}
 	}
 }
