@@ -163,17 +163,17 @@ func (s *Service) ImportBundle(ctx context.Context, r io.Reader, by int64) (*Imp
 	tr := tar.NewReader(r)
 	h, err := tr.Next()
 	if err != nil {
-		return nil, nil, errf(400, "不是 dsh-ee 离线包（tar）：%v", err)
+		return nil, nil, errf(400, "Not a dsh-ee offline bundle (tar): %v", err)
 	}
 	if h.Name != bundleManifestName {
-		return nil, nil, errf(400, "离线包的第一项应该是 %s，得到 %q", bundleManifestName, h.Name)
+		return nil, nil, errf(400, "The first entry of the offline bundle should be %s, got %q", bundleManifestName, h.Name)
 	}
 	var man BundleManifest
 	if err := json.NewDecoder(io.LimitReader(tr, 1<<30)).Decode(&man); err != nil {
-		return nil, nil, errf(400, "离线包清单格式错误：%v", err)
+		return nil, nil, errf(400, "Malformed offline bundle manifest: %v", err)
 	}
 	if man.Format != 1 {
-		return nil, nil, errf(400, "不支持的离线包格式 %d", man.Format)
+		return nil, nil, errf(400, "Unsupported offline bundle format %d", man.Format)
 	}
 	total := 0
 	for _, p := range man.Packages {
