@@ -19,6 +19,7 @@ export default {
     updated: "Updated {{date}}",
     readMinutes: "About {{count}} min",
     zhOnly: "Body in Chinese",
+    bodyFallback: "Body not available in your language yet; showing {{lang}}",
     disclaimer: "These pages are dsh-ee-side guides and may change with each release; the upstream repositories and their licenses are the source of truth.",
     backToList: "All developer docs",
     backToTop: "Back to top",

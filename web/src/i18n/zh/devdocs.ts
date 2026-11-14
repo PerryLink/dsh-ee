@@ -17,6 +17,7 @@ export default {
     updated: "更新于 {{date}}",
     readMinutes: "约 {{count}} 分钟",
     zhOnly: "正文为中文",
+    bodyFallback: "当前语言暂无正文，显示{{lang}}正文",
     disclaimer: "文档为 dsh-ee 视角的导读，会随版本调整；以上游仓库的原文与各自许可为准。",
     backToList: "全部开发文档",
     backToTop: "回到顶部",

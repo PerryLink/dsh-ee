@@ -184,8 +184,14 @@ export default async function (t) {
   await en.getByRole("heading", { level: 1, name: "Developer docs" }).waitFor();
   await en.locator("aside").getByRole("link", { name: "Developer docs" }).waitFor();
   await en.locator("aside").getByRole("link", { name: "Examples" }).waitFor();
-  await en.getByText("Body in Chinese").first().waitFor();
+  // 文档正文已五语化：英文界面下列表显示英文标题，且不再出现「Body in Chinese」回退徽标
+  await en.getByText("Where to start: three development paths").first().waitFor();
+  const zhOnlyBadges = await en.getByText("Body in Chinese").count();
+  assert(zhOnlyBadges === 0, `英文界面下不应再出现「正文为中文」徽标，实际 ${zhOnlyBadges} 个`);
+  // 详情页渲染的是英文正文（而非中文正文 + 徽标）
+  await en.goto(`${BASE}/docs/overview`);
+  await en.getByText("splits into three paths by deliverable").waitFor();
   await en.goto(`${BASE}/examples`);
   await en.getByRole("heading", { level: 1, name: "Examples" }).waitFor();
-  step("英文界面：页名、侧栏「Develop」组与文档语言提示都正确");
+  step("英文界面：页名、侧栏「Develop」组、英文文档标题与英文正文都正确");
 }
