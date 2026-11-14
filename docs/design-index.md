@@ -35,7 +35,7 @@
 | 文档 | 状态 | 适用版本 | 实现情况 | 入口/说明 |
 |---|---|---|---|---|
 | [design.md](./design.md) | 📜 | v0.1（历史） | 2026-10-26 设计稿；存储/部署选型已过时，**历史设计，现状见 architecture.md** | 根 `README.zh-CN.md` docs 行（历史链接）；不要再按它实现 |
-| [plugins.md](./plugins.md) | 🟡 | v0.2 / v0.3 | 扩展体系第四稿：第 1 批进行中、第 2～5 批基本部分已实现（§12.1/§12.2）；签名、企业目录、回滚、自助分发**未实现** | [AGENTS.md](../AGENTS.md)、roadmap 阶段 E；与 access-control/agent-dev 配套 |
+| [plugins.md](./plugins.md) | 🟡 | v0.2 / v0.3 | 扩展体系第四稿：第 1 批进行中、第 2～5 批基本部分已实现（§12.1/§12.2）；签名最小闭环、企业目录登记、升级回滚已做最小部分，自动升级、自助分发**未实现** | [AGENTS.md](../AGENTS.md)、roadmap 阶段 E；与 access-control/agent-dev 配套 |
 | [access-control.md](./access-control.md) | 🟡 | v0.3 | 可扩展权限草案：第 3、4 批已做出（见文档头）；字段先覆盖文档/知识库/用户，不做按人授权 | [AGENTS.md](../AGENTS.md)、plugins.md §12 |
 | [agent-dev.md](./agent-dev.md) | ⚪ | 未定 | 让 Agent 完成扩展和权限配置的开发；文档头明确「设计稿，还没开工」；配置变更/审批部分有设计无实现 | [AGENTS.md](../AGENTS.md)、plugins.md §12（第 4 批） |
 | [extension-protocol.md](./extension-protocol.md) | ✅ | v0.2 / v0.3 | 服务扩展与端侧扩展的协议第 1 版（清单、ee_jwt、约定接口、错误码、熔断） | [AGENTS.md](../AGENTS.md)、`server/README.md`「能力中心与 DSH 接入」 |

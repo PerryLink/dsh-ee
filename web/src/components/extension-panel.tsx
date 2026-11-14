@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Activity } from "lucide-react";
 import { formatTime } from "../lib/api";
 import { extApi } from "../lib/ext-api";
+import { ExtensionHistoryButton } from "./extension-history";
 import { useAction, useApi } from "../lib/use-api";
 import { useStore } from "../lib/store";
 import { Badge, Button, Card, CardHeader, CopyBox, Notice } from "./ui";
@@ -18,7 +19,17 @@ function configValue(v: unknown, hidden: string) {
  * 连接详情页上给管理员看的「扩展」（docs/plugins.md §4.2、§6.3、§7.3、§9.4）：
  * 健康检查、清单是否变了、回调地址、OAuth 回调地址、管理员填的配置。
  */
-export function ExtensionPanel({ connectionId }: { connectionId: number }) {
+export function ExtensionPanel({
+  connectionId,
+  slug,
+  onChanged,
+}: {
+  connectionId: number;
+  /** 连接标识：拉安装历史 / 回滚用 */
+  slug: string;
+  /** 回滚成功后通知外层刷新（工具清单等） */
+  onChanged?: () => void;
+}) {
   const { t } = useTranslation();
   const { notify } = useStore();
   const { busy, run } = useAction();
@@ -27,15 +38,22 @@ export function ExtensionPanel({ connectionId }: { connectionId: number }) {
   if (!e) return null;
   const h = e.health;
   return (
-    <Card data-extension-panel>
+    <Card data-extension-panel data-testid="extension-panel">
       <CardHeader
         title={t("extAdmin.title")}
         aside={
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-2">
             <Badge tone="brand">{t(`extAdmin.kind.${e.kind}`)}</Badge>
-            <span className="font-mono text-xs text-neutral-500">
+            <span className="font-mono text-xs text-neutral-500" data-testid="extension-version">
               {e.id}@{e.version}
             </span>
+            <ExtensionHistoryButton
+              slug={slug}
+              onChanged={() => {
+                info.reload();
+                onChanged?.();
+              }}
+            />
           </span>
         }
       />

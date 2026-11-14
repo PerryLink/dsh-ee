@@ -2,7 +2,7 @@
  * 扩展第 2～5 批的接口：写操作确认、字段与访问规则、管理约束、配置变更、知识源、服务扩展、OAuth。
  * 类型与 server/internal/api 里的 JSON 字段一一对应。
  */
-import { request } from "./api";
+import { ApiError, request } from "./api";
 
 // ---- 写操作确认（server/internal/api/write_confirm.go）----
 
@@ -198,6 +198,57 @@ export interface ExtInfo {
   health?: ExtHealth;
 }
 
+// ---- 扩展安装历史与回滚（server/internal/api/extensions_rollback.go）----
+
+export type ExtSignatureStatus = "valid" | "unsigned" | "invalid" | "revoked" | "unknown";
+
+/** 历史里的一个扩展版本；asset_version 是连接的版本号，回滚时用它指定目标。 */
+export interface ExtHistoryVersion {
+  asset_version: number;
+  /** 扩展身份 作者/名字@版本 */
+  extension: string;
+  version: string;
+  digest: string;
+  kind: "declarative" | "service";
+  /** 按当前信任根重新核对过的签名状态；本改动之前的旧版本没存签名材料，是 unknown */
+  signature: ExtSignatureStatus;
+  signature_key?: string;
+  installed_by: string;
+  installed_at: string;
+  current: boolean;
+  /** 当前策略下能不能回滚到这个版本 */
+  can_rollback: boolean;
+}
+
+export interface ExtHistory {
+  asset: { id: number; slug: string; title: string };
+  extension_id: string;
+  current_version: number;
+  versions: ExtHistoryVersion[];
+}
+
+/** 回滚前给管理员看的计划：和安装计划同一个口径的变化 / 敏感项 / 检查结果。 */
+export interface ExtRollbackPlan {
+  asset: { id: number; slug: string; title: string };
+  from: ExtHistoryVersion;
+  to: ExtHistoryVersion;
+  changes: string[];
+  sensitive: string[];
+  warnings: string[];
+  check?: { ok: boolean; errors: number; results: { code: string; severity: string; message: string; fix?: string }[] };
+  signature?: { status: ExtSignatureStatus; key_id?: string; message?: string };
+}
+
+export interface ExtRollbackResult {
+  version: number;
+  tools: number;
+  rolled_back_to: ExtHistoryVersion;
+  rolled_back_from: ExtHistoryVersion;
+  warnings: string[];
+}
+
+const extTargetPath = (target: string, action: string) => `/api/admin/extensions/${encodeURIComponent(target)}/${action}`;
+
 export const extApi = {
   // 写操作确认
   myConfirmations: () => request<{ items: WriteConfirmation[] }>("GET", "/api/me/confirmations").then((r) => r.items ?? []),
@@ -248,6 +299,23 @@ export const extApi = {
   kbSyncSource: (kb: number, source: number) => request<KBSyncResult>("POST", `/api/kb/${kb}/sources/${source}/sync`),
   kbDeleteSource: (kb: number, source: number, deleteDocs: boolean) =>
     request<void>("DELETE", `/api/kb/${kb}/sources/${source}${deleteDocs ? "?docs=delete" : ""}`),
+
+  // 安装历史与回滚：target 是连接标识（slug）或扩展 id（作者/名字）
+  extHistory: (target: string) => request<ExtHistory>("GET", extTargetPath(target, "history")),
+  /** 预览回滚计划：接口在没带 confirm 时返回 409 + plan，这里把它当成正常结果取出来。 */
+  extRollbackPlan: async (target: string, version: number): Promise<ExtRollbackPlan> => {
+    try {
+      await request<ExtRollbackResult>("POST", extTargetPath(target, "rollback"), { version });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && (e.data as { plan?: ExtRollbackPlan } | null)?.plan) {
+        return (e.data as { plan: ExtRollbackPlan }).plan;
+      }
+      throw e;
+    }
+    // 不该发生：服务端要求 confirm，永远会先给 409 计划
+    throw new Error("回滚预览没有返回计划");
+  },
+  extRollback: (target: string, version: number) => request<ExtRollbackResult>("POST", extTargetPath(target, "rollback"), { version, confirm: true }),
 
   // 服务扩展与 OAuth
   extInfo: (connection: number) => request<ExtInfo>("GET", `/api/admin/connections/${connection}/extension`),
