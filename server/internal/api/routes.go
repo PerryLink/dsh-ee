@@ -421,6 +421,15 @@ func (s *Server) routes() []route {
 		// OpenAI 兼容网关，用个人 key 鉴权
 		pub("GET /v1/models", s.handleModels),
 		pub("POST /v1/chat/completions", s.handleChatCompletions),
+		// Anthropic Messages 兼容网关：Claude Code / Anthropic SDK 用 x-api-key 或 Bearer，
+		// 请求转成 OpenAI chat 后复用上面的模型权限、额度与用量记账（见 anthropic.go）
+		pub("POST /v1/messages", s.handleAnthropicMessages),
+		// 同一个 handler 的别名：DeepSeek 等厂商的 Anthropic base URL 习惯是 <base>/anthropic，
+		// 客户端拼出来就是 /anthropic/v1/messages；与 /v1/messages 行为完全一致。
+		pub("POST /anthropic/v1/messages", s.handleAnthropicMessages),
+		// count_tokens 不在 v0 范围内：给 Anthropic 客户端一个明确的错误壳，而不是落到 /v1/ 的 OpenAI 404
+		pub("POST /v1/messages/count_tokens", s.handleAnthropicCountTokens),
+		pub("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens),
 
 		// 第三方 Harness 的中立 v1 契约（harness.go）：发现文档、能力摘要、只读微应用描述、机器可读契约
 		pub("GET /.well-known/dsh-ee", s.handleHarnessDiscovery),

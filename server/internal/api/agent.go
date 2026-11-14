@@ -176,6 +176,10 @@ var agentExcluded = map[string]string{
 	"GET /setup.ps1":                            "安装脚本",
 	"GET /v1/models":                            "模型网关协议入口",
 	"POST /v1/chat/completions":                 "模型网关协议入口",
+	"POST /v1/messages":                         "Anthropic 兼容的模型网关协议入口",
+	"POST /anthropic/v1/messages":               "Anthropic 兼容的模型网关协议入口（DeepSeek 风格 base URL 别名）",
+	"POST /v1/messages/count_tokens":            "Anthropic 兼容端点（v0 明确不支持，返回 404）",
+	"POST /anthropic/v1/messages/count_tokens":  "Anthropic 兼容端点（v0 明确不支持，返回 404）",
 	// 第三方 Harness 契约（harness.go）：发现与只读能力摘要，不是模型工具
 	"GET /.well-known/dsh-ee":     "中立发现文档，给第三方 Harness 读取服务能力",
 	"GET /v1/capabilities":        "中立能力摘要，给第三方 Harness 生成自己的配置与系统提示",

@@ -264,7 +264,18 @@ func (s *Server) Handler() http.Handler {
 	// 没匹配上的接口返回 JSON 404，不要落到前端的 index.html
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "接口不存在") })
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+		// Anthropic 兼容面下的其它路径（batches/files/count_tokens 的子路径等）用 Anthropic 错误壳，
+		// 避免 Claude Code / Anthropic SDK 拿到 OpenAI 形状的 404。
+		if isAnthropicMessagesPath(r.URL.Path) {
+			writeAnthropicErr(w, http.StatusNotFound, "not_found_error", "接口不存在：Anthropic 兼容目前只实现 POST /v1/messages")
+			return
+		}
 		writeOpenAIErr(w, http.StatusNotFound, "invalid_request_error", "not_found", "接口不存在")
+	})
+	// Anthropic 兼容面的别名前缀（DeepSeek 的 base URL 习惯）：未匹配路径用 Anthropic 错误壳，
+	// 不要落到前端 SPA 兜底。
+	mux.HandleFunc("/anthropic/", func(w http.ResponseWriter, r *http.Request) {
+		writeAnthropicErr(w, http.StatusNotFound, "not_found_error", "接口不存在：Anthropic 兼容入口是 POST /v1/messages（别名 /anthropic/v1/messages）")
 	})
 	if s.opts.Web != nil {
 		mux.Handle("/", s.opts.Web)
