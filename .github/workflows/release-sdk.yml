@@ -1,0 +1,279 @@
+name: release-sdk
+
+# SDK 发布工作流。只有两种触发方式：
+#   1) maintainer 手动 workflow_dispatch：dry_run 默认 true，只构建/测试/打包，不发布；
+#   2) 推送 SDK 版本 tag：sdk-ts-vX.Y.Z（TypeScript）/ sdk-py-vX.Y.Z（Python）。
+#
+# 普通 push / PR 不会触发本工作流，也不会发布；日常构建、测试和 npm pack --dry-run
+# 在 ci.yml 的 sdk job：`.github/workflows/ci.yml`。
+#
+# publish 的硬性条件（两道门）：
+#   - 非 dry_run：tag push，或手动触发时显式 dry_run=false；
+#   - 凭据/信任发布已配置：npm 用仓库/组织级 secret NPM_TOKEN（缺失就跳过并告警，
+#     绝不硬编码）；PyPI 用 trusted publisher（OIDC 临时凭据，不需要 token secret）。
+# 维护者需要做的一次性配置（npm org、NPM_TOKEN、PyPI trusted publisher、environment
+# 审批、tag 保护）见 sdk/RELEASE.md。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只构建、测试、打包和校验，不发布（默认 true）'
+        type: boolean
+        default: true
+      package:
+        description: '要处理的包（tag 触发时由 tag 前缀决定，此输入被忽略）'
+        type: choice
+        options:
+          - both
+          - typescript
+          - python
+        default: both
+      dist_tag:
+        description: 'npm dist-tag（仅手动发布 TypeScript 时使用；tag 触发时按版本自动选择）'
+        type: choice
+        options:
+          - latest
+          - next
+        default: latest
+  push:
+    tags:
+      - 'sdk-ts-v*'
+      - 'sdk-py-v*'
+
+# 默认只读；写权限（id-token）只在 publish job 里按需申请。
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: 发布预检（校验工作流 / 包元数据 / tag）
+    runs-on: ubuntu-latest
+    outputs:
+      typescript: ${{ steps.plan.outputs.typescript }}
+      python: ${{ steps.plan.outputs.python }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+      publish: ${{ steps.plan.outputs.publish }}
+      npm_token: ${{ steps.plan.outputs.npm_token }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      npm_tag: ${{ steps.plan.outputs.npm_tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 自检发布脚本（工作流 YAML / 发布计划 / 包检查）
+        run: |
+          set -euo pipefail
+          node --test scripts/sdk/*.test.mjs
+          node scripts/sdk/verify-release-workflow.mjs
+          node scripts/sdk/verify-package.mjs --package typescript
+          node scripts/sdk/verify-package.mjs --package python
+      - id: plan
+        name: 计算发布计划（不会打印 secret 内容）
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_PACKAGE: ${{ inputs.package }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_DIST_TAG: ${{ inputs.dist_tag }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node scripts/sdk/release-plan.mjs
+      - name: 校验 tag 与包版本一致
+        if: steps.plan.outputs.tag != ''
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          TARGET_TYPESCRIPT: ${{ steps.plan.outputs.typescript }}
+          TARGET_PYTHON: ${{ steps.plan.outputs.python }}
+        run: |
+          set -euo pipefail
+          if [ "$TARGET_TYPESCRIPT" = "true" ]; then
+            node scripts/sdk/verify-package.mjs --package typescript --tag "$TAG"
+          fi
+          if [ "$TARGET_PYTHON" = "true" ]; then
+            node scripts/sdk/verify-package.mjs --package python --tag "$TAG"
+          fi
+
+  typescript-sdk:
+    name: TypeScript SDK（构建 / 测试 / npm pack）
+    needs: preflight
+    if: needs.preflight.outputs.typescript == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+      - name: 类型检查
+        run: npm run typecheck
+      - name: 测试（构建 + node:test，全部 mock fetch）
+        run: npm test
+      - name: 打包 npm tarball（不发布）
+        run: |
+          set -euo pipefail
+          mkdir -p ../../dist/sdk-ts
+          npm pack --pack-destination ../../dist/sdk-ts
+      - name: 校验 tarball 元数据与文件清单
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          args=(--package typescript --dist ../../dist/sdk-ts)
+          if [ -n "$TAG" ]; then args+=(--tag "$TAG"); fi
+          node ../../scripts/sdk/verify-package.mjs "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-ts-package
+          path: dist/sdk-ts/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  python-sdk:
+    name: Python SDK（构建 / 测试 / python -m build）
+    needs: preflight
+    if: needs.preflight.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: 安装构建工具（不安装 SDK 运行时依赖：只用标准库）
+        run: python3 -m pip install --upgrade pip build
+      - name: 测试（unittest，全部假 transport）
+        run: python3 -m unittest discover -s tests -v
+      - name: 编译检查
+        run: python3 -m compileall -q dsh_ee_harness tests
+      - name: 构建 sdist + wheel
+        run: python3 -m build --outdir ../../dist/sdk-python
+      - name: 校验 sdist/wheel 元数据与文件清单
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          args=(--package python --dist ../../dist/sdk-python)
+          if [ -n "$TAG" ]; then args+=(--tag "$TAG"); fi
+          node ../../scripts/sdk/verify-package.mjs "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-py-package
+          path: dist/sdk-python/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-npm:
+    name: 发布 TypeScript SDK 到 npm（非 dry-run + NPM_TOKEN）
+    needs:
+      - preflight
+      - typescript-sdk
+    # 三个条件同时满足才执行：preflight 判定要发布、目标是 TypeScript、NPM_TOKEN 已配置。
+    # NPM_TOKEN 只在 preflight 计划步骤和这里的发布步骤 env 里引用，仓库文件中没有任何凭据。
+    if: |
+      needs.preflight.outputs.publish == 'true' &&
+      needs.preflight.outputs.typescript == 'true' &&
+      needs.preflight.outputs.npm_token == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-ts-package
+          path: dist/sdk-ts
+      - name: 发布前再次校验即将发布的 tarball
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          args=(--package typescript --dist dist/sdk-ts)
+          if [ -n "$TAG" ]; then args+=(--tag "$TAG"); fi
+          node scripts/sdk/verify-package.mjs "${args[@]}"
+      - name: 记录 artifact 摘要
+        run: |
+          set -euo pipefail
+          {
+            echo '### npm 发布 artifact'
+            sha256sum dist/sdk-ts/*.tgz
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: npm publish（凭据来自 NODE_AUTH_TOKEN）
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ needs.preflight.outputs.npm_tag }}
+        run: |
+          set -euo pipefail
+          tarball="$(ls dist/sdk-ts/*.tgz)"
+          echo "publishing $(basename "$tarball") with dist-tag ${DIST_TAG}"
+          # --provenance 需要 id-token: write；provenance 证明包由本仓库的该 workflow 构建。
+          npm publish "$tarball" --access public --tag "$DIST_TAG" --provenance
+
+  publish-pypi:
+    name: 发布 Python SDK 到 PyPI（非 dry-run + trusted publisher）
+    needs:
+      - preflight
+      - python-sdk
+    # PyPI 使用 trusted publisher（OIDC）：不需要 PyPI API token secret，
+    # 但要求 maintainer 在 PyPI 上为本仓库/该 workflow/environment 配置好 trusted publisher。
+    if: |
+      needs.preflight.outputs.publish == 'true' &&
+      needs.preflight.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-py-package
+          path: dist/sdk-python
+      - name: 发布前再次校验即将上传的 sdist/wheel
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          args=(--package python --dist dist/sdk-python)
+          if [ -n "$TAG" ]; then args+=(--tag "$TAG"); fi
+          node scripts/sdk/verify-package.mjs "${args[@]}"
+      - name: 记录 artifact 摘要
+        run: |
+          set -euo pipefail
+          {
+            echo '### PyPI 发布 artifact'
+            sha256sum dist/sdk-python/*
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: 上传到 PyPI（trusted publisher，OIDC）
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/sdk-python
