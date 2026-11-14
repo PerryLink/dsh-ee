@@ -39,6 +39,10 @@ type Config struct {
 	// API 客户端（client_credentials）的每 IP 每分钟签发次数（DSH_EE_CLIENT_TOKEN_PER_MINUTE）；
 	// 默认 120，0 或 off 关闭。只防用错误 secret 撞库 / 刷库，正常集成远低于这个量。
 	ClientTokenPerMinute int
+	// DeepSeek Files 是上游账号级共享资源：请求里的 file_id 默认只允许管理员（任一管理权限）
+	// 与 account_type=bot 的机器人账号引用，普通员工 fail closed（DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE）。
+	// 设为 true 才对全体员工放行；见 server/internal/api/file_access.go。
+	DeepSeekToolsAllowEmployee bool
 	// 旧版 npm 令牌（ee_npm_）与 API key（sk-ee-）的 scope 收敛（docs/token-lifecycle.md）。
 	// true 时它们只保留原始用途的 scope：npm 令牌只剩 registry，key 只剩模型网关；
 	// 默认 false 不改变旧行为，避免现有客户端突然失效。
@@ -209,6 +213,15 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES: %w", err)
 		}
 		c.RestrictLegacyTokenScopes = b
+	}
+	// DeepSeek Files 的 file_id 访问拦截：默认 false（fail closed），只放行管理员与机器人账号；
+	// 显式 true 才对全体员工放行，非法值让启动失败，避免写错时静默放开共享文件。
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE: %w", err)
+		}
+		c.DeepSeekToolsAllowEmployee = b
 	}
 	// 刷新令牌（docs/token-lifecycle.md §3）；开关默认关，参数只在开启后生效。
 	if v := os.Getenv("DSH_EE_REFRESH_TOKENS"); v != "" {

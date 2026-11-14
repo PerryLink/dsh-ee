@@ -314,3 +314,37 @@ func TestLoadRefreshConfig(t *testing.T) {
 		t.Fatal("超过 5m 的宽限期应该失败")
 	}
 }
+
+// DeepSeek Files 的 file_id 访问拦截开关：默认 false（fail closed），非法值让启动失败。
+func TestLoadDeepSeekToolsAllowEmployee(t *testing.T) {
+	setRequiredEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 报错：%v", err)
+	}
+	if cfg.DeepSeekToolsAllowEmployee {
+		t.Fatal("DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE 默认应为 false（员工默认拒绝引用 file_id）")
+	}
+	for _, v := range []string{"1", "true", "TRUE"} {
+		t.Setenv("DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE", v)
+		cfg, err = Load()
+		if err != nil {
+			t.Fatalf("%q: Load 报错：%v", v, err)
+		}
+		if !cfg.DeepSeekToolsAllowEmployee {
+			t.Fatalf("%q 应打开员工放行开关", v)
+		}
+	}
+	for _, v := range []string{"false", "0"} {
+		t.Setenv("DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE", v)
+		if cfg, err = Load(); err != nil || cfg.DeepSeekToolsAllowEmployee {
+			t.Fatalf("%q 不应打开开关：cfg=%+v err=%v", v, cfg, err)
+		}
+	}
+	for _, v := range []string{"maybe", "2", "on"} {
+		t.Setenv("DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE", v)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE") {
+			t.Fatalf("%q 应让启动失败并要求检查环境变量，实际 err=%v", v, err)
+		}
+	}
+}

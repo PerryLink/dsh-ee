@@ -303,6 +303,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, r, http.StatusForbidden, "permission_error", "model_not_allowed", "你的账号不能使用模型 "+model+"，可在 /ee-status 查看可用模型")
 		return
 	}
+	// DeepSeek Files 是上游账号级共享资源：普通员工默认不能引用 file_id，在请求上游之前拦截。
+	if !s.fileAccessAllowed(k) && chatRequestReferencesFiles(body) {
+		writeOpenAIFileAccessDenied(w)
+		return
+	}
 	// 生成参数在转发前收口：超额输出、多候选会让单次请求的用量脱离额度约束。
 	if code, msg := completionLimitError(body); code != "" {
 		writeGatewayError(w, r, http.StatusBadRequest, "invalid_request_error", code, msg)

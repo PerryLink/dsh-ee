@@ -93,6 +93,10 @@ type Options struct {
 	ExtensionRequireSignature bool
 	// 旧版 npm 令牌 / API key 的 scope 收敛（docs/token-lifecycle.md）；默认 false 保持旧行为。
 	RestrictLegacyTokenScopes bool
+	// DeepSeek Files 的 file_id 访问拦截（DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE）：
+	// 默认 false（fail closed），只放行管理员与 account_type=bot 的机器人账号；
+	// true 才对全体员工放行。见 file_access.go。
+	DeepSeekToolsAllowEmployee bool
 	// mint 的共享（数据库）固定窗口限流：每 IP 每分钟次数；0 用默认 30（DSH_EE_EMBED_MINT_PER_MINUTE）。
 	// 多实例部署时是合计额度，不是每实例一份。
 	EmbedMintPerMinute int
