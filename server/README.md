@@ -6,6 +6,7 @@ Go 写的 dsh-ee 服务端。目前实现：
 - **账号月度额度**：管理员给账号分配每月 token 上限（`NULL` 不限额、`0` 未分配）、允许的模型与有效期；额度按账号共享，账号下所有 key 从同一份里扣，每月 1 日（UTC）重置。
 - **企业 API key 二次分发**：管理员录入企业在上游开通的模型服务（OpenAI 兼容，如 DeepSeek），上游 key 用主密钥 AES-256-GCM 加密存库；`sk-ee-…` 个人 key 由管理员代发或员工自助创建，随时吊销。
 - **OpenAI 兼容网关**：`/v1/chat/completions`（含流式）与 `/v1/models`。员工用个人 key 调用，dsh-ee 换成企业 key 转发，按账号校验额度与模型，并按次记录用量（即调用审计）。
+- **Anthropic Messages 兼容端点**：`POST /v1/messages`（含流式 SSE；别名 `POST /anthropic/v1/messages`，兼容 DeepSeek 的 `/anthropic` base URL 习惯），Claude Code / Anthropic SDK 用 `x-api-key` 或 Bearer 带上同一枚统一令牌即可；复用模型权限、额度、限流与用量记账。优先线路 `vendor=deepseek` 时原生透传到 `<base>/anthropic/v1/messages`（响应逐字节转发，`anthropic-version`/`anthropic-beta` 透传），其它 provider 降级转成 OpenAI chat；故障转移只在同协议内进行。不做 `count_tokens` / Batches / Files / 服务端工具，详见 [../docs/dev/anthropic-api.md](../docs/dev/anthropic-api.md)。
 - **内置 npm 源**（`/npm/`）：企业作用域的托管与发布、逐版本审核、上游回源与镜像、上游预载（连同依赖闭包）、离线包导入导出，以及由已上架插件生成的 DSH 插件索引（`/index/dsh-index.json`）。详见下文「npm 源」。
 - **LDAP / AD 登录**：员工用公司域账号登录网页与 `npm login`；首次登录自动开通，每次登录同步显示名、部门、邮箱与组映射的角色；每小时核对目录，离职（被删除或在 AD 里禁用）的账号自动禁用。详见下文「LDAP / AD」。
 - **运营统计与审计日志**：按本地日期统计能力安装、模型调用与 Token，按部门、能力、模型、终端（npm 客户端 User-Agent 里的系统与架构）汇总；登录、账号与权限、模型接入、设置、发布与审核等操作写入审计日志。

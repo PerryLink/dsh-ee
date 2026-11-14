@@ -305,6 +305,16 @@ type harnessDiscoveredModels struct {
 	Streaming               bool   `json:"streaming"`
 	Endpoint                string `json:"endpoint"`
 	ChatCompletionsEndpoint string `json:"chat_completions_endpoint"`
+	// AnthropicMessagesEndpoint 是 Anthropic Messages 兼容入口（x-api-key 或 Bearer）。
+	AnthropicMessagesEndpoint string `json:"anthropic_messages_endpoint"`
+	// AnthropicMessagesAliases 是同一 handler 的别名入口：DeepSeek 等厂商的 Anthropic
+	// base URL 习惯是 <base>/anthropic，客户端拼出来即 /anthropic/v1/messages。
+	AnthropicMessagesAliases []string `json:"anthropic_messages_aliases"`
+	// AnthropicMessagesNativeVendors 是走原生透传的 provider vendor：这些线路直接转发到
+	// <base>/anthropic/v1/messages，响应逐字节转发，不做 OpenAI chat 转换。
+	AnthropicMessagesNativeVendors []string `json:"anthropic_messages_native_vendors"`
+	// AnthropicMessagesConversionFallback 说明其它 vendor 的降级方式（转 OpenAI chat）。
+	AnthropicMessagesConversionFallback string `json:"anthropic_messages_conversion_fallback"`
 }
 
 type harnessDiscoveredMCP struct {
@@ -345,6 +355,10 @@ func (s *Server) handleHarnessDiscovery(w http.ResponseWriter, r *http.Request) 
 		Models: harnessDiscoveredModels{
 			Protocol: "openai-chat-completions", Streaming: true,
 			Endpoint: base + "/v1/models", ChatCompletionsEndpoint: base + "/v1/chat/completions",
+			AnthropicMessagesEndpoint:           base + "/v1/messages",
+			AnthropicMessagesAliases:            []string{base + "/anthropic/v1/messages"},
+			AnthropicMessagesNativeVendors:      []string{anthropicNativeVendor},
+			AnthropicMessagesConversionFallback: "openai-chat",
 		},
 		MCP: harnessDiscoveredMCP{Transport: "streamable-http", Endpoint: base + "/mcp", ProtocolVersions: append([]string(nil), mcp.Versions...)},
 		Apps: harnessDiscoveredApps{

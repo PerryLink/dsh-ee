@@ -53,6 +53,13 @@ curl -fsS "$BASE/v1/chat/completions" \
 
 额度、审计、上游故障转移由 dsh-ee 处理；错误与常见原因见 [l1-client.md](../l1-client.md) 的「常见错误」表。
 
+同一组模型也有 **Anthropic Messages 兼容端点** `POST /v1/messages`（别名 `POST /anthropic/v1/messages`，
+兼容 DeepSeek 的 `ANTHROPIC_BASE_URL=<base>/anthropic` 习惯）：Claude Code / Anthropic SDK 用
+`x-api-key` 或 `Authorization: Bearer` 带上同一个企业令牌即可，模型名仍填 dsh-ee 的对外模型名
+（不做 `claude-*` 名称映射）。优先线路是 DeepSeek provider 时走原生透传（请求/响应逐字节转发），其它 provider 降级转成 OpenAI chat；
+模型权限、额度与用量记账与上面完全一致。请求/响应/SSE 的字段映射、原生透传与降级转换的区别、
+Anthropic 错误壳和 v0 限制见 [Anthropic Messages 兼容](./anthropic-api.md)。
+
 ## 4. MCP 工具
 
 `/mcp` 是 JSON-RPC 2.0（Streamable HTTP），服务端**无状态**：
@@ -95,7 +102,7 @@ DSH 走接入插件：首次接入由 `setup.sh` 在浏览器里确认登录，�
 
 v1 的第三方中立契约（以 `/v1`、`/mcp` 与 `/.well-known/dsh-ee` 为准）：
 
-- `GET /.well-known/dsh-ee`：公开发现文档，给出服务名/版本、契约版本、设备授权与令牌端点、支持的 scope、模型/MCP/微应用能力、限额与弃用头；带 `ETag`，可私有缓存 5 分钟。
+- `GET /.well-known/dsh-ee`：公开发现文档，给出服务名/版本、契约版本、设备授权与令牌端点、支持的 scope、模型/MCP/微应用能力、限额与弃用头；模型能力里同时给出 `anthropic_messages_endpoint`（Anthropic Messages 兼容入口）；带 `ETag`，可私有缓存 5 分钟。
 - `GET /v1/capabilities`：当前令牌的能力摘要（模型名单、`/mcp` 工具计数、微应用与目录 revision、scope）；不带令牌时只返回公开子集（服务标识与契约版本）。
 - `GET /v1/apps`、`GET /v1/apps/{name}`：只读的中立微应用描述（需要令牌 + `hub` scope）。
 - 版本、错误与请求号：以上端点及 `/v1/*` 的响应都带 `Dsh-EE-API-Version: 1`；请求可以用同名头声明主版本；中立端点的错误统一为 `{"error": {...}}` 并带 `X-Request-Id`（#129 合并后所有响应都会回写 `X-Request-Id`：请求头带合法值时沿用，否则服务端生成）。

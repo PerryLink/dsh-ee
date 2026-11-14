@@ -161,6 +161,12 @@ func TestHarnessDiscovery(t *testing.T) {
 		doc.Models.Endpoint != ts.URL+"/v1/models" || doc.Models.ChatEndpoint != ts.URL+"/v1/chat/completions" {
 		t.Fatalf("models 入口不对：%+v", doc.Models)
 	}
+	if doc.Models.AnthropicEndpoint != ts.URL+"/v1/messages" ||
+		!slices.Contains(doc.Models.AnthropicAliases, ts.URL+"/anthropic/v1/messages") ||
+		!slices.Contains(doc.Models.NativeVendors, "deepseek") ||
+		doc.Models.ConversionFallback != "openai-chat" {
+		t.Fatalf("Anthropic 兼容入口/原生透传说明不对：%+v", doc.Models)
+	}
 	if doc.MCP.Transport != "streamable-http" || doc.MCP.Endpoint != ts.URL+"/mcp" || !slices.Contains(doc.MCP.ProtocolVersions, "2025-11-25") {
 		t.Fatalf("mcp 入口不对：%+v", doc.MCP)
 	}
@@ -283,10 +289,14 @@ type harnessDiscoveryView struct {
 	TokenURL   string   `json:"token_endpoint"`
 	Scopes     []string `json:"scopes_supported"`
 	Models     struct {
-		Protocol     string `json:"protocol"`
-		Streaming    bool   `json:"streaming"`
-		Endpoint     string `json:"endpoint"`
-		ChatEndpoint string `json:"chat_completions_endpoint"`
+		Protocol           string   `json:"protocol"`
+		Streaming          bool     `json:"streaming"`
+		Endpoint           string   `json:"endpoint"`
+		ChatEndpoint       string   `json:"chat_completions_endpoint"`
+		AnthropicEndpoint  string   `json:"anthropic_messages_endpoint"`
+		AnthropicAliases   []string `json:"anthropic_messages_aliases"`
+		NativeVendors      []string `json:"anthropic_messages_native_vendors"`
+		ConversionFallback string   `json:"anthropic_messages_conversion_fallback"`
 	} `json:"models"`
 	MCP struct {
 		Transport        string   `json:"transport"`
@@ -328,11 +338,13 @@ func assertRefsResolve(t *testing.T, spec any) {
 				}
 				var cur any = spec
 				for _, part := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+					// JSON Pointer 转义：~1 是 "/"，~0 是 "~"（path item 的 $ref 会用到）。
+					token := strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
 					m, ok := cur.(map[string]any)
 					if !ok {
 						t.Fatalf("%s: $ref %q 路径不是对象", where, ref)
 					}
-					if cur, ok = m[part]; !ok {
+					if cur, ok = m[token]; !ok {
 						t.Fatalf("%s: $ref %q 无法解析", where, ref)
 					}
 				}
@@ -401,8 +413,8 @@ func TestHarnessOpenAPI(t *testing.T) {
 		t.Fatalf("OpenAPI 头信息不对：%+v", spec)
 	}
 	for _, path := range []string{
-		"/.well-known/dsh-ee", "/v1/capabilities", "/v1/models", "/v1/chat/completions",
-		"/v1/apps", "/v1/apps/{name}", "/v1/openapi.json",
+		"/.well-known/dsh-ee", "/v1/capabilities", "/v1/models", "/v1/chat/completions", "/v1/messages",
+		"/anthropic/v1/messages", "/v1/apps", "/v1/apps/{name}", "/v1/openapi.json",
 	} {
 		if _, ok := spec.Paths[path]; !ok {
 			t.Fatalf("OpenAPI 缺少路径 %s（现有 %v）", path, len(spec.Paths))
@@ -428,10 +440,10 @@ func TestHarnessOpenAPI(t *testing.T) {
 	expect(t, "读发现文档", code, 200, discBody)
 	disc := decode[harnessDiscoveryView](t, discBody)
 	paths := map[string]bool{}
-	for _, u := range []string{
-		disc.Models.Endpoint, disc.Models.ChatEndpoint, disc.Apps.Endpoint,
+	for _, u := range append([]string{
+		disc.Models.Endpoint, disc.Models.ChatEndpoint, disc.Models.AnthropicEndpoint, disc.Apps.Endpoint,
 		disc.CapabilitiesEndpoint, disc.OpenAPIURL,
-	} {
+	}, disc.Models.AnthropicAliases...) {
 		path := strings.TrimPrefix(u, ts.URL)
 		if path == u {
 			t.Fatalf("发现文档入口应是绝对地址：%q", u)
