@@ -8,10 +8,12 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 import zh from "./zh";
 import en from "./en";
+import es from "./es";
 
 export const LANGUAGES = [
   { code: "zh-CN", label: "简体中文" },
   { code: "en", label: "English" },
+  { code: "es", label: "Español" },
 ] as const;
 
 export type Lang = (typeof LANGUAGES)[number]["code"];
@@ -27,7 +29,7 @@ void i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
-    resources: { "zh-CN": { translation: zh }, en: { translation: en } },
+    resources: { "zh-CN": { translation: zh }, en: { translation: en }, es: { translation: es } },
     supportedLngs: LANGUAGES.map((l) => l.code),
     // 其它语言的浏览器看英文
     fallbackLng: "en",
@@ -37,7 +39,8 @@ void i18n
       caches: ["localStorage"],
       // zh-TW、zh-HK 等都用简体中文，en-US、en-GB 用英文。
       // 注意不要改用 nonExplicitSupportedLngs：在当前 i18next 版本下它会让 zh-CN 取不到文案。
-      convertDetectedLanguage: (lng: string) => (lng.startsWith("zh") ? "zh-CN" : lng.startsWith("en") ? "en" : lng),
+      convertDetectedLanguage: (lng: string) =>
+      lng.startsWith("zh") ? "zh-CN" : lng.startsWith("en") ? "en" : lng.startsWith("es") ? "es" : lng,
     },
     interpolation: { escapeValue: false },
     returnNull: false,
