@@ -6,6 +6,7 @@
     "dev/overview.md",
     "dev/harness-quickstart.md",
     "dev/anthropic-api.md",
+    "dev/deepseek-tools.md",
     "dev/plugin-quickstart.md",
     "dev/extension-quickstart.md",
     "dev/access-rules.md",
@@ -25,6 +26,11 @@
         "title": "模型网关",
         "url": "/v1/models",
         "description": "OpenAI 兼容的模型列表与 /v1/chat/completions；Bearer 令牌。"
+      },
+      {
+        "title": "DeepSeek 工具代理（文件 / 语音 / 搜索抓取 / OCR）",
+        "docs": "dev/deepseek-tools.md",
+        "description": "用同一个企业 Bearer 令牌上传文件、转写/合成语音、搜索抓取网页、OCR，以及 Anthropic 兼容 Files：默认只允许管理员与机器人账号，可显式放开员工；代理只转发到配置的 DeepSeek 上游，不落盘、不计 token、文件操作写审计。"
       },
       {
         "title": "MCP 工具面",

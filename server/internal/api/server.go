@@ -93,6 +93,13 @@ type Options struct {
 	ExtensionRequireSignature bool
 	// 旧版 npm 令牌 / API key 的 scope 收敛（docs/token-lifecycle.md）；默认 false 保持旧行为。
 	RestrictLegacyTokenScopes bool
+	// DeepSeek 工具代理（deepseek_tools.go）选用的模型上游：provider 的 name 或数字 id；
+	// 为空时用第一个启用且 vendor=deepseek 的上游。只影响 /v1/files 与 /v1/tools/*，
+	// 不参与模型网关的故障切换。
+	DeepSeekProvider string
+	// 是否允许普通员工调用 DeepSeek 文件/工具接口与在对话里引用 file_id
+	// （DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE）。默认 false：只有管理员与机器人/服务账号可用。
+	DeepSeekToolsAllowEmployee bool
 	// mint 的共享（数据库）固定窗口限流：每 IP 每分钟次数；0 用默认 30（DSH_EE_EMBED_MINT_PER_MINUTE）。
 	// 多实例部署时是合计额度，不是每实例一份。
 	EmbedMintPerMinute int
@@ -320,7 +327,7 @@ func (s *Server) Handler() http.Handler {
 	// Anthropic 兼容面的别名前缀（DeepSeek 的 base URL 习惯）：未匹配路径用 Anthropic 错误壳，
 	// 不要落到前端 SPA 兜底。
 	mux.HandleFunc("/anthropic/", func(w http.ResponseWriter, r *http.Request) {
-		writeAnthropicErr(w, http.StatusNotFound, "not_found_error", "接口不存在：Anthropic 兼容入口是 POST /v1/messages（别名 /anthropic/v1/messages）")
+		writeAnthropicErr(w, http.StatusNotFound, "not_found_error", "接口不存在：Anthropic 兼容入口是 POST /v1/messages（别名 /anthropic/v1/messages）与 /anthropic/v1/files")
 	})
 	if s.opts.Web != nil {
 		mux.Handle("/", s.opts.Web)
