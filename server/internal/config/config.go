@@ -104,6 +104,12 @@ type Config struct {
 	EmbedCrossSite bool
 	// ee_emb_ 嵌入会话有效期（DSH_EE_EMBED_SESSION_TTL），默认 2h；设计建议 1h–8h。
 	EmbedSessionTTL time.Duration
+	// 内容安全策略（DSH_EE_CSP）：off（默认，只加现有的 frame-ancestors）/ report（只报告）/
+	// enforce（阻断）。见 server/internal/api/security_headers.go。
+	CSP string
+	// CSP 违规报告地址（DSH_EE_CSP_REPORT_URI，可选）。必须是 http(s) 绝对地址；只在
+	// DSH_EE_CSP 不是 off 时生效，用于 report 模式收集违规或 enforce 模式观测被拦的请求。
+	CSPReportURI string
 	// mint 的共享固定窗口限流：每 IP 每分钟次数（DSH_EE_EMBED_MINT_PER_MINUTE），默认 30。
 	// 落数据库，多实例部署时是合计额度。
 	EmbedMintPerMinute int
@@ -371,6 +377,17 @@ func Load() (*Config, error) {
 	c.EmbedExchangePerMinute, err = positiveIntEnv("DSH_EE_EMBED_EXCHANGE_PER_MINUTE", 60)
 	if err != nil {
 		return nil, err
+	}
+	// 内容安全策略：默认 off，保持现有「只加 frame-ancestors」行为不变。
+	c.CSP, err = parseCSPMode(os.Getenv("DSH_EE_CSP"))
+	if err != nil {
+		return nil, err
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_CSP_REPORT_URI")); v != "" {
+		if err := validateCSPReportURI(v); err != nil {
+			return nil, err
+		}
+		c.CSPReportURI = v
 	}
 	return c, nil
 }

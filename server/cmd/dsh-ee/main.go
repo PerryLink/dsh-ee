@@ -118,6 +118,10 @@ func run(log *slog.Logger) error {
 	if msg := extensionSigningWarning(cfg.ExtensionRequireSignature, len(extKeys), usable); msg != "" {
 		log.Warn(msg)
 	}
+	// CSP 的 script-src 要用 index.html 内联脚本的哈希（首屏主题脚本）；从嵌入的构建产物
+	// 实际下发的那份 HTML 里算，构建变化时不会失效。
+	inlineScriptHashes := webui.InlineScriptHashes()
+	_, embeddedWeb := webui.IndexHTML()
 	srv := api.New(st, box, api.Options{
 		CookieSecure:   cfg.CookieSecure,
 		SessionTTL:     cfg.SessionTTL,
@@ -145,6 +149,10 @@ func run(log *slog.Logger) error {
 		EmbedOrigins:              cfg.EmbedOrigins,
 		EmbedCrossSite:            cfg.EmbedCrossSite,
 		EmbedSessionTTL:           cfg.EmbedSessionTTL,
+		// 内容安全策略：默认 off（只保留现有 frame-ancestors 收口）
+		CSP:                   cfg.CSP,
+		CSPReportURI:          cfg.CSPReportURI,
+		CSPInlineScriptHashes: inlineScriptHashes,
 		// 每令牌的 /v1 与 /mcp 请求数；默认 60，可用 DSH_EE_RATE_LIMIT 调整或关闭
 		RateLimitPerMinute:     cfg.RateLimitPerMinute,
 		LoginIPLimit:           cfg.LoginIPLimit,
@@ -156,6 +164,15 @@ func run(log *slog.Logger) error {
 		// 企业目录（directory.go）：tarball 来源的主机白名单
 		DirectoryTarballHosts: cfg.DirectoryTarballHosts,
 	}, log)
+	if cfg.CSP != config.CSPOff {
+		log.Info("内容安全策略已启用", "mode", cfg.CSP, "inline_script_hashes", len(inlineScriptHashes), "report_uri", cfg.CSPReportURI)
+		if cfg.CSP == config.CSPEnforce && len(inlineScriptHashes) == 0 && !embeddedWeb {
+			log.Warn("CSP=enforce 但没有内联脚本哈希：本二进制没有嵌入前端，HTML 不由本进程提供；若前端另有部署，请只在该层开 CSP")
+		}
+	}
+	if cfg.CSP == config.CSPOff && cfg.CSPReportURI != "" {
+		log.Warn("设置了 DSH_EE_CSP_REPORT_URI 但 DSH_EE_CSP=off：报告地址不会生效")
+	}
 	if cfg.RateLimitPerMinute > 0 {
 		log.Info("已启用公开协议面限流", "per_minute_per_token", cfg.RateLimitPerMinute)
 	} else {

@@ -99,6 +99,15 @@ type Options struct {
 	EmbedExchangePerMinute int
 	// 每用户同时有效的嵌入会话上限；0 用默认 5，超过时撤销最旧的会话。
 	EmbedMaxSessionsPerUser int
+	// 内容安全策略（DSH_EE_CSP）：off / report / enforce；空或其它值按 off。
+	// report 用 Content-Security-Policy-Report-Only，enforce 用 Content-Security-Policy；
+	// 两种模式都保留 #118 的 frame-ancestors 嵌入收口。见 security_headers.go。
+	CSP string
+	// CSP 违规报告地址（DSH_EE_CSP_REPORT_URI）；为空时策略里不加 report-uri。
+	CSPReportURI string
+	// index.html 里内联脚本的 CSP sha256 源（形如 "sha256-…"）。由 webui 在启动时从
+	// 嵌入的构建产物算出来，见 webui.InlineScriptHashes；为空时 script-src 只有 'self'。
+	CSPInlineScriptHashes []string
 	// 企业目录（directory.go）：tarball 来源的主机白名单；空表示只接受公网 https 地址。
 	DirectoryTarballHosts []string
 	// 刷新令牌（docs/token-lifecycle.md §3）：默认关闭；关闭时 POST /api/auth/refresh 返回 404，
