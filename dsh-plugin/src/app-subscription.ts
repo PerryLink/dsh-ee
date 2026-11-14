@@ -1,4 +1,5 @@
 import type { HttpClient } from "./http.js";
+import { t } from "./i18n/index.js";
 
 const nameRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -8,7 +9,7 @@ const nameRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  * 成功后由调用方立刻刷新目录，让 /名字 马上可用或消失。
  */
 export async function setAppSubscription(http: HttpClient, name: string, enabled: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (typeof name !== "string" || !nameRe.test(name) || name.length > 48) return { ok: false, error: "微应用名不合法" };
+  if (typeof name !== "string" || !nameRe.test(name) || name.length > 48) return { ok: false, error: t("appSubscription.invalidAppName") };
   const response = await http.fetch(`/api/dsh/apps/${encodeURIComponent(name)}/subscription`, { method: enabled ? "POST" : "DELETE" });
   if (response.ok) return { ok: true };
   let error = `HTTP ${response.status}`;
