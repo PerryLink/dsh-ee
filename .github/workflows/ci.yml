@@ -86,7 +86,9 @@ jobs:
           echo "TiDB 没起来" && exit 1
       - run: go vet ./...
         working-directory: server
-      - run: go test -count=1 ./...
+      # internal/api 在合并后的测试量下已超过 Go 默认 10m 单包超时；显式放宽到 20m，
+      # 避免真实失败被 timeout 掩盖（仍保留超时上限，防止挂死）。
+      - run: go test -count=1 -timeout=20m ./...
         working-directory: server
         env:
           DSH_EE_TEST_DSN: root:@tcp(127.0.0.1:4000)/
