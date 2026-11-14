@@ -18,10 +18,16 @@ export default async function (t) {
   step("侧栏新增「开发」组（开发文档 / 开发样例），排在「接入」之后");
 
   // ---- /docs：目录 + 分类筛选 + 详情（表格与标题锚点）----
+  // 站内文档数量从构建期生成的 /llms.txt 反推：新增一篇 docs/dev 文档后这里不用跟着改数字。
+  const llmsRes = await page.request.get(`${BASE}/llms.txt`);
+  assertEq(llmsRes.status(), 200, "/llms.txt 状态");
+  const llmsText = await llmsRes.text();
+  const docTotal = new Set([...llmsText.matchAll(/\]\(\/docs\/([a-z0-9-]+)\)/g)].map((m) => m[1])).size;
+  assert(docTotal >= 7, `llms.txt 应列出站内文档，实际 ${docTotal} 篇`);
   await page.goto(`${BASE}/docs`);
   await page.getByRole("heading", { level: 1, name: "开发文档" }).waitFor();
   const docCards = page.locator("[data-dev-doc]");
-  assertEq(await docCards.count(), 7, "开发文档数量");
+  assertEq(await docCards.count(), docTotal, "开发文档数量");
   await page.getByRole("button", { name: "DSH 插件" }).click();
   assertEq(await page.locator("a[data-dev-doc]").count(), 1, "按分类筛选后的文档数");
   await page.getByRole("button", { name: "全部" }).click();
@@ -33,19 +39,15 @@ export default async function (t) {
   await search.fill("TASL"); // overview 与 quality-standards 正文都有
   assertEq(await page.locator("a[data-dev-doc]").count(), 2, "搜索「TASL」后的文档数");
   await page.getByRole("button", { name: "清除搜索" }).click();
-  assertEq(await page.locator("a[data-dev-doc]").count(), 7, "清除搜索后恢复全部文档");
+  assertEq(await page.locator("a[data-dev-doc]").count(), docTotal, "清除搜索后恢复全部文档");
   step("/docs 支持标题+正文搜索（中文两字词）与分类筛选叠加");
   await shot(page, "devhub-docs-list");
 
-  // /llms.txt：构建期生成给 Agent 的入口，匿名静态可读
-  const llmsRes = await page.request.get(`${BASE}/llms.txt`);
-  assertEq(llmsRes.status(), 200, "/llms.txt 状态");
-  const llmsText = await llmsRes.text();
+  // /llms.txt 的正文断言（状态码/正文在上面已经取过）
   assert(llmsText.startsWith("# dsh-ee 开发文档"), "llms.txt 应以 H1 标题开头");
-  for (const needle of ["/docs/overview", "/docs/harness-quickstart", "/.well-known/dsh-ee", "/v1/models", "/mcp", "docs/errors.md", "docs/extension-protocol.md"]) {
+  for (const needle of ["/docs/overview", "/docs/harness-quickstart", "/v1/messages", "/anthropic/v1/messages", "/.well-known/dsh-ee", "/v1/models", "/mcp", "docs/errors.md", "docs/extension-protocol.md"]) {
     assert(llmsText.includes(needle), `/llms.txt 缺少「${needle}」`);
   }
-  assert((llmsText.match(/\/docs\/[a-z-]+\)/g) || []).length >= 7, "llms.txt 应列出全部站内文档");
   step("/llms.txt 可匿名读取，含文档清单与发现/模型/MCP/错误码入口");
 
   await page.locator('a[data-dev-doc="overview"]').click();
@@ -161,7 +163,7 @@ export default async function (t) {
     assert(blockBox && reqBox && blockBox.y > reqBox.y, "「开发」双卡应位于权限申请卡之后");
   }
   await shot(page, "devhub-workbench");
-  await block.getByRole("link", { name: /全部 7 篇/ }).click();
+  await block.getByRole("link", { name: new RegExp(`全部 ${docTotal} 篇`) }).click();
   await page.waitForURL(/\/docs$/);
   step("工作台在权限申请卡之后显示「开发」双卡，各 3 条摘要并可进全部");
 

@@ -134,6 +134,10 @@ func run(log *slog.Logger) error {
 	if msg := extensionSigningWarning(cfg.ExtensionRequireSignature, len(extKeys), usable); msg != "" {
 		log.Warn(msg)
 	}
+	// CSP 的 script-src 要用 index.html 内联脚本的哈希（首屏主题脚本）；从嵌入的构建产物
+	// 实际下发的那份 HTML 里算，构建变化时不会失效。
+	inlineScriptHashes := webui.InlineScriptHashes()
+	_, embeddedWeb := webui.IndexHTML()
 	srv := api.New(st, box, api.Options{
 		CookieSecure:   cfg.CookieSecure,
 		SessionTTL:     cfg.SessionTTL,
@@ -147,6 +151,12 @@ func run(log *slog.Logger) error {
 		AdminModeUnit:  cfg.AdminModeUnit,
 		// 旧令牌 scope 收敛（DSH_EE_RESTRICT_LEGACY_TOKEN_SCOPES）；默认关闭，不破坏现有客户端
 		RestrictLegacyTokenScopes: cfg.RestrictLegacyTokenScopes,
+		// 刷新令牌（DSH_EE_REFRESH_TOKENS，docs/token-lifecycle.md §3）；默认关闭
+		RefreshTokens:             cfg.RefreshTokens,
+		RefreshAccessTTL:          cfg.RefreshAccessTTL,
+		RefreshTokenTTL:           cfg.RefreshTokenTTL,
+		RefreshFamilyTTL:          cfg.RefreshFamilyTTL,
+		RefreshGrace:              cfg.RefreshGrace,
 		DataHub:                   dataHub,
 		DataHubErr:                dataErr,
 		DemoSite:                  demoSite(cfg),
@@ -155,6 +165,10 @@ func run(log *slog.Logger) error {
 		EmbedOrigins:              cfg.EmbedOrigins,
 		EmbedCrossSite:            cfg.EmbedCrossSite,
 		EmbedSessionTTL:           cfg.EmbedSessionTTL,
+		// 内容安全策略：默认 off（只保留现有 frame-ancestors 收口）
+		CSP:                   cfg.CSP,
+		CSPReportURI:          cfg.CSPReportURI,
+		CSPInlineScriptHashes: inlineScriptHashes,
 		// 每令牌的 /v1 与 /mcp 请求数；默认 60，可用 DSH_EE_RATE_LIMIT 调整或关闭
 		RateLimitPerMinute:     cfg.RateLimitPerMinute,
 		LoginIPLimit:           cfg.LoginIPLimit,
@@ -168,6 +182,15 @@ func run(log *slog.Logger) error {
 		// 多实例后台任务租约；后台循环与清理任务共用同一个租约执行器
 		BackgroundLeases: leases,
 	}, log)
+	if cfg.CSP != config.CSPOff {
+		log.Info("内容安全策略已启用", "mode", cfg.CSP, "inline_script_hashes", len(inlineScriptHashes), "report_uri", cfg.CSPReportURI)
+		if cfg.CSP == config.CSPEnforce && len(inlineScriptHashes) == 0 && !embeddedWeb {
+			log.Warn("CSP=enforce 但没有内联脚本哈希：本二进制没有嵌入前端，HTML 不由本进程提供；若前端另有部署，请只在该层开 CSP")
+		}
+	}
+	if cfg.CSP == config.CSPOff && cfg.CSPReportURI != "" {
+		log.Warn("设置了 DSH_EE_CSP_REPORT_URI 但 DSH_EE_CSP=off：报告地址不会生效")
+	}
 	if cfg.RateLimitPerMinute > 0 {
 		log.Info("已启用公开协议面限流", "per_minute_per_token", cfg.RateLimitPerMinute)
 	} else {
@@ -259,6 +282,18 @@ func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger, lease
 					log.Warn("清理过期设备码失败", "err", err)
 				} else if n > 0 {
 					log.Info("已清理过期设备码", "count", n)
+				}
+				// 刷新令牌（docs/token-lifecycle.md）：清掉宽限已过的重放密文（明文窗口尽量短）；
+				// 过期且已轮换/吊销的 refresh 记录保留 30 天后删除，access token 的记录不受影响。
+				if n, err := st.ClearRefreshSuccessors(ctx, time.Now().Add(-time.Hour)); err != nil {
+					log.Warn("清理刷新令牌重放密文失败", "err", err)
+				} else if n > 0 {
+					log.Info("已清理刷新令牌重放密文", "count", n)
+				}
+				if n, err := st.DeleteExpiredRefreshTokens(ctx, time.Now().Add(-30*24*time.Hour)); err != nil {
+					log.Warn("清理过期刷新令牌失败", "err", err)
+				} else if n > 0 {
+					log.Info("已清理过期刷新令牌", "count", n)
 				}
 			})
 		}

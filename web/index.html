@@ -9,12 +9,13 @@
       // 首屏先落主题再渲染，避免刷新时闪一下浅色。逻辑与 src/lib/theme.ts 保持一致。
       (function () {
         try {
-          // 宿主 iframe 用 ?embed=1&theme=light|dark 指定主题：只作用于本次页面，不写回 localStorage。
+          // 宿主 iframe 用 ?embed=1&theme=light|dark|system 指定主题：只作用于本次页面，不写回 localStorage。
+          // system 跟随系统 prefers-color-scheme（后续变化由 src/lib/use-embed.ts 的 useEmbedTheme 处理）。
           var params = new URLSearchParams(window.location.search);
           var embed = params.get("embed") === "1";
           var forced = embed ? params.get("theme") : null;
           var mode =
-            forced === "light" || forced === "dark"
+            forced === "light" || forced === "dark" || forced === "system"
               ? forced
               : localStorage.getItem("dsh-ee:theme") || "system";
           var dark =

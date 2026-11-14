@@ -86,6 +86,12 @@ func (s *Store) ListDirectoryEntries(ctx context.Context) ([]DirectoryEntry, err
 	return out, rows.Err()
 }
 
+// GetDirectoryEntry 按 id 取一条登记过的目录条目。安装/升级只认这里登记过的来源。
+func (s *Store) GetDirectoryEntry(ctx context.Context, id int64) (*DirectoryEntry, error) {
+	return scanDirectoryEntry(s.db.QueryRowContext(ctx,
+		"SELECT "+directoryEntryCols+" FROM directory_entries WHERE id = ?", id))
+}
+
 // ListDirectoryEntriesOf 列出一份目录登记过的条目。
 func (s *Store) ListDirectoryEntriesOf(ctx context.Context, directoryID string) ([]DirectoryEntry, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+directoryEntryCols+" FROM directory_entries WHERE directory_id = ? ORDER BY kind, name, version, channel", directoryID)

@@ -7,5 +7,6 @@ export default {
     connectHint: "The host will complete authorization automatically. If this persists, open the app at the top level in a browser.",
     openInBrowser: "Open in browser",
     failureHint: "Embed mode never redirects to the sign-in page inside the iframe. The host can listen for dsh-ee:error, sign the user in at the top level and reopen the app.",
+    mobileHint: "You are viewing this app in a mobile embed. Content still works; open it at the top level in a browser for the full experience.",
   },
 };

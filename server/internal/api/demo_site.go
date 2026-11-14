@@ -62,14 +62,17 @@ var demoSiteBlocked = map[string]bool{
 	"POST /api/embed/sessions":      true,
 	"POST /api/auth/embed/exchange": true,
 	// 上传文件、从外网拉东西
-	"POST /api/me/packages":                    true,
-	"POST /api/agent/packages":                 true,
-	"POST /api/me/import-requests":             true,
-	"POST /api/admin/upstream/sync":            true,
-	"POST /api/admin/upstream/check-updates":   true,
-	"POST /api/admin/upstream/import":          true,
-	"POST /api/admin/dsh-releases/check":       true,
-	"POST /api/admin/dsh-releases/{id}/mirror": true,
+	"POST /api/me/packages":                  true,
+	"POST /api/agent/packages":               true,
+	"POST /api/me/import-requests":           true,
+	"POST /api/admin/upstream/sync":          true,
+	"POST /api/admin/upstream/check-updates": true,
+	"POST /api/admin/upstream/import":        true,
+	// 企业目录安装会下载扩展包、从上游同步插件：演示站不替访客往外拉东西
+	"POST /api/admin/directory/entries/{id}/install": true,
+	"POST /api/admin/directory/entries/{id}/upgrade": true,
+	"POST /api/admin/dsh-releases/check":             true,
+	"POST /api/admin/dsh-releases/{id}/mirror":       true,
 }
 
 const demoSiteMsg = "演示站不开放这个操作。想完整体验，可以自己部署一套：见 deploy/README.md"

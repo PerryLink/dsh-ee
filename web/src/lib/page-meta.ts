@@ -46,6 +46,7 @@ const META = {
   "admin-brand": { title: "品牌与外观", defaultPath: "/admin/brand", description: "DSH 里的企业名称、logo、首屏标题与配色" },
   "admin-auth": { title: "登录方式", defaultPath: "/admin/auth", description: "LDAP / AD 与企业统一登录（OIDC）" },
   "admin-signing-keys": { title: "扩展签名", defaultPath: "/admin/signing-keys", description: "扩展签名的受信任公钥：新增、换下、撤销" },
+  "admin-directory": { title: "企业插件目录", defaultPath: "/admin/directory", description: "登记过的企业目录：校验 / 登记目录 JSON，按条目安装、升级扩展与插件" },
   "admin-settings": { title: "系统设置", defaultPath: "/admin/settings", description: "全局设置" },
 } satisfies Record<string, PageMeta>;
 

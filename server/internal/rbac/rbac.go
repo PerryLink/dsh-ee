@@ -147,6 +147,9 @@ var DefaultMenus = []Menu{
 		// 扩展签名的信任根（docs/plugin-signing.md §7）：装扩展的管理员顺手管受信任公钥；
 		// 只有 settings.manage 的管理员也能直接打开这个路由（web/src/main.tsx 的兜底）。
 		{Kind: "page", Title: "扩展签名", Path: "/admin/signing-keys", PageKey: "admin-signing-keys", Icon: "ShieldCheck", Permission: ConnectionsManage},
+		// 企业插件目录（docs/plugin-signing.md §8）：登记来源 + 对单条显式安装 / 升级；
+		// 同时服务管连接（扩展）和管插件（npm 包）两种管理员，默认挂在「能力与连接」。
+		{Kind: "page", Title: "企业插件目录", Path: "/admin/directory", PageKey: "admin-directory", Icon: "FolderOpen", Permission: ConnectionsManage},
 	}},
 	{Kind: "group", Title: "分发与源", Children: []Menu{
 		{Kind: "page", Title: "DSH 分发", Path: "/admin/distribution", PageKey: "admin-distribution", Icon: "Download", Permission: DistributionManage},

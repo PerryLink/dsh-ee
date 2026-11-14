@@ -4,8 +4,11 @@ import { useTranslation } from "react-i18next";
 import { api, setEmbedToken, setEmbedUnauthorizedHandler } from "./api";
 import { useAuth } from "./auth";
 import {
+  EMBED_HANDSHAKE_TIMEOUT_MS,
+  EMBED_HOST_FALLBACK_MS,
   EMBED_PROTOCOL_V2,
   EmbedExchangeError,
+  embedViewport,
   exchangeEmbedCode,
   isAppPath,
   isEmbedMessage,
@@ -17,6 +20,7 @@ import {
   resolvedDocumentTheme,
   type EmbedError,
   type EmbedOptions,
+  type EmbedErrorStage,
 } from "./embed";
 import { useEmbedResize, useEmbedTheme } from "./use-embed";
 
@@ -52,8 +56,12 @@ export function useEmbedBridge() {
   return useContext(Ctx);
 }
 
-const HANDSHAKE_TIMEOUT_MS = 10_000;
 const MAX_CONNECT_ATTEMPTS = 2;
+
+/** 失败时统一带 stage：宿主无需解析 message 就知道卡在加载 / 会话 / code 交换哪一步。 */
+function embedFailure(stage: EmbedErrorStage, code: EmbedError["code"], message: string, retryable = false): EmbedError {
+  return { stage, code, message, retryable };
+}
 
 /** v2 hello：iframe 声明支持的消息（老宿主按未知消息忽略；不降级授权）。 */
 const SUPPORTS_V2 = ["connect-v1", "navigate", "navigate-request", "open-external", "logout", "deeplink", "theme", "resize"];
@@ -95,6 +103,10 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         app: { slug },
         supports: SUPPORTS_V2,
         theme: resolvedDocumentTheme(),
+        viewport: embedViewport(),
+        // 宿主按这两个时间对齐兜底：8 秒没有 ready/error 先显示手动「在浏览器打开」（不自动顶层打开），
+        // iframe 自己在 10 秒进入失败态并发 dsh-ee:error。见 docs/embedding.md §5。
+        timeouts: { handshake_ms: EMBED_HANDSHAKE_TIMEOUT_MS, host_fallback_ms: EMBED_HOST_FALLBACK_MS },
       });
     }
     if (!readySent.current) {
@@ -103,6 +115,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         app: { slug },
         theme: resolvedDocumentTheme(),
         supports: ["connect-v1"],
+        viewport: embedViewport(),
       });
     }
   }, [active, options, slug]);
@@ -166,7 +179,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     async (code: string) => {
       if (!active) return;
       if (attempts.current >= MAX_CONNECT_ATTEMPTS) {
-        setError({ code: "auth_required", message: t("embed.authRequired"), retryable: false });
+        setError(embedFailure("session", "auth_required", t("embed.authRequired")));
         setPhase("failed");
         return;
       }
@@ -186,14 +199,14 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         expiresAt.current = null;
         const code2 = e instanceof EmbedExchangeError ? e.code : "embed_code_invalid";
         const message = e instanceof Error ? e.message : String(e);
-        postToHost(options, "dsh-ee:error", { code: code2, message, retryable: code2 === "embed_code_expired" });
+        postToHost(options, "dsh-ee:error", { code: code2, message, retryable: code2 === "embed_code_expired", stage: "exchange" });
         if (attempts.current < MAX_CONNECT_ATTEMPTS) {
           // 只允许宿主重试一次：重新 mint 后应该发新的 connect。
           authRequested.current = false;
           setPhase("waiting");
           postToHost(options, "dsh-ee:auth-required", { reason: "expired" });
         } else {
-          setError({ code: "auth_required", message: t("embed.authRequired"), retryable: false });
+          setError(embedFailure("exchange", "auth_required", t("embed.authRequired"), code2 === "embed_code_expired"));
           setPhase("failed");
         }
       }
@@ -218,7 +231,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     sessionSent.current = false;
     clear();
     postToHostV2(options, "dsh-ee:logged-out", { revoked });
-    setError({ code: "auth_required", message: t("embed.loggedOut"), retryable: false });
+    setError(embedFailure("session", "auth_required", t("embed.loggedOut")));
     setPhase("failed");
   }, [clear, options, t, user]);
 
@@ -259,7 +272,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     if (phase === "failed" || phase === "connecting") return;
     if (!options.host) {
       // 没有 host 就没法握手：直接给失败态（宿主会收到 hello/ready 但没有 connect 通道）。
-      setError({ code: "auth_required", message: t("embed.authRequired"), retryable: false });
+      setError(embedFailure("session", "auth_required", t("embed.authRequired")));
       setPhase("failed");
       return;
     }
@@ -271,9 +284,9 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     if (timer.current === null) {
       timer.current = window.setTimeout(() => {
         timer.current = null;
-        setError({ code: "auth_required", message: t("embed.authRequired"), retryable: false });
+        setError(embedFailure("session", "auth_required", t("embed.authRequired")));
         setPhase("failed");
-      }, HANDSHAKE_TIMEOUT_MS);
+      }, EMBED_HANDSHAKE_TIMEOUT_MS);
     }
   }, [active, loading, user, phase, options, t]);
 
@@ -283,10 +296,10 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
   // 失败态：给宿主一个可判断的 dsh-ee:error（同一个错误只发一次）。
   useEffect(() => {
     if (!active || phase !== "failed" || !error) return;
-    const key = `${error.code}\n${error.message}`;
+    const key = `${error.stage}\n${error.code}\n${error.message}`;
     if (errorSent.current === key) return;
     errorSent.current = key;
-    postToHost(options, "dsh-ee:error", { code: error.code, message: error.message, retryable: !!error.retryable });
+    postToHost(options, "dsh-ee:error", { code: error.code, message: error.message, retryable: !!error.retryable, stage: error.stage });
   }, [active, phase, error, options]);
 
   // 4) 认证成功：通知宿主 session（只带展示信息，不含 token）。

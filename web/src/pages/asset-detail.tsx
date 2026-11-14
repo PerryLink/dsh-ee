@@ -459,7 +459,9 @@ function AssetDetail() {
 
           {a.kind === "connection" && d.my_credential && a.live_version > 0 && <MyCredentialCard assetId={a.id} cred={d.my_credential} reload={detail.reload} />}
           {a.kind === "connection" && a.can_manage && (a.spec.user_auth?.mode === "user_secret" || a.spec.user_auth?.mode === "oauth") && <CredentialHolders key={d.my_credential?.updated_at ?? ""} assetId={a.id} />}
-          {a.kind === "connection" && a.can_manage && a.spec.extension && a.live_version > 0 && <ExtensionPanel connectionId={a.id} />}
+          {a.kind === "connection" && a.can_manage && a.spec.extension && a.live_version > 0 && (
+            <ExtensionPanel connectionId={a.id} slug={a.slug} onChanged={detail.reload} />
+          )}
 
           {a.kind === "connection" && d.calls && (
             <Card>

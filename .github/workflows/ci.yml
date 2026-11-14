@@ -175,6 +175,7 @@ jobs:
   sdk:
     # 第三方 Harness SDK（sdk/typescript + sdk/python）独立 job，不参与 server/e2e 主链。
     # TS：构建 / 类型检查 / mock fetch 单测 / npm pack 内容；Python：unittest / 编译检查 / wheel 构建。
+    # 发布工作流与包元数据检查只读，不发布（release-sdk.yml 仅手动/tag 触发）。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -199,3 +200,9 @@ jobs:
           python3 -m compileall -q dsh_ee_harness tests
           python3 -m pip wheel --no-deps -w /tmp/sdk-python-wheel .
           ls /tmp/sdk-python-wheel
+      - name: SDK 发布脚本 / 发布工作流 / 包元数据校验（不发布）
+        run: |
+          node --test scripts/sdk/*.test.mjs
+          node scripts/sdk/verify-release-workflow.mjs
+          node scripts/sdk/verify-package.mjs --package typescript
+          node scripts/sdk/verify-package.mjs --package python

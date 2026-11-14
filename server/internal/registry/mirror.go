@@ -18,6 +18,9 @@ type SyncRoot struct {
 	Name string `json:"name"`
 	// 为空时取上游的 latest
 	Version string `json:"version,omitempty"`
+	// 期望的内容摘要（npm 的 sha512 SRI，如 sha512-<base64>）。非空时先核对上游元数据里
+	// 声明的 integrity，对不上就不入库：企业目录登记了摘要，同步时要按它核对。
+	Integrity string `json:"integrity,omitempty"`
 	// 来自 dshfind 目录的展示信息（可选）
 	Catalog *FeedPlugin `json:"catalog,omitempty"`
 }
@@ -314,6 +317,16 @@ func (s *Service) syncRoot(ctx context.Context, jb *job, root SyncRoot, params S
 	uv := doc.Version(version)
 	if uv == nil {
 		return fmt.Errorf("上游没有版本 %q", version)
+	}
+	// 企业目录登记了内容摘要：上游声明的内容必须就是这一份。对不上时直接失败，
+	// 连 tarball 都不下载，也不写任何版本记录（失败不留半装）。
+	if root.Integrity != "" {
+		if uv.Integrity == "" {
+			return fmt.Errorf("上游没有给 %s@%s 提供 integrity，无法核对目录登记的摘要", root.Name, version)
+		}
+		if uv.Integrity != root.Integrity {
+			return fmt.Errorf("%s@%s 的内容摘要（%s）和企业目录登记的不一致，拒绝同步", root.Name, version, uv.Integrity)
+		}
 	}
 	status := store.StatusPublished
 	if params.ForceReview || (uv.Parsed.IsPlugin && pluginNeedsReview(set)) {

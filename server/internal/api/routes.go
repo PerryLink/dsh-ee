@@ -116,6 +116,9 @@ func (s *Server) routes() []route {
 		pub("POST /api/auth/login", s.handleLogin),
 		// 令牌自省：Bearer 自身（第三方 Harness/SDK）或管理员网页会话查任意令牌
 		pub("POST /api/auth/introspect", s.handleIntrospect),
+		// 刷新令牌（docs/token-lifecycle.md §3）：默认关闭，关闭时处理函数返回 404。
+		// 凭据在请求体里（refresh token），不需要 Bearer。
+		pub("POST /api/auth/refresh", s.handleRefreshToken),
 		pub("POST /api/auth/demo-login", s.handleDemoLogin),
 		pub("GET /demo/intro/{lang}", s.handleDemoVideo),
 		pub("POST /api/auth/logout", s.handleLogout),
@@ -204,7 +207,9 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/keys", s.handleIssueKey, rbac.KeysManage),
 		prm("DELETE /api/admin/keys/{id}", s.handleRevokeKey, rbac.KeysManage),
 		usr("GET /api/admin/tokens", s.handleAdminTokens),
-		usr("POST /api/admin/tokens", s.handleIssueToken),
+		// 签发令牌既可网页会话，也可用带 keys.manage（管理模式下的令牌）的 Bearer 调用，
+		// 供 CI / 机器人等无人值守场景续发 ee_at_（docs/token-lifecycle.md §6）。
+		prmt("POST /api/admin/tokens", s.handleIssueToken),
 		usr("POST /api/admin/tokens/revoke", s.handleRevokeTokens),
 
 		// 系统设置：登录即可读（前端要用组织名、作用域、评分开关），按段落校验写权限
@@ -249,15 +254,23 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/connections/test", s.handleConnTest, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/check", s.handleExtCheck, rbac.ConnectionsManage),
 		prm("POST /api/admin/extensions/install", s.handleExtInstall, rbac.ConnectionsManage),
+		// 扩展升级回滚（extensions_rollback.go）：历史来自 asset_versions，不另存凭据
+		prm("GET /api/admin/extensions/{target}/history", s.handleExtHistory, rbac.ConnectionsManage),
+		prm("POST /api/admin/extensions/{target}/rollback", s.handleExtRollback, rbac.ConnectionsManage),
 		// 扩展签名的信任根（signing_keys.go）：换下 / 撤销都保留记录，历史签名还能核对
 		prm("GET /api/admin/signing-keys", s.handleListSigningKeys, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/signing-keys", s.handleAddSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/signing-keys/{key_id}/retire", s.handleRetireSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/signing-keys/{key_id}/revoke", s.handleRevokeSigningKey, rbac.ConnectionsManage, rbac.SettingsManage),
 		// 企业目录 v1（directory.go）：验签 + 逐条校验后登记来源，只登记不安装
-		prm("GET /api/admin/directory", s.handleListDirectory, rbac.ConnectionsManage, rbac.SettingsManage),
+		prm("GET /api/admin/directory", s.handleListDirectory, rbac.ConnectionsManage, rbac.SettingsManage, rbac.PluginsManage),
 		prm("POST /api/admin/directory/check", s.handleDirectoryCheck, rbac.ConnectionsManage, rbac.SettingsManage),
 		prm("POST /api/admin/directory/apply", s.handleDirectoryApply, rbac.ConnectionsManage, rbac.SettingsManage),
+		// 目录条目的安装 / 升级（directory_install.go）：只对已登记条目、管理员明确触发；
+		// 权限按条目类型在处理器里校验（扩展 connections.manage、插件 plugins.manage），
+		// 所以这里只要求登录，不能用一个静态权限点放宽另一类。
+		usr("POST /api/admin/directory/entries/{id}/install", s.handleDirectoryEntryInstall),
+		usr("POST /api/admin/directory/entries/{id}/upgrade", s.handleDirectoryEntryUpgrade),
 		prm("GET /api/admin/fields", s.handleListFields, rbac.FieldsManage, rbac.UsersView),
 		prm("POST /api/admin/fields", s.handleCreateField, rbac.FieldsManage),
 		prm("PATCH /api/admin/fields/{id}", s.handlePatchField, rbac.FieldsManage),
@@ -421,6 +434,15 @@ func (s *Server) routes() []route {
 		// OpenAI 兼容网关，用个人 key 鉴权
 		pub("GET /v1/models", s.handleModels),
 		pub("POST /v1/chat/completions", s.handleChatCompletions),
+		// Anthropic Messages 兼容网关：Claude Code / Anthropic SDK 用 x-api-key 或 Bearer，
+		// 请求转成 OpenAI chat 后复用上面的模型权限、额度与用量记账（见 anthropic.go）
+		pub("POST /v1/messages", s.handleAnthropicMessages),
+		// 同一个 handler 的别名：DeepSeek 等厂商的 Anthropic base URL 习惯是 <base>/anthropic，
+		// 客户端拼出来就是 /anthropic/v1/messages；与 /v1/messages 行为完全一致。
+		pub("POST /anthropic/v1/messages", s.handleAnthropicMessages),
+		// count_tokens 不在 v0 范围内：给 Anthropic 客户端一个明确的错误壳，而不是落到 /v1/ 的 OpenAI 404
+		pub("POST /v1/messages/count_tokens", s.handleAnthropicCountTokens),
+		pub("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens),
 
 		// 第三方 Harness 的中立 v1 契约（harness.go）：发现文档、能力摘要、只读微应用描述、机器可读契约
 		pub("GET /.well-known/dsh-ee", s.handleHarnessDiscovery),
