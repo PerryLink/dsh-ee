@@ -389,6 +389,7 @@ export function formatKb(kb: number) {
   return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`;
 }
 
+/** 时间戳按秒（后端多为秒级），内部 ×1000 后再格式化；Date.parse() 得到的是毫秒，传进来前要 /1000。 */
 export function formatDate(ts: number) {
   return new Date(ts * 1000).toLocaleDateString("zh-CN");
 }
