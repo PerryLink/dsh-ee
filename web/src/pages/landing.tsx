@@ -286,6 +286,12 @@ export default function Landing() {
   const { t } = useTranslation();
   const onTop = !useScrolled();
   const film = useDemoFilm();
+  // 短片的按需语言包加载失败（最常见：部署换版后浏览器还拿着旧 index.html，旧 chunk 404）：
+  // 换回首屏插画，不让首屏留下一块空白，也不影响页面其它部分。
+  const [filmFailed, setFilmFailed] = useState(false);
+  useEffect(() => {
+    setFilmFailed(false);
+  }, [film]);
   useReveal();
   return (
     <div className="lp relative min-h-screen overflow-x-clip">
@@ -345,9 +351,14 @@ export default function Landing() {
             </div>
           </div>
           <div className="relative pb-10">
-            {film ? (
+            {film && !filmFailed ? (
               <div className={cx(shell, "pt-4")}>
-                <ProductFilmPlayer lang={film} label={t("landing.videoLabel")} className="mx-auto block w-full max-w-5xl rounded-xl bg-white shadow-lp ring-1 ring-lp-line" />
+                <ProductFilmPlayer
+                  lang={film}
+                  label={t("landing.videoLabel")}
+                  onFailed={() => setFilmFailed(true)}
+                  className="mx-auto block w-full max-w-5xl rounded-xl bg-white shadow-lp ring-1 ring-lp-line"
+                />
               </div>
             ) : (
               <LandingHeroScene />
