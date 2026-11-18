@@ -22,5 +22,12 @@ state or imply a copyright holder for dsh-ee itself.
 Other third-party materials remain under their own licenses, and nothing
 in this file changes those licenses.
 
+The Inter font shipped with the product film
+(web/src/components/product-film/fonts/Inter-400.woff2 and Inter-700.woff2)
+is Copyright 2016 The Inter Project Authors
+(https://github.com/rsms/inter), licensed under the SIL Open Font License,
+Version 1.1 (https://scripts.sil.org/OFL). The full license text is included
+at web/src/components/product-film/fonts/OFL-inter.txt.
+
 See docs/plugin-dev/SOURCES.md for sources, pinned versions and commits,
 licenses, and a description of changes.

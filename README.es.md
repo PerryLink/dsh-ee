@@ -242,6 +242,8 @@ Escanea el código QR con WeChat para unirte al grupo de usuarios y desarrollado
 
 <img alt="Código QR del grupo de WeChat de dsh-ee" src="docs/images/wechat-group.png" width="240">
 
+El código QR es válido durante 7 días. Si ha caducado, [abre un issue](https://github.com/hikariming/dsh-ee/issues) y compartiremos una nueva invitación.
+
 ## Contribuciones
 
 Los issues y pull requests son bienvenidos. Ejecuta las pruebas correspondientes antes de abrir un PR. Los textos de la interfaz están en `web/src/i18n/{zh,en}`; el archivo en inglés debe reflejar la estructura del chino, y las claves que faltan hacen fallar `tsc`.
