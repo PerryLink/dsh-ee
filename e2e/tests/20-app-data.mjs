@@ -8,7 +8,7 @@ export default async function (t) {
   const slug = `outing-${tag}`;
 
   // ---- 作者：编辑器里插入示例数据表 ----
-  await admin.goto(`${BASE}/assets/new?kind=app`);
+  await admin.goto(`${BASE}/assets/new?kind=app&mode=manual`);
   // 按钮在 Field 的 <label> 里，可访问名称是整段标签文字，所以按文字找
   const sample = admin.locator("button", { hasText: "插入示例（团建报名）" });
   await sample.waitFor();
