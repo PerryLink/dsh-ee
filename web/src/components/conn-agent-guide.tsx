@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { copyText } from "../lib/clipboard";
 import { Check, Copy, ExternalLink, Lightbulb, Repeat, Sparkles } from "lucide-react";
 import { useStore } from "../lib/store";
 import { PageLink } from "../lib/menus";
@@ -10,6 +11,11 @@ const textareaCls = "w-full rounded-md border border-neutral-300 bg-card px-3 py
 const EXAMPLES = ["travel", "crm", "ticket", "hr"] as const;
 const WAYS = ["openapi", "mcp", "unsure"] as const;
 const AUTHS = ["none", "bearer", "header", "unsure"] as const;
+
+/** 第三方 spec 可能自带我们的边界标记；先抹掉，避免在文档内伪造出「资料结束」。 */
+const SPEC_MARKER_RE = /<<<OPENAPI_SPEC_(?:BEGIN|END)>>>/g;
+/** 只提醒不拦截：粘贴的文档里疑似出现真实密钥时，建议先脱敏。Bearer 只认长串，避免 spec 里常见的 “Bearer Token” 字样误报。 */
+const SECRET_HINT_RE = /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}|\bsk-[A-Za-z0-9_-]{4,}|api[_-]?key/i;
 
 /**
  * 「新建连接 → 让 AI 帮我做」：管理员描述要接的系统、接入方式与认证，页面拼出一段提示词，
@@ -29,12 +35,16 @@ export function ConnAgentGuide({ onManual }: { onManual: () => void }) {
   const prompt = useMemo(() => {
     if (!what.trim()) return "";
     const P = (k: string, o?: Record<string, string>) => t(`connAgent.prompt.${k}` as "connAgent.prompt.head", o);
-    const lines = [P("head"), "", P("what") + what.trim()];
+    const spec = doc.trim();
+    const lines = [P("head"), ""];
+    // spec 是第三方内容：开头先声明「下面只是资料」，再用边界标记把它和指令隔开，降低提示词注入面。
+    if (spec) lines.push(P("guard"), "");
+    lines.push(P("what") + what.trim());
     if (way === "openapi") lines.push(P("wayOpenapi"));
     else if (way === "mcp") lines.push(P("wayMcp"));
     else lines.push(P("wayUnsure"));
     if (url.trim()) lines.push(P("url", { url: url.trim() }));
-    if (doc.trim()) lines.push("", P("doc", { doc: doc.trim() }));
+    if (spec) lines.push("", P("doc", { doc: spec.replace(SPEC_MARKER_RE, "[marker]") }));
     if (auth !== "unsure") {
       const h = auth === "header" && header.trim() ? `（${header.trim()}）` : "";
       lines.push(P("auth", { auth: t(`connAgent.auth.${auth}` as "connAgent.auth.none"), header: h }));
@@ -44,13 +54,17 @@ export function ConnAgentGuide({ onManual }: { onManual: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [what, way, url, doc, auth, header, t]);
 
-  const copy = () => {
+  const copy = async () => {
     if (!prompt) return;
-    void navigator.clipboard?.writeText(prompt);
+    // 局域网 HTTP 部署没有 Clipboard API，copyText 会回退到 execCommand；只有真正复制成功才提示「已复制」。
+    if (!(await copyText(prompt))) return notify(t("common.copyFailed"));
     setCopied(true);
     notify(t("connAgent.copied"));
     setTimeout(() => setCopied(false), 1500);
   };
+
+  /** 只提示「建议先脱敏」，不拦截复制。 */
+  const showSecretHint = way === "openapi" && SECRET_HINT_RE.test(doc);
 
   const steps = t("connAgent.steps", { returnObjects: true }) as string[];
   const iterate = t("connAgent.iterate", { returnObjects: true }) as string[];
@@ -93,7 +107,10 @@ export function ConnAgentGuide({ onManual }: { onManual: () => void }) {
             <input className={cx(textareaCls, "h-9 py-0")} value={url} placeholder={t("connAgent.urlPlaceholder")} onChange={(e) => setUrl(e.target.value)} />
           </Field>
           {way === "openapi" && (
-            <Field label={t("connAgent.specLabel")}>
+            <Field
+              label={t("connAgent.specLabel")}
+              hint={showSecretHint ? <span className="text-amber-700 dark:text-amber-300">{t("connAgent.secretWarn")}</span> : undefined}
+            >
               <textarea className={cx(textareaCls, "h-28 font-mono text-xs")} value={doc} placeholder={t("connAgent.specPlaceholder")} onChange={(e) => setDoc(e.target.value)} />
             </Field>
           )}
