@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/store"
@@ -56,21 +57,33 @@ type Service struct {
 	// 同时运行的同步/导入任务上限；0 表示用默认值（见 mirror.go）
 	MaxSyncJobs        int
 	MaxSyncJobsPerUser int
+	// 请求触发的按需回源 tarball 并发上限；0 表示用默认值（defaultOnDemandMirrors）。
+	// 同步/预载任务不受这个限制（它们有 syncGate），已缓存内容直接读盘也不占用名额。
+	MaxOnDemandConcurrency int
+	// npm 缓存（blobs 目录）总字节上限；0 表示不限。超限时拒绝新的写盘
+	// （上游回源、同步预载、发布、离线导入），已缓存 / 已上架的 tarball 照常可读
+	// （不会为了腾空间删除现有内容）。
+	MaxCacheBytes int64
 	// dshfind 插件目录（DSH 索引 format 1）的地址，上游预载从这里挑插件
 	FeedURL string
 	feed    feedCache
 	// 同步任务准入（数量上限与 (name,version) 去重）
 	gate syncGate
+	// 按需回源下载的并发闸门（见 mirror.go）
+	onDemand onDemandGate
+	// 缓存写满告警的限频时间（UnixNano），避免超限后每个请求都刷一条日志
+	cacheWarnAt atomic.Int64
 }
 
 func NewService(st *store.Store, blobs *Blobs, up *Upstream, settings func(context.Context) (*store.AppSettings, error), log *slog.Logger, owner string) *Service {
 	return &Service{
 		store: st, blobs: blobs, up: up, log: log, settings: settings, owner: owner,
-		MaxTarball:         100 << 20,
-		MaxSyncJobs:        defaultMaxSyncJobs,
-		MaxSyncJobsPerUser: defaultMaxSyncJobsPerUser,
-		FeedURL:            "https://api.dshfind.com/market/dsh-index.json",
-		gate:               newSyncGate(),
+		MaxTarball:             100 << 20,
+		MaxSyncJobs:            defaultMaxSyncJobs,
+		MaxSyncJobsPerUser:     defaultMaxSyncJobsPerUser,
+		MaxOnDemandConcurrency: defaultOnDemandMirrors,
+		FeedURL:                "https://api.dshfind.com/market/dsh-index.json",
+		gate:                   newSyncGate(),
 	}
 }
 
@@ -243,8 +256,19 @@ func (s *Service) Tarball(ctx context.Context, name, version string) (*os.File, 
 	if uv == nil || (uv.Parsed.IsPlugin && pluginNeedsReview(set)) {
 		return nil, nil, ErrNotFound
 	}
+	// 按需回源的全局并发上限：满员时立即拒绝，避免一个员工令牌循环请求不同大包/版本
+	// 就同时拉起任意多个上游下载。已缓存版本在上面已经直接返回，不会走到这里。
+	if !s.onDemand.acquire(s.MaxOnDemandConcurrency) {
+		return nil, nil, errf(503, "Too many tarballs are being fetched from upstream at the same time (at most %d); wait a moment and retry — npm retries automatically", s.onDemand.limit(s.MaxOnDemandConcurrency))
+	}
 	nv, err := s.mirror(ctx, name, uv, store.StatusPublished, nil, false)
+	s.onDemand.release()
 	if err != nil {
+		// 缓存上限等业务拒绝自带状态码（507/503），原样向上传；真正的上游故障按 502。
+		var re *Error
+		if errors.As(err, &re) {
+			return nil, nil, err
+		}
 		return nil, nil, errf(502, "%v", err)
 	}
 	f, err := s.blobs.Open(nv.BlobKey)
@@ -256,6 +280,11 @@ func (s *Service) mirror(ctx context.Context, name string, uv *UpstreamVersion, 
 	if v, err := s.store.GetVersion(ctx, name, uv.Version); err == nil {
 		return v, nil
 	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	// 缓存总量上限：只在新增上游内容时检查，且按单个 tarball 的最大可能大小预留，
+	// 保证拒绝发生在写盘之前；已缓存/已上架的内容不受影响（不删除已有 blob）。
+	if err := s.checkCacheRoom(s.MaxTarball, name+"@"+uv.Version); err != nil {
 		return nil, err
 	}
 	d, err := s.up.FetchTarball(ctx, s.blobs, uv.Tarball, uv.Integrity, uv.Shasum, s.MaxTarball)
@@ -331,6 +360,35 @@ func (s *Service) mirror(ctx context.Context, name string, uv *UpstreamVersion, 
 		return nil, err
 	}
 	return nv, nil
+}
+
+// checkCacheRoom 判断再写入 incoming 字节是否越过缓存总量上限（MaxCacheBytes）。
+// 所有写 blobs 的路径（按需回源、同步预载、发布、离线导入）都在写盘之前调用它：
+// 因此拒绝不会留下半写状态，也不会为了腾空间删除已缓存/已上架/审核中的内容。
+// incoming 由调用方给：上游回源不知道实际大小，按单个 tarball 上限预留；发布/导入
+// 已知道确切字节数。用量会按 Blobs 的周期重扫刷新，多实例共享盘时的低估最多持续
+// 一个扫描周期。
+func (s *Service) checkCacheRoom(incoming int64, what string) error {
+	limit := s.MaxCacheBytes
+	if limit <= 0 {
+		return nil
+	}
+	if incoming < 0 {
+		incoming = 0
+	}
+	used := s.blobs.RefreshIfStale()
+	if used < limit && used+incoming <= limit {
+		return nil
+	}
+	// 超限后每个请求都拒绝，日志按分钟限频，避免被循环请求刷爆。
+	now := time.Now().UnixNano()
+	last := s.cacheWarnAt.Load()
+	if last == 0 || now-last >= int64(time.Minute) {
+		if s.cacheWarnAt.CompareAndSwap(last, now) {
+			s.log.Warn("npm tarball 存储达到上限，拒绝新的写入", "used_bytes", used, "limit_bytes", limit, "incoming_bytes", incoming, "what", what)
+		}
+	}
+	return errf(507, "npm tarball storage is full (%d of %d bytes used; %s needs %d more), so it was not written. Already stored versions keep working. Raise DSH_EE_NPM_CACHE_MAX_BYTES or free disk space, then retry", used, limit, what, incoming)
 }
 
 // trimManifest 去掉不该存的大字段：readme 在版本文档里没有用，上游个别包会塞进去几 MB。
@@ -476,6 +534,13 @@ func (s *Service) publish(ctx context.Context, p Publisher, doc *PublishDoc, raw
 	}
 	if int64(len(raw)) > s.MaxTarball {
 		return nil, errf(413, "Tarball exceeds %d MB", s.MaxTarball>>20)
+	}
+	// 发布同样受磁盘总量上限约束：写盘前按确切大小判断，超限拒绝这次发布而不是写满磁盘。
+	// 已上架/审核中版本不受影响（不删除、不降级）；发布者本地还有 tarball，清理或调大
+	// 上限后可以重试同一条命令（版本号尚未入库）。
+	// 这里不按 Has 去重：托管发布每个新版本号的 package.json 必然不同，内容不会与已有 blob 相同。
+	if err := s.checkCacheRoom(int64(len(raw)), name+"@"+version); err != nil {
+		return nil, err
 	}
 	d, err := s.blobs.Put(bytes.NewReader(raw), s.MaxTarball)
 	if err != nil {

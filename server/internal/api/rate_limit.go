@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 	"strconv"
@@ -125,26 +126,30 @@ func (l *tokenRate) take(key string) (rateInfo, bool) {
 	return info, w.count <= l.limit
 }
 
-// rateLimit 给公开协议面（/v1/*、/responses（Responses API 别名）、/beta/* 与 /mcp）加上每令牌限流。
+// rateLimit 给公开协议面（/v1/*、/responses（Responses API 别名）、/beta/* 与 /mcp）以及
+// npm 源（/npm/*）加上每令牌限流。两类路径使用**各自独立**的额度：npm install 会并发大量
+// 请求，额度更宽（配置默认 600/分钟），也不占用模型调用的额度；反过来也一样。
 // 成功与 429 响应都带 X-RateLimit-*，429 另带 Retry-After；错误体维持各端点原来的
 // 形状（见 writeRateLimited）。其它路径完全不受影响。
 func (s *Server) rateLimit(next http.Handler) http.Handler {
-	if s.tokenRate == nil {
+	if s.tokenRate == nil && s.npmTokenRate == nil {
 		return next
 	}
 	window := s.rateWindow()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !rateLimitedPath(r.URL.Path) {
+		limiter, keyPrefix := s.rateLimiterFor(r.URL.Path)
+		if limiter == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
 		// CORS 预检由浏览器自动发出、每个跨域请求前都可能来一次，不是业务调用，
 		// 不占令牌额度，也不返回限流头（否则浏览器里的第三方 Harness 会被预检拖累）。
+		// npm CLI 不发预检，这里的行为对 /npm/* 没有影响。
 		if r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}
-		info, ok := s.takeRateLimit(r.Context(), s.rateLimitKey(r), window)
+		info, ok := s.takeRateLimitWith(r.Context(), keyPrefix+s.rateLimitKey(r), window, limiter.limit, limiter)
 		setRateLimitHeaders(w.Header(), info)
 		if !ok {
 			// Retry-After 按秒向上取整，至少 1 秒；客户端照它退避。
@@ -160,6 +165,19 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 	})
 }
 
+// rateLimiterFor 选择这条路径用的额度与共享限流 key 前缀。前缀把两类额度在数据库里
+// 也分开：同一个令牌的 npm 请求与模型请求互不占用对方的计数。nil 表示不限流。
+func (s *Server) rateLimiterFor(path string) (*tokenRate, string) {
+	switch {
+	case rateLimitedPath(path):
+		return s.tokenRate, ""
+	case isNpmPath(path):
+		return s.npmTokenRate, "npm:"
+	default:
+		return nil, ""
+	}
+}
+
 // rateWindow 返回限流窗口长度：线上固定 1 分钟；Options.RateLimitWindow 只给自动化测试缩短用。
 func (s *Server) rateWindow() time.Duration {
 	if s.opts.RateLimitWindow > 0 {
@@ -168,28 +186,29 @@ func (s *Server) rateWindow() time.Duration {
 	return time.Minute
 }
 
-// takeRateLimit 记一次请求，返回当前窗口状态与是否放行。
+// takeRateLimitWith 记一次请求，返回当前窗口状态与是否放行。limit/fallback 决定这条路径
+// 的额度：协议面用 tokenRate，npm 源用 npmTokenRate，两份额度在数据库里也分开计数。
 //
 // 优先用数据库里的共享计数（多实例合计一份额度）。数据库不可用时退回进程内固定窗口：
-// 限流是保护性措施，不能因为限流存储故障把 /v1 与 /mcp 整体打成 5xx 或 429；退化成
-// 每实例一份额度仍然有限流，不会 fail open，只是多实例下额度会放大 N 倍，并限频告警。
-func (s *Server) takeRateLimit(ctx context.Context, key string, window time.Duration) (rateInfo, bool) {
+// 限流是保护性措施，不能因为限流存储故障把 /v1、/mcp 与 /npm 整体打成 5xx 或 429；
+// 退化成每实例一份额度仍然有限流，不会 fail open，只是多实例下额度会放大 N 倍，并限频告警。
+func (s *Server) takeRateLimitWith(ctx context.Context, key string, window time.Duration, limit int, fallback *tokenRate) (rateInfo, bool) {
 	if s.store == nil {
 		// 单元测试会直接构造 &Server{}（没有数据库）：保持进程内限流。
-		return s.tokenRate.take(key)
+		return fallback.take(key)
 	}
 	windowStart := time.Now().UTC().Truncate(window)
 	sharedKey := s.rateKeys.admit(key, windowStart)
 	// 一次 upsert + 一次读回，正常在毫秒级；库慢/挂时由超时兜底退回内存限流。
 	dbCtx, cancel := context.WithTimeout(ctx, sharedRateDBTimeout)
-	state, err := s.store.TakeSharedRateLimit(dbCtx, sharedKey, windowStart, window, s.tokenRate.limit)
+	state, err := s.store.TakeSharedRateLimit(dbCtx, sharedKey, windowStart, window, limit)
 	cancel()
 	if err != nil {
 		// 客户端自己断开导致的取消是正常现象，不算数据库故障，不写告警。
 		if ctx.Err() == nil {
 			s.warnRateLimitFallback(err)
 		}
-		return s.tokenRate.take(key)
+		return fallback.take(key)
 	}
 	return rateInfo{Limit: state.Limit, Remaining: state.Remaining, Reset: state.Reset}, state.Allowed
 }
@@ -209,12 +228,15 @@ func (s *Server) warnRateLimitFallback(err error) {
 	s.log.Warn("共享限流数据库不可用，已退回单实例内存限流", "err", err)
 }
 
-// rateLimitedPath 只覆盖公开协议面：OpenAI 兼容网关（含 Responses API 别名）、
 // rateLimitedPath 只覆盖公开协议面：OpenAI 兼容网关（含 Responses API 别名与 DeepSeek beta 透传）、
-// Anthropic 兼容端点（含别名）与 MCP。
+// Anthropic 兼容端点（含别名）与 MCP。npm 源（/npm/*）也有每令牌限流，但额度独立、
+// 阈值更宽，见 rateLimiterFor / isNpmPath。
 func rateLimitedPath(path string) bool {
 	return isV1Path(path) || isBetaPath(path) || isMCPPath(path) || isAnthropicMessagesPath(path) || isResponsesAPIPath(path)
 }
+
+// isNpmPath 是 npm 协议面（/npm/…）：packument、tarball、publish 与 /npm/-/… 都在这里。
+func isNpmPath(path string) bool { return path == "/npm" || strings.HasPrefix(path, "/npm/") }
 
 func isV1Path(path string) bool { return path == "/v1" || strings.HasPrefix(path, "/v1/") }
 
@@ -224,16 +246,26 @@ func isMCPPath(path string) bool { return path == "/mcp" || strings.HasPrefix(pa
 
 // rateLimitKey 用令牌决定额度；没有 Authorization 时退回客户端 IP。
 // Anthropic 兼容端点允许只带 x-api-key：该端点优先按 x-api-key 取令牌（与 auth 一致），
-// 其它端点仍以 Bearer 为准。只放哈希，进程里的 map 不留令牌明文。
+// 其它端点仍以 Bearer 为准。npm 源还允许 Basic（密码位放令牌，与 npmAuth 同口径）。
 // 只放令牌的 sha256，进程内存与数据库里都不留令牌明文。
 func (s *Server) rateLimitKey(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
 	token := ""
 	if isAnthropicMessagesPath(r.URL.Path) {
 		token = strings.TrimSpace(r.Header.Get("X-Api-Key"))
 	}
 	if token == "" {
-		if bearerToken, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		if bearerToken, ok := strings.CutPrefix(auth, "Bearer "); ok {
 			token = strings.TrimSpace(bearerToken)
+		}
+	}
+	// npm CLI 在配了 //registry/:_authToken 时发 Bearer；只配 _auth 时发 Basic（用户名:令牌）。
+	if token == "" && isNpmPath(r.URL.Path) {
+		if encoded, ok := strings.CutPrefix(auth, "Basic "); ok {
+			if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded)); err == nil {
+				_, pw, _ := strings.Cut(string(raw), ":")
+				token = strings.TrimSpace(pw)
+			}
 		}
 	}
 	if token == "" {
@@ -252,7 +284,8 @@ func setRateLimitHeaders(h http.Header, info rateInfo) {
 }
 
 // writeRateLimited 超限时保留原来的错误体形状：/v1、/responses 与 /beta 用 OpenAI 错误壳
-// （Anthropic 兼容端点用 Anthropic 错误壳），/mcp 用 JSON-RPC 错误对象（code -32000）。
+// （Anthropic 兼容端点用 Anthropic 错误壳），/mcp 用 JSON-RPC 错误对象（code -32000）；
+// npm 源用 dsh-ee 的普通 JSON 错误体（{"error": "..."}），npm CLI 会原样打印并退避重试。
 func writeRateLimited(w http.ResponseWriter, r *http.Request) {
 	const msg = "请求过于频繁，请稍后重试"
 	switch {
@@ -266,6 +299,8 @@ func writeRateLimited(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicErr(w, http.StatusTooManyRequests, "rate_limit_error", msg)
 	case isV1Path(r.URL.Path) || isResponsesAPIPath(r.URL.Path) || isBetaPath(r.URL.Path):
 		writeOpenAIErr(w, http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", msg)
+	case isNpmPath(r.URL.Path):
+		writeErr(w, http.StatusTooManyRequests, "Too many requests to the npm registry; wait a few seconds and retry (npm retries automatically)")
 	default:
 		writeErr(w, http.StatusTooManyRequests, msg)
 	}

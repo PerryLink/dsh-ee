@@ -80,6 +80,14 @@ type Options struct {
 	// 协议面（/v1/* 与 /mcp）每令牌每分钟的请求数；0 表示关闭。
 	// 线上默认由 config 的 DSH_EE_RATE_LIMIT 给 60，测试里按需设置。
 	RateLimitPerMinute int
+	// npm 源（/npm/*）每令牌每分钟的请求数；0 表示关闭。npm install 会并发大量请求，
+	// 额度比模型接口宽（配置默认 600，DSH_EE_NPM_RATE_LIMIT 可调），且与协议面分开计数：
+	// 安装依赖不会占用模型调用的额度，反之亦然。
+	NpmRateLimitPerMinute int
+	// npm 缓存（blobs 目录）总字节上限；0 表示不限。超限时拒绝新的写盘
+	// （上游回源、发布、离线导入），已缓存 / 已上架内容照常读取，不做删除。
+	// 线上默认由 DSH_EE_NPM_CACHE_MAX_BYTES 给 20 GiB。
+	NpmCacheMaxBytes int64
 	// 限流窗口，默认 1 分钟；只给自动化测试缩短用。
 	RateLimitWindow time.Duration
 	// 允许用 iframe 嵌入网页的宿主 origin（DSH_EE_EMBED_ORIGINS）；为空时只允许同站。
@@ -201,6 +209,8 @@ type Server struct {
 	// 计数优先走数据库里的共享固定窗口，tokenRate 只在数据库不可用或没有数据库
 	// （单元测试直接构造 Server）时兜底。
 	tokenRate *tokenRate
+	// /npm/* 的每令牌限流；nil 表示关闭。与 tokenRate 分开计数、额度独立（见 rate_limit.go）。
+	npmTokenRate *tokenRate
 	// 共享限流每个窗口已建行的 key 集合：key 来自令牌（攻击者可以随便造无效令牌），
 	// 超过上限后的陌生 key 共用一个溢出 key，数据库行数不会跟着请求量无限涨（见 rate_limit.go）。
 	rateKeys rateKeyAdmission
@@ -282,6 +292,9 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}
+	if opts.NpmRateLimitPerMinute > 0 {
+		s.npmTokenRate = newTokenRate(opts.NpmRateLimitPerMinute, opts.RateLimitWindow)
+	}
 	s.loginIPLimiter = newLoginIPLimiter(opts.LoginIPLimit, opts.LoginIPWindow)
 	if opts.ClientTokenPerMinute > 0 {
 		s.clientTokenRate = newIPRate(opts.ClientTokenPerMinute)
@@ -332,6 +345,10 @@ func (s *Server) newRegistry() *registry.Service {
 		s.log.Error("npm 源不可用", "err", err)
 		return nil
 	}
+	if used := blobs.Usage(); used > 0 {
+		// 启动时把已有缓存计入总量上限（统计口径见 registry.NewBlobs），日志给运维一个基线。
+		s.log.Info("npm 缓存用量", "bytes", used, "limit_bytes", s.opts.NpmCacheMaxBytes)
+	}
 	up, err := registry.NewUpstream(hc, dir, ttl)
 	if err != nil {
 		s.log.Error("npm 源不可用", "err", err)
@@ -341,6 +358,8 @@ func (s *Server) newRegistry() *registry.Service {
 	if s.opts.FeedURL != "" {
 		svc.FeedURL = s.opts.FeedURL
 	}
+	// npm 缓存总量上限（见 registry.Tarball / mirror）；按需回源并发上限用 registry 默认值（4）。
+	svc.MaxCacheBytes = s.opts.NpmCacheMaxBytes
 	return svc
 }
 

@@ -286,6 +286,17 @@ func (s *Service) importBundle(ctx context.Context, tr *tar.Reader, man *BundleM
 		if h.Size > 0 && h.Size > maxBundleTotalBytes-totalBytes {
 			return nil, errf(400, "离线包里的 tarball 累计超过上限 %d 字节", maxBundleTotalBytes)
 		}
+		// 全局磁盘上限：导入也只在写盘前拒绝，不删已有内容。blob 已存在（重复导入）时
+		// 不占新空间，跳过检查。
+		if !s.blobs.Has(key) {
+			incoming := h.Size
+			if incoming <= 0 {
+				incoming = s.MaxTarball
+			}
+			if err := s.checkCacheRoom(incoming, "offline bundle tarball "+key); err != nil {
+				return nil, err
+			}
+		}
 		d, err := s.blobs.Put(tr, s.MaxTarball)
 		if err != nil {
 			return nil, fmt.Errorf("写入 %s：%w", key, err)

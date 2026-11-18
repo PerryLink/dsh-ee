@@ -197,6 +197,10 @@ func run(log *slog.Logger) error {
 		DeepSeekToolsAllowEmployee: cfg.DeepSeekToolsAllowEmployee,
 		// 每令牌的 /v1、/beta 与 /mcp 请求数；默认 60，可用 DSH_EE_RATE_LIMIT 调整或关闭
 		RateLimitPerMinute: cfg.RateLimitPerMinute,
+		// 每令牌的 /npm 请求数；默认 600，可用 DSH_EE_NPM_RATE_LIMIT 调整或关闭（与上面分开计数）
+		NpmRateLimitPerMinute: cfg.NpmRateLimitPerMinute,
+		// npm 缓存（tarball blobs）总字节上限；默认 20 GiB，DSH_EE_NPM_CACHE_MAX_BYTES 可调，0 = 不限
+		NpmCacheMaxBytes: cfg.NpmCacheMaxBytes,
 		// API 客户端 client_credentials 每 IP 每分钟签发次数；默认 120，可用 DSH_EE_CLIENT_TOKEN_PER_MINUTE 调整或关闭
 		ClientTokenPerMinute: cfg.ClientTokenPerMinute,
 		// FIM / Chat Prefix 只转发给这个 vendor=deepseek 的启用上游；留空自动挑唯一一个
@@ -228,6 +232,16 @@ func run(log *slog.Logger) error {
 		log.Info("已启用公开协议面限流", "per_minute_per_token", cfg.RateLimitPerMinute, "count_store", "database")
 	} else {
 		log.Warn("公开协议面限流已关闭", "reason", "DSH_EE_RATE_LIMIT=0/off")
+	}
+	if cfg.NpmRateLimitPerMinute > 0 {
+		log.Info("已启用 npm 源限流", "per_minute_per_token", cfg.NpmRateLimitPerMinute, "count_store", "database")
+	} else {
+		log.Warn("npm 源限流已关闭", "reason", "DSH_EE_NPM_RATE_LIMIT=0/off")
+	}
+	if cfg.NpmCacheMaxBytes > 0 {
+		log.Info("npm 缓存总量上限已启用", "max_bytes", cfg.NpmCacheMaxBytes, "behavior", "超限拒绝新的写盘（回源/发布/导入），已缓存内容照常可读")
+	} else {
+		log.Warn("npm 缓存总量上限已关闭", "reason", "DSH_EE_NPM_CACHE_MAX_BYTES=0/off")
 	}
 
 	go sweepSessions(ctx, st, log, leases)
