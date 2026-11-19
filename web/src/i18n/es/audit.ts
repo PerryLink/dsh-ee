@@ -71,7 +71,8 @@ export default {
         "update": "Actualizó un usuario",
         "roles": "Asignó roles",
         "quota": "Cambió la cuota",
-        "create_bot": "Creó un bot"
+        "create_bot": "Creó un bot",
+        "roles_mapping_dropped": "Omitió roles excluyentes del mapeo",
       },
       "role": {
         "create": "Creó un rol",

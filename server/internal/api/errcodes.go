@@ -121,6 +121,12 @@ const (
 	codeUserRolesAssignForbidden = "user.roles_assign_forbidden"
 	// codeUserQuotaAssignForbidden：只有「管理用户」权限时不能在建号时设置额度，403。params 无。
 	codeUserQuotaAssignForbidden = "user.quota_assign_forbidden"
+	// codeUserRolesSelfGrant：开了「不能给自己授权」，管理员不能改自己的角色，403。params 无。
+	codeUserRolesSelfGrant = "user.roles_self_grant"
+	// codeUserRolesExclusive：要给的角色里有一组互斥角色，403。params：roles（「a 和 b」）。
+	codeUserRolesExclusive = "user.roles_exclusive"
+	// codeUserRolesDualRequired：开了双人批准（roles.assign），建账号时不能直接带管理角色，403。params 无。
+	codeUserRolesDualRequired = "user.roles_dual_required"
 
 	// ---- 角色：server/internal/api/rbac.go ----
 
@@ -148,6 +154,16 @@ const (
 	codeRoleGrantSuperForbidden = "role.grant_super_forbidden"
 	// codeRoleGrantOverreach：不能授予超出自己权限的角色，403。params：role（角色名）。
 	codeRoleGrantOverreach = "role.grant_overreach"
+	// codeRoleAdminPermsDualRequired：开了双人批准（roles.assign），给已有人持有（或被 LDAP / OIDC 映射）的角色
+	// 加管理权限点要通过配置变更提交，409。params：role（角色名）。
+	codeRoleAdminPermsDualRequired = "role.admin_perms_dual_required"
+
+	// ---- 目录组 → 角色映射：server/internal/api/ldap.go、oidc.go ----
+
+	// codeRoleMappingDualRequired：开了双人批准（roles.assign），不能新加映射到管理角色的组映射，409。params：role（角色名）。
+	codeRoleMappingDualRequired = "role_mapping.dual_required"
+	// codeRoleMappingExclusive：同一个组映射到了一组互斥角色，400。params：group（组）、roles（「a 和 b」）。
+	codeRoleMappingExclusive = "role_mapping.exclusive"
 
 	// ---- 权限点：server/internal/api/rbac.go ----
 

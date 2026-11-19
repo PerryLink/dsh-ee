@@ -25,6 +25,8 @@ const (
 	auditUserUpdate = "user.update"
 	auditUserRoles  = "user.roles"
 	auditUserQuota  = "user.quota"
+	// 登录 / 目录同步时组映射会造成互斥角色，跳过了冲突的映射角色（admin_policy.go syncedRoles）
+	auditUserRolesMappingDropped = "user.roles_mapping_dropped"
 
 	auditRoleCreate       = "role.create"
 	auditRoleUpdate       = "role.update"

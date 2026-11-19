@@ -48,6 +48,9 @@ export default {
     no_identity_binding: "Only SSO (OIDC) accounts have an identity binding to remove.",
     roles_assign_forbidden: "Assigning roles requires the \"Manage roles and permissions\" permission.",
     quota_assign_forbidden: "Setting a monthly quota requires the \"Assign quotas\" permission.",
+    roles_self_grant: "You can't change your own roles. Ask another administrator to do it.",
+    roles_exclusive: "Roles {{roles}} are mutually exclusive and can't be held by the same person.",
+    roles_dual_required: "Two-person approval is on: you can't give an admin role when creating an account. Create the account first, then assign the role from the user list; it takes effect after another administrator approves.",
   },
   role: {
     invalid_code: "Role codes must start with a lowercase letter and contain only lowercase letters, digits, and . _ -, 2-64 characters long.",
@@ -62,6 +65,11 @@ export default {
     in_use: "This role is still in use and can't be deleted.",
     grant_super_forbidden: "Only a super admin can grant \"{{role}}\".",
     grant_overreach: "You can't grant a role with permissions beyond your own.",
+    admin_perms_dual_required: "Two-person approval is on: role \"{{role}}\" is already held by someone (or mapped from the directory). Adding admin permissions to it must be submitted as a config change and approved by another administrator.",
+  },
+  role_mapping: {
+    dual_required: "Two-person approval is on: you can't add a group mapping to the admin role \"{{role}}\". Assign admin roles to people from the user list, with another administrator's approval.",
+    exclusive: "Group {{group}} is mapped to mutually exclusive roles {{roles}}; one person can't hold both.",
   },
   perm: {
     invalid_code: "Permission codes must start with a lowercase letter and contain only lowercase letters, digits, and . _ : -, 2-64 characters long.",

@@ -276,6 +276,16 @@ func (s *Server) handlePutOIDC(w http.ResponseWriter, r *http.Request) {
 			writeErrCode(w, http.StatusForbidden, e.code, e.params, e.msg)
 			return
 		}
+		// 管理约束：同组映射到互斥角色、开了双人批准时新加映射到管理角色（admin_policy.go roleMappingProblem）
+		e, status, err := s.roleMappingProblem(r.Context(), oidcMappings(cur.RoleMappings), oidcMappings(cfg.RoleMappings))
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+		if e != nil {
+			writeErrCode(w, status, e.code, e.params, e.msg)
+			return
+		}
 	}
 	if err := s.saveOIDC(r.Context(), cfg, currentUser(r).ID); err != nil {
 		s.internalErr(w, r, err)
@@ -602,6 +612,10 @@ func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Id
 			if member, err := s.store.GetRoleByCode(ctx, rbac.RoleMember); err == nil && !slices.Contains(cfg.ManagedRoles(), member.ID) {
 				roles = dedupe(append(roles, member.ID))
 			}
+			roles, err := s.syncedRoles(ctx, "oidc", name, nil, roles)
+			if err != nil {
+				return nil, false, err
+			}
 			if err := s.store.SetUserRoles(ctx, u.ID, roles); err != nil {
 				return nil, false, err
 			}
@@ -649,7 +663,10 @@ func (s *Server) provisionOIDC(ctx context.Context, cfg *oidc.Config, id oidc.Id
 		if err != nil {
 			return nil, false, err
 		}
-		next := s.mappedRoles(ctx, cfg.ManagedRoles(), cfg.MatchRoles(id.Groups), a.RoleIDs)
+		next, err := s.syncedRoles(ctx, "oidc", u.Username, a.RoleIDs, s.mappedRoles(ctx, cfg.ManagedRoles(), cfg.MatchRoles(id.Groups), a.RoleIDs))
+		if err != nil {
+			return nil, false, err
+		}
 		cur := dedupe(append([]int64{}, a.RoleIDs...))
 		slices.Sort(cur)
 		slices.Sort(next)
@@ -683,4 +700,12 @@ func (s *Server) mappedRoles(ctx context.Context, managed, matched, current []in
 		}
 	}
 	return dedupe(out)
+}
+
+func oidcMappings(ms []oidc.RoleMapping) []roleMapping {
+	out := make([]roleMapping, len(ms))
+	for i, m := range ms {
+		out[i] = roleMapping{Group: m.Group, RoleID: m.RoleID}
+	}
+	return out
 }

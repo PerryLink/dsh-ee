@@ -352,35 +352,227 @@ func (s *Server) handleApplyPreset(w http.ResponseWriter, r *http.Request) {
 
 // ---- 给人改角色：互斥、不能给自己、双人批准 ----
 
-// roleChangeProblem 检查给 target 换成 ids 这几个角色是否违反管理约束。返回问题和这次是不是授出了管理权限。
-func (s *Server) roleChangeProblem(ctx context.Context, p adminPolicy, actorID, targetID int64, before *rbac.Access, ids []int64) (string, bool, error) {
+// roleChangeProblem 检查给 target 换成 ids 这几个角色是否违反管理约束。返回问题（带 code，没有就是 nil）
+// 和这次是不是授出了管理权限。
+func (s *Server) roleChangeProblem(ctx context.Context, p adminPolicy, actorID, targetID int64, before *rbac.Access, ids []int64) (*codedErr, bool, error) {
 	if p.NoSelfGrant && actorID == targetID {
-		return "不能改自己的角色：请另一位管理员来改", false, nil
+		return &codedErr{code: codeUserRolesSelfGrant, msg: "不能改自己的角色：请另一位管理员来改"}, false, nil
 	}
 	var codes []string
 	grantsAdmin := false
 	for _, id := range ids {
 		role, err := s.store.GetRole(ctx, id)
 		if err != nil {
-			return "角色不存在", false, nil
+			return &codedErr{code: codeRoleUnknown, params: map[string]any{"id": id}, msg: "角色不存在：" + itoa64(id)}, false, nil
 		}
 		codes = append(codes, role.Code)
 		if slices.Contains(before.RoleIDs, id) {
 			continue
 		}
-		if role.IsSuper {
+		if roleGrantsAdmin(role) {
 			grantsAdmin = true
-		}
-		for _, perm := range role.Permissions {
-			if rbac.IsAdminPerm(perm) {
-				grantsAdmin = true
-			}
 		}
 	}
 	if g := exclusiveClash(p.Exclusive, codes); g != "" {
-		return "角色 " + g + " 是互斥的，不能由同一个人同时持有", grantsAdmin, nil
+		return &codedErr{code: codeUserRolesExclusive, params: map[string]any{"roles": g}, msg: "角色 " + g + " 是互斥的，不能由同一个人同时持有"}, grantsAdmin, nil
 	}
-	return "", grantsAdmin, nil
+	return nil, grantsAdmin, nil
+}
+
+// roleGrantsAdmin 报告持有这个角色是不是就有了管理权限（超级管理员，或带任一管理权限点）。
+func roleGrantsAdmin(role *store.Role) bool {
+	if role.IsSuper {
+		return true
+	}
+	return slices.ContainsFunc(role.Permissions, rbac.IsAdminPerm)
+}
+
+// addedAdminPerms 返回 next 里新加的管理权限点（before 里没有的）。
+func addedAdminPerms(before, next []string) []string {
+	var out []string
+	for _, p := range next {
+		if rbac.IsAdminPerm(p) && !slices.Contains(before, p) && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// roleHeldOrMapped 报告这个角色现在有没有人持有，或者被 LDAP / OIDC 的组映射引用（下次登录就会授给一批人）。
+// 给这样的角色加管理权限点，等于直接给这些人授了管理权限。
+func (s *Server) roleHeldOrMapped(ctx context.Context, roleID int64) (bool, error) {
+	roles, err := s.store.ListRoles(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range roles {
+		if r.ID == roleID && r.UserCount > 0 {
+			return true, nil
+		}
+	}
+	ldapCfg, err := s.loadLDAP(ctx)
+	if err != nil {
+		return false, err
+	}
+	if slices.Contains(ldapCfg.ManagedRoles(), roleID) {
+		return true, nil
+	}
+	oidcCfg, err := s.loadOIDC(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(oidcCfg.ManagedRoles(), roleID), nil
+}
+
+// configGrantsAdminToHolders 报告一份配置是不是给已有人持有（或被组映射引用）的角色加了管理权限点。
+// 开了双人批准（roles.assign）时，这样的配置变更不能由提交人自己批准。
+func (s *Server) configGrantsAdminToHolders(ctx context.Context, c *configDoc) (bool, error) {
+	for _, cr := range c.Roles {
+		role, err := s.store.GetRoleByCode(ctx, cr.Code)
+		if notFound(err) {
+			continue // 新建的角色还没人持有；之后授给人时走 roles.assign 的批准
+		}
+		if err != nil {
+			return false, err
+		}
+		if len(addedAdminPerms(role.Permissions, cr.Permissions)) == 0 {
+			continue
+		}
+		held, err := s.roleHeldOrMapped(ctx, role.ID)
+		if err != nil || held {
+			return held, err
+		}
+	}
+	return false, nil
+}
+
+// ---- 企业目录组 → 角色映射（LDAP / OIDC）----
+
+// roleMapping 是 LDAP / OIDC 组映射的公共形状。
+type roleMapping struct {
+	Group  string
+	RoleID int64
+}
+
+// roleMappingProblem 检查一次组映射修改是否违反管理约束：
+//   - 同一个组映射到一组互斥角色：这个组里的人登录后必然同时持有，直接拒绝（400）；
+//   - 开了双人批准（roles.assign）时，新加一条映射到管理角色（超级管理员或带管理权限点）的映射：
+//     等于不经第二个人批准就给一批人授管理权限，拒绝（409）。已有的映射保持不动不算新加。
+//
+// 不同组映射到互斥角色是允许的（同时在两个组里的人不一定有），登录同步时由 dropExclusiveMapped 兜底。
+func (s *Server) roleMappingProblem(ctx context.Context, cur, next []roleMapping) (*codedErr, int, error) {
+	p := s.adminPolicy(ctx)
+	if len(p.Exclusive) > 0 {
+		byGroup := map[string][]string{}
+		var order []string
+		for _, m := range next {
+			role, err := s.store.GetRole(ctx, m.RoleID)
+			if err != nil {
+				continue // 不存在的角色由 checkGrantable 报
+			}
+			g := strings.ToLower(m.Group)
+			if _, ok := byGroup[g]; !ok {
+				order = append(order, g)
+			}
+			byGroup[g] = append(byGroup[g], role.Code)
+		}
+		for _, g := range order {
+			if clash := exclusiveClash(p.Exclusive, byGroup[g]); clash != "" {
+				return &codedErr{code: codeRoleMappingExclusive, params: map[string]any{"group": g, "roles": clash},
+					msg: "组 " + g + " 映射到了互斥的角色 " + clash + "，同一个人不能同时持有"}, http.StatusBadRequest, nil
+			}
+		}
+	}
+	if p.dual(DualRolesAssign) {
+		for _, m := range next {
+			if slices.ContainsFunc(cur, func(c roleMapping) bool { return c.RoleID == m.RoleID && strings.EqualFold(c.Group, m.Group) }) {
+				continue
+			}
+			role, err := s.store.GetRole(ctx, m.RoleID)
+			if err != nil {
+				continue
+			}
+			if roleGrantsAdmin(role) {
+				return &codedErr{code: codeRoleMappingDualRequired, params: map[string]any{"role": role.Name},
+					msg: "开了双人批准：不能新加映射到管理角色「" + role.Name + "」的组映射，那等于不经另一位管理员批准就给一批人授管理权限。管理角色请在用户列表里逐个分配，由另一位管理员批准"}, http.StatusConflict, nil
+			}
+		}
+	}
+	return nil, 0, nil
+}
+
+// dropExclusiveMapped 在登录 / 目录同步时兜底互斥角色：next 是按组映射算出来的新角色集合，
+// cur 是用户现在的角色。next 里某组互斥角色同时出现时，去掉这一组里这次由映射新加的角色
+// （用户原来就有的保留，不因为同步把人现有的权限换掉），返回处理后的集合和被去掉的角色代码。
+// 去掉的角色由调用方记日志和审计，管理员据此修正目录分组或映射。
+func (s *Server) dropExclusiveMapped(ctx context.Context, cur, next []int64) ([]int64, []string, error) {
+	p := loadAdminPolicy(ctx, s.store)
+	if len(p.Exclusive) == 0 {
+		return next, nil, nil
+	}
+	roles, err := s.store.ListRoles(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	codeOf := map[int64]string{}
+	for _, r := range roles {
+		codeOf[r.ID] = r.Code
+	}
+	codes := func(ids []int64) []string {
+		out := make([]string, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, codeOf[id])
+		}
+		return out
+	}
+	if exclusiveClash(p.Exclusive, codes(next)) == "" {
+		return next, nil, nil
+	}
+	drop := map[int64]bool{}
+	for _, g := range p.Exclusive {
+		var hits []int64
+		for _, id := range next {
+			if slices.Contains(g, codeOf[id]) {
+				hits = append(hits, id)
+			}
+		}
+		if len(hits) < 2 {
+			continue
+		}
+		for _, id := range hits {
+			if !slices.Contains(cur, id) {
+				drop[id] = true
+			}
+		}
+	}
+	var out []int64
+	var dropped []string
+	for _, id := range next {
+		if drop[id] {
+			dropped = append(dropped, codeOf[id])
+			continue
+		}
+		out = append(out, id)
+	}
+	if out == nil {
+		out = []int64{}
+	}
+	return out, dropped, nil
+}
+
+// syncedRoles 是登录 / 目录同步写角色前的最后一道：按互斥角色去掉这次映射新加的冲突角色（dropExclusiveMapped），
+// 去掉了就记警告日志和一条系统审计（user.roles_mapping_dropped），让管理员去修正目录分组或映射。
+// 只拿掉冲突的映射角色，不拒绝登录：一个人被拉进两个互斥组时，不该因此连自己的员工权限都用不了。
+func (s *Server) syncedRoles(ctx context.Context, source, username string, cur, next []int64) ([]int64, error) {
+	out, dropped, err := s.dropExclusiveMapped(ctx, cur, next)
+	if err != nil {
+		return nil, err
+	}
+	if len(dropped) > 0 {
+		s.log.Warn("组映射会让用户同时持有互斥角色，已跳过这次新映射的冲突角色", "source", source, "user", username, "dropped", dropped)
+		s.auditSystem(ctx, auditUserRolesMappingDropped, username, map[string]any{"source": source, "dropped": dropped})
+	}
+	return out, nil
 }
 
 // submitRolesChange 在开了双人批准时把授角色变成一条待批的变更请求。

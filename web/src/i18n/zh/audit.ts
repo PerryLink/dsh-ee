@@ -53,7 +53,7 @@ export default {
     empty: "没有符合条件的记录。",
     actions: {
       auth: { login: "登录", login_failed: "登录失败", password_change: "修改密码" },
-      user: { create: "新建用户", update: "修改用户", roles: "分配角色", quota: "调整额度", create_bot: "新建机器人" },
+      user: { create: "新建用户", update: "修改用户", roles: "分配角色", quota: "调整额度", create_bot: "新建机器人", roles_mapping_dropped: "组映射跳过互斥角色" },
       role: { create: "新建角色", update: "修改角色", delete: "删除角色" },
       permission: { create: "新建权限点", delete: "删除权限点" },
       menu: { change: "修改菜单" },

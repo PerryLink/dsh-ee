@@ -55,7 +55,7 @@ export default {
     empty: "No matching records.",
     actions: {
       auth: { login: "Signed in", login_failed: "Sign-in failed", password_change: "Changed password" },
-      user: { create: "Created user", update: "Updated user", roles: "Assigned roles", quota: "Changed quota", create_bot: "Created bot" },
+      user: { create: "Created user", update: "Updated user", roles: "Assigned roles", quota: "Changed quota", create_bot: "Created bot", roles_mapping_dropped: "Skipped exclusive mapped roles" },
       role: { create: "Created role", update: "Updated role", delete: "Deleted role" },
       permission: { create: "Created permission", delete: "Deleted permission" },
       menu: { change: "Changed menu" },

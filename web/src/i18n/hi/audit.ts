@@ -71,7 +71,8 @@ export default {
         "update": "उपयोगकर्ता बदला",
         "roles": "भूमिकाएँ सौंपीं",
         "quota": "कोटा समायोजित किया",
-        "create_bot": "बॉट बनाया"
+        "create_bot": "बॉट बनाया",
+        "roles_mapping_dropped": "मैपिंग की परस्पर-अनन्य भूमिकाएँ छोड़ीं",
       },
       "role": {
         "create": "भूमिका बनाई",

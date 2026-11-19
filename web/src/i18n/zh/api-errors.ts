@@ -55,6 +55,9 @@ export default {
     no_identity_binding: "只有企业统一登录（OIDC）的账号有身份绑定可以解除",
     roles_assign_forbidden: "分配角色需要「管理角色与权限」权限",
     quota_assign_forbidden: "设置月度额度需要「分配额度」权限",
+    roles_self_grant: "不能改自己的角色：请另一位管理员来改",
+    roles_exclusive: "角色 {{roles}} 是互斥的，不能由同一个人同时持有",
+    roles_dual_required: "开了双人批准：建账号时不能直接给管理角色。先建账号，再在用户列表里给他分配角色，由另一位管理员批准后生效",
   },
   role: {
     invalid_code: "角色代码以小写字母开头，只含小写字母、数字和 . _ -，2 到 64 个字符",
@@ -69,6 +72,11 @@ export default {
     in_use: "这个角色还在用，不能删除",
     grant_super_forbidden: "只有超级管理员能授予「{{role}}」",
     grant_overreach: "不能授予超出自己权限的角色「{{role}}」",
+    admin_perms_dual_required: "开了双人批准：角色「{{role}}」已经有人持有（或被企业目录映射），给它加管理权限点要通过配置变更提交，由另一位管理员批准后生效",
+  },
+  role_mapping: {
+    dual_required: "开了双人批准：不能新加映射到管理角色「{{role}}」的组映射。管理角色请在用户列表里逐个分配，由另一位管理员批准",
+    exclusive: "组 {{group}} 映射到了互斥的角色 {{roles}}，同一个人不能同时持有",
   },
   perm: {
     invalid_code: "权限点代码以小写字母开头，只含小写字母、数字和 . _ : -，2 到 64 个字符",

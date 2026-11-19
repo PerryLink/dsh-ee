@@ -84,16 +84,16 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		// 建账号时带上角色也是授角色：互斥角色、双人批准和「改角色」一样生效（admin_policy.go）
 		policy := s.adminPolicy(r.Context())
-		msg, grantsAdmin, err := s.roleChangeProblem(r.Context(), policy, currentUser(r).ID, 0, &rbac.Access{}, dedupe(roleIDs))
+		e, grantsAdmin, err := s.roleChangeProblem(r.Context(), policy, currentUser(r).ID, 0, &rbac.Access{}, dedupe(roleIDs))
 		if err != nil {
 			s.internalErr(w, r, err)
 			return
 		}
-		if msg == "" && grantsAdmin && policy.dual(DualRolesAssign) {
-			msg = "开了双人批准：建账号时不能直接给管理角色。先建账号，再在用户列表里给他分配角色，由另一位管理员批准后生效"
+		if e == nil && grantsAdmin && policy.dual(DualRolesAssign) {
+			e = &codedErr{code: codeUserRolesDualRequired, msg: "开了双人批准：建账号时不能直接给管理角色。先建账号，再在用户列表里给他分配角色，由另一位管理员批准后生效"}
 		}
-		if msg != "" {
-			writeErr(w, http.StatusForbidden, msg)
+		if e != nil {
+			writeErrCode(w, http.StatusForbidden, e.code, e.params, e.msg)
 			return
 		}
 	}
