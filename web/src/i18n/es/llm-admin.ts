@@ -60,6 +60,8 @@ export default {
     "priorityOf": "Prioridad {{n}}",
     "disabled": "Deshabilitado",
     "companyKey": "Clave de la empresa {{hint}}",
+    "apiKeyOriginUnknown": "Falta vincular la clave API",
+    "apiKeyOriginUnknownHint": "Este proveedor es anterior al vínculo de origen de la clave API, así que no se puede confirmar que la clave actual pertenezca a esta dirección (puede haber sobrevivido a un cambio de base URL anterior a la actualización). Vuelve a introducir la clave API de la empresa una vez, aunque la dirección no cambie, para registrar el vínculo y verificarlo.",
     "enable": "Habilitado",
     "check": "Comprobar conexión",
     "updated": "Actualizado {{name}}",

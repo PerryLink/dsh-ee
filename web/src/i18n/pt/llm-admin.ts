@@ -60,6 +60,8 @@ export default {
     priorityOf: "Prioridade {{n}}",
     disabled: "Desativado",
     companyKey: "Chave da empresa {{hint}}",
+    apiKeyOriginUnknown: "Vínculo da chave de API pendente",
+    apiKeyOriginUnknownHint: "Este provedor é anterior ao vínculo de origem da chave de API, então não é possível confirmar que a chave atual pertence a este endereço (ela pode ter sobrevivido a uma mudança de base URL feita antes da atualização). Preencha novamente a chave de API da empresa — mesmo que o endereço não mude — para gravar o vínculo e verificá-lo.",
     enable: "Ativar",
     check: "Verificar conexão",
     updated: "{{name}} atualizado",

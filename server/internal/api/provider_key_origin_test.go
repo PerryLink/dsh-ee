@@ -506,3 +506,69 @@ func TestProviderLegacyEmptyKeyOriginBackfilledOnSave(t *testing.T) {
 		t.Fatalf("补写 origin 后历史改址应被拒绝，实际：%+v", res)
 	}
 }
+
+// 管理端列表给「有 key 但 api_key_origin 为空」的历史上游派生 apiKeyOriginUnknown=true；
+// 已绑定 origin 的、没有 key 的是 false。它只是可见性提示：不改变既有字段语义，也不改变
+// 读取守卫（空 origin 仍然放行）。
+func TestProviderListMarksMissingKeyOrigin(t *testing.T) {
+	env := newProviderTestEnv(t)
+	up := newKeyCaptureUpstream(t, "sk-old")
+	legacyID := env.createProvider(t, "历史上游", up.srv.URL, "sk-old")
+	boundID := env.createProvider(t, "已绑定上游", up.srv.URL, "sk-bound")
+	// 模拟 0042 加列前的旧记录：有 key，origin 为空。
+	env.clearProviderKeyOrigin(t, legacyID)
+	// 没有 key 的记录不标记。
+	noKey := &store.Provider{Name: "无 key 上游", Vendor: "custom", BaseURL: "https://no-key.example/v1", APIKeyEnc: []byte{}, Priority: 50, Enabled: true}
+	if err := env.store.CreateProvider(context.Background(), noKey); err != nil {
+		t.Fatal(err)
+	}
+
+	items := func(t *testing.T) map[int64]map[string]any {
+		t.Helper()
+		code, body := env.admin.do("GET", "/api/admin/providers", nil, nil)
+		expect(t, "上游列表", code, 200, body)
+		if strings.Contains(string(body), "sk-old") || strings.Contains(string(body), "sk-bound") || strings.Contains(string(body), "api_key_enc") {
+			t.Fatalf("上游列表不得返回 key 明文或密文：%s", body)
+		}
+		var payload struct {
+			Providers []map[string]any `json:"providers"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("解析上游列表：%v（%s）", err, body)
+		}
+		out := map[int64]map[string]any{}
+		for _, p := range payload.Providers {
+			out[int64(p["id"].(float64))] = p
+		}
+		return out
+	}
+	assertUnknown := func(t *testing.T, all map[int64]map[string]any, id int64, want bool) {
+		t.Helper()
+		item, ok := all[id]
+		if !ok {
+			t.Fatalf("列表缺少上游 #%d：%v", id, all)
+		}
+		if _, ok := item["base_url"]; !ok {
+			t.Fatalf("既有字段 base_url 不应丢失：%v", item)
+		}
+		got, _ := item["apiKeyOriginUnknown"].(bool)
+		if got != want {
+			t.Fatalf("上游 #%d apiKeyOriginUnknown=%v，期望 %v：%v", id, got, want, item)
+		}
+	}
+
+	all := items(t)
+	assertUnknown(t, all, legacyID, true)
+	assertUnknown(t, all, boundID, false)
+	assertUnknown(t, all, noKey.ID, false)
+
+	// 普通保存（不重填 key）不会补写 origin，标记应保持。
+	code, body := env.patchProvider(t, legacyID, map[string]any{"priority": 120})
+	expect(t, "普通保存", code, 200, body)
+	assertUnknown(t, items(t), legacyID, true)
+
+	// 重填一次 key（地址不变）后写入绑定 origin，标记消失。
+	code, body = env.patchProvider(t, legacyID, map[string]any{"api_key": "sk-old"})
+	expect(t, "重填 key", code, 200, body)
+	assertUnknown(t, items(t), legacyID, false)
+}

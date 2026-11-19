@@ -425,6 +425,13 @@ function ProviderCard({ p, models, onChanged }: { p: Provider; models: Model[]; 
             <Badge>{isVendor(p.vendor) ? t(`providers.vendors.${p.vendor}`) : p.vendor}</Badge>
             <span className="text-sm text-neutral-600">{t("providers.priorityOf", { n: p.priority })}</span>
             {!p.enabled && <Badge tone="amber">{t("providers.disabled")}</Badge>}
+            {p.apiKeyOriginUnknown && (
+              <Tip label={t("providers.apiKeyOriginUnknownHint")}>
+                <span tabIndex={0} className="inline-flex cursor-help">
+                  <Badge tone="amber">{t("providers.apiKeyOriginUnknown")}</Badge>
+                </span>
+              </Tip>
+            )}
           </div>
           <div className="mt-1 font-mono text-sm break-all text-neutral-700">{p.base_url}</div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-600">

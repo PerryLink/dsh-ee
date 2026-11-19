@@ -75,6 +75,10 @@ func run(log *slog.Logger) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
+	// #213 的迁移把存量上游的 api_key_origin 写成空串：这些 key 在改址守卫上线前
+	// 可能已被发往新地址，读取侧无法判定所以不阻断。启动时提示一次（管理端列表也会
+	// 标出），管理员重填一次 key 即补上绑定 origin。只告警，不阻塞启动。
+	warnProvidersMissingKeyOrigin(ctx, st, log)
 	// 多实例后台任务租约：周期任务每轮先抢一条数据库租约，只有 leader 实例执行。
 	// 默认开启，单实例也安全；优雅停机时释放，进程崩溃时靠 TTL 到期让其他实例接管。
 	leases := lease.New(st, lease.OwnerID(cfg.Addr), cfg.BackgroundLease, cfg.BackgroundLeaseTTL, log)
@@ -260,6 +264,28 @@ func run(log *slog.Logger) error {
 		return httpSrv.Shutdown(shutdownCtx)
 	}
 	return nil
+}
+
+// providerOriginCounter 是启动告警需要的查询能力；生产实现是 *store.Store。
+// 抽成接口是为了不起服务也能测告警逻辑（见 provider_origin_warn_test.go）。
+type providerOriginCounter interface {
+	CountProvidersMissingKeyOrigin(ctx context.Context) (int, []string, error)
+}
+
+// warnProvidersMissingKeyOrigin 在开始服务前提示缺少 api_key_origin 绑定的历史上游。
+// 每次启动只打一条 Warn，不阻塞启动：这类记录是否真的被改过目的地无法从库里判定，
+// 拒绝启动会把所有升级前的部署挡在门外；先让管理员看见，重填 key 后自然收敛。
+func warnProvidersMissingKeyOrigin(ctx context.Context, st providerOriginCounter, log *slog.Logger) {
+	n, names, err := st.CountProvidersMissingKeyOrigin(ctx)
+	if err != nil {
+		log.Warn("统计缺少 API Key 绑定 origin 的上游失败", "err", err)
+		return
+	}
+	if n == 0 {
+		return
+	}
+	log.Warn("发现缺少 API Key 绑定 origin 的历史上游：升级后请为这些上游重填一次 API Key（即使地址未变）以写入绑定 origin 并完成校验",
+		"count", n, "providers", names)
 }
 
 // openStore 连接数据库；连不上时在 DBWait 内每 3 秒重试一次。

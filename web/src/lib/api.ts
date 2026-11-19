@@ -158,6 +158,8 @@ export interface Provider {
   last_check_at: string | null;
   last_check_ok: boolean | null;
   last_check_msg: string;
+  /** 派生字段（仅列表接口）：api_key_origin 为空但有 key 的历史记录，提示管理员重填一次 API Key。 */
+  apiKeyOriginUnknown?: boolean;
   created_at: string;
   updated_at: string;
 }
