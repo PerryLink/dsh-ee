@@ -137,20 +137,47 @@ func (s *Store) SetDshReleaseRecommended(ctx context.Context, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	var target, kind, state string
-	err = tx.QueryRowContext(ctx, "SELECT target, kind, state FROM dsh_releases WHERE id = ? FOR UPDATE", id).Scan(&target, &kind, &state)
+	var target string
+	err = tx.QueryRowContext(ctx, "SELECT target FROM dsh_releases WHERE id = ?", id).Scan(&target)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
+	// 每个平台（target）只有一个推荐版本，不分安装包种类（docs/distribution-handoff.md
+	// 「设推荐（同一事务里先把这个 target 的推荐全部清掉）」，管理页也写的是「每个芯片架构一个」）。
+	// 先按 id 顺序一次锁住这个平台的所有行，再改：同一平台的两个推荐并发时按同样顺序加锁，
+	// 后到的等前一个提交，不会各自先锁一行再去抢对方那行而死锁。
+	rows, err := tx.QueryContext(ctx, "SELECT id, state FROM dsh_releases WHERE target = ? ORDER BY id FOR UPDATE", target)
+	if err != nil {
+		return err
+	}
+	state, found := "", false
+	for rows.Next() {
+		var rid int64
+		var rstate string
+		if err := rows.Scan(&rid, &rstate); err != nil {
+			rows.Close()
+			return err
+		}
+		if rid == id {
+			state, found = rstate, true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !found {
+		// 读 target 之后、加锁之前被删掉了
+		return ErrNotFound
+	}
 	if state != ReleaseMirrored {
 		return ErrReleaseNotMirrored
 	}
-	// 同一平台、同一种安装包只有一个推荐版本（和清理、自动镜像一样按种类分开）。
-	// 原来写死了 kind = 'zip'：Windows 的 exe 推荐新版本时清不掉旧推荐。
-	if _, err := tx.ExecContext(ctx, "UPDATE dsh_releases SET recommended = 0 WHERE target = ? AND kind = ?", target, kind); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE dsh_releases SET recommended = 0 WHERE target = ? AND recommended = 1", target); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE dsh_releases SET recommended = 1 WHERE id = ?", id); err != nil {

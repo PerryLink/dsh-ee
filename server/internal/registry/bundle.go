@@ -75,13 +75,19 @@ type BundleVersion struct {
 	CreatedAt        time.Time       `json:"created_at"`
 }
 
-// listedAt 是版本在这里上架的时间。镜像下来的版本 created_at 是上游的发布时间，
+// listedAt 是版本最近一次在这里上架的时间。镜像下来的版本 created_at 是上游的发布时间，
 // 上次导出之后才预载、或才审核通过的老版本要看 published_at，不然增量包会漏掉它们。
+// published_at 只在第一次上架时写入，下架后再恢复不会变；恢复（和审核通过）会写 reviewed_at，
+// 所以也要看它，否则「下架 → 全量导出 → 恢复」之后的增量包里没有这个版本。
+// 只导出 published 状态的版本，reviewed_at 对它们来说就是最近一次上架的时间。
 func listedAt(v *store.NpmVersion) time.Time {
-	if v.PublishedAt != nil && v.PublishedAt.After(v.CreatedAt) {
-		return *v.PublishedAt
+	t := v.CreatedAt
+	for _, c := range []*time.Time{v.PublishedAt, v.ReviewedAt} {
+		if c != nil && c.After(t) {
+			t = *c
+		}
 	}
-	return v.CreatedAt
+	return t
 }
 
 // ExportBundle 把已上架的上游镜像写成离线包。since 非空时只导出这之后在这里上架的版本（增量）。
