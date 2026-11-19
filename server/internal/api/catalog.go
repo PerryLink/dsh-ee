@@ -855,7 +855,9 @@ type feedItem struct {
 	// 上游 registry 的 latest（只查已镜像的包）；dshfind 目录的版本常常落后
 	UpstreamLatest string `json:"upstream_latest,omitempty"`
 	// 上游有比本地更新的版本
-	Newer        bool   `json:"newer"`
+	Newer bool `json:"newer"`
+	// 命中 dshfind 屏蔽名单的规则；空表示没被屏蔽
+	BlockedBy    string `json:"blocked_by,omitempty"`
 	DepCount     *int   `json:"dep_count"`
 	ClosureSize  *int64 `json:"closure_size"`
 	OfflineReady *bool  `json:"offline_ready"`
@@ -909,7 +911,7 @@ func (s *Server) handleUpstreamFeed(w http.ResponseWriter, r *http.Request) {
 	latest := s.registry.UpstreamLatest(r.Context(), mirrored)
 	out := make([]feedItem, 0, len(plugins))
 	for _, p := range plugins {
-		it := feedItem{FeedPlugin: p, UpstreamLatest: latest[p.Name]}
+		it := feedItem{FeedPlugin: p, UpstreamLatest: latest[p.Name], BlockedBy: registry.FeedBlockedBy(set, p)}
 		if pkg := byName[p.Name]; pkg != nil {
 			if v := visibleLatest(pkg, versions[p.Name]); v != nil {
 				it.LocalVersion, it.LocalStatus = v.Version, v.Status

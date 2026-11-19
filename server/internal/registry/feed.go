@@ -132,6 +132,7 @@ func (s *Service) Feed(ctx context.Context, refresh bool) ([]FeedPlugin, time.Ti
 		out = append(out, fp)
 	}
 	feed.plugins, feed.at, feed.url = out, time.Now(), s.FeedURL
+	s.authors.set(out)
 	return out, feed.at, nil
 }
 

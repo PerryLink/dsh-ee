@@ -391,6 +391,8 @@ export interface FeedPlugin {
   dep_count: number | null;
   closure_size: number | null;
   offline_ready: boolean | null;
+  /** 命中的 dshfind 屏蔽规则；没被屏蔽时没有 */
+  blocked_by?: string;
 }
 
 // ---- 统计与审计 ----

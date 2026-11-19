@@ -36,6 +36,9 @@ type AppSettings struct {
 		CustomRegistry string `json:"customRegistry"`
 		// 已预载插件出了新版本：auto 自动同步并上架 / review 同步后待审核 / off 不同步
 		AutoSync string `json:"autoSync"`
+		// dshfind 屏蔽名单：包名、@作用域/*、author:<dshfind 作者>。命中的包不出现在可预载列表里，
+		// 不能预载、申请引入、按需回源，也不检查新版本；已在本地的版本不受影响（要下架请走审核页）。
+		Blocklist []string `json:"blocklist"`
 	} `json:"upstream"`
 	Distribution struct {
 		Enabled               bool   `json:"enabled"`
@@ -143,6 +146,7 @@ func DefaultSettings() *AppSettings {
 	s.Upstream.DshfindFeed = true
 	s.Upstream.Registry = "npmmirror"
 	s.Upstream.AutoSync = "review"
+	s.Upstream.Blocklist = []string{}
 	s.Distribution.Enabled = true
 	s.Distribution.AutoSync = "notify"
 	s.Distribution.KeepVersions = 3
@@ -187,6 +191,7 @@ func (s *AppSettings) CompanyScopes() []string {
 func (s *AppSettings) Clone() *AppSettings {
 	c := *s
 	c.Registry.ExtraScopes = append([]string{}, s.Registry.ExtraScopes...)
+	c.Upstream.Blocklist = append([]string{}, s.Upstream.Blocklist...)
 	c.Embed.AllowedOrigins = append([]string{}, s.Embed.AllowedOrigins...)
 	c.Embed.Apps = append([]string{}, s.Embed.Apps...)
 	if s.Embed.CrossSite != nil {

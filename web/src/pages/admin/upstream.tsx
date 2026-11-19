@@ -18,6 +18,13 @@ function isPackageName(name: string): boolean {
   return packageName.test(name) && !name.includes("..");
 }
 
+/** dshfind 屏蔽规则：包名、@作用域/*、author:作者（与服务端 NormalizeBlockEntry 同一口径）。 */
+function isBlockRule(rule: string): boolean {
+  if (rule.startsWith("author:")) return /^author:[^\s/]{1,100}$/.test(rule);
+  if (rule.endsWith("/*")) return /^@[A-Za-z0-9][A-Za-z0-9._~-]*$/.test(rule.slice(0, -2));
+  return isPackageName(rule);
+}
+
 export default function AdminUpstream() {
   const { t } = useTranslation();
   const { settings } = useStore();
@@ -63,7 +70,7 @@ function useJob(onFinish?: () => void) {
 
 function Online() {
   const { t } = useTranslation();
-  const { settings, notify, reloadPending, reloadPlugins } = useStore();
+  const { settings, updateSettings, notify, reloadPending, reloadPlugins } = useStore();
   const scoring = useScoring();
   const feed = useApi(() => api.upstreamFeed());
   const jobs = useApi(api.jobs);
@@ -76,6 +83,10 @@ function Online() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [publish, setPublish] = useState(false);
   const [manual, setManual] = useState("");
+  const [showBlocked, setShowBlocked] = useState(false);
+  const blocklist = settings.upstream.blocklist ?? [];
+  const [blockText, setBlockText] = useState(blocklist.join("\n"));
+  useEffect(() => setBlockText(blocklist.join("\n")), [blocklist.join("\n")]); // eslint-disable-line react-hooks/exhaustive-deps
   const [job, setJob] = useJob(() => {
     feed.reload();
     jobs.reload();
@@ -94,7 +105,19 @@ function Online() {
         .slice(0, topN),
     [all, cats, scoring.upstream, minScore, rankBy, topN],
   );
-  const fresh = ranked.filter((c) => !c.local_version);
+  const fresh = ranked.filter((c) => !c.local_version && !c.blocked_by);
+  const blockedCount = ranked.filter((c) => c.blocked_by).length;
+  const blockEntries = useMemo(
+    () => Array.from(new Set(blockText.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))),
+    [blockText],
+  );
+  const blockValid = blockEntries.filter(isBlockRule);
+  const saveBlocklist = (next: string[]) => {
+    updateSettings((cur) => ({ ...cur, upstream: { ...cur.upstream, blocklist: next } }));
+    setPicked((p) => new Set([...p].filter((n) => !next.includes(n))));
+    notify(t("upstreamAdmin.blocklistSaved"));
+    setTimeout(feed.reload, 1500);
+  };
   const manualEntries = useMemo(
     () => Array.from(new Set(manual.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))),
     [manual],
@@ -169,11 +192,33 @@ function Online() {
             <span className="text-neutral-700">{t("upstreamAdmin.hideMirrored")}</span>
             <Toggle checked={hideMirrored} onChange={setHideMirrored} />
           </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-neutral-700">{t("upstreamAdmin.showBlocked")}</span>
+            <Toggle checked={showBlocked} onChange={setShowBlocked} />
+          </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-neutral-700">{t("registry.upstream.publishDirectly")}</span>
             <Toggle checked={publish} onChange={setPublish} />
           </div>
           {publish && <p className="text-xs text-amber-700">{t("registry.upstream.publishDirectlyHint")}</p>}
+        </Card>
+
+        <Card className="space-y-3 p-5 text-sm">
+          <Field label={t("upstreamAdmin.blocklist")} hint={t("upstreamAdmin.blocklistHint")}>
+            <textarea
+              aria-label={t("upstreamAdmin.blocklist")}
+              className={cx(inputCls, "h-24 py-2 font-mono")}
+              value={blockText}
+              onChange={(e) => setBlockText(e.target.value)}
+              placeholder={"dsh-plugin-foo\n@someone/*\nauthor:someone"}
+            />
+          </Field>
+          {blockEntries.length > blockValid.length && (
+            <p className="text-xs text-amber-700">{t("upstreamAdmin.blocklistInvalid", { count: blockEntries.length - blockValid.length })}</p>
+          )}
+          <Button variant="secondary" size="sm" className="w-full" onClick={() => saveBlocklist(blockValid)}>
+            {t("upstreamAdmin.blocklistSave")}
+          </Button>
         </Card>
 
         <Card className="space-y-2 p-5 text-sm">
@@ -222,6 +267,7 @@ function Online() {
                     ? t("upstreamAdmin.manualOnly")
                     : t("upstreamAdmin.allUnmirrored")}
             </span>
+            {blockedCount > 0 && !showBlocked && <span className="ml-2 text-neutral-500">{t("upstreamAdmin.blockedCount", { count: blockedCount })}</span>}
             <span className="ml-2 text-neutral-500">{t("registry.upstream.feedCount", { count: all.length, at: feed.data?.fetched_at ? formatTime(feed.data.fetched_at) : "—" })}</span>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -253,18 +299,21 @@ function Online() {
                     {scoring.upstream && <th className="px-4 py-2.5 text-right">{t("upstreamAdmin.colScore")}</th>}
                     <th className="px-4 py-2.5">{t("upstreamAdmin.colDeps")}</th>
                     <th className="px-4 py-2.5">{t("upstreamAdmin.colStatus")}</th>
+                    <th className="px-4 py-2.5 text-right">{t("upstreamAdmin.colActions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {ranked
                     .filter((c) => !hideMirrored || !c.local_version)
+                    .filter((c) => showBlocked || !c.blocked_by)
                     .map((c) => (
-                      <tr key={c.name} className={cx(c.local_version && "text-neutral-500")}>
+                      <tr key={c.name} className={cx((c.local_version || c.blocked_by) && "text-neutral-500")}>
                         <td className="px-4 py-2">
                           <input
                             type="checkbox"
                             aria-label={c.name}
                             checked={picked.has(c.name)}
+                            disabled={!!c.blocked_by}
                             onChange={() => toggle(c.name)}
                             className="accent-brand-500"
                           />
@@ -288,13 +337,26 @@ function Online() {
                           )}
                         </td>
                         <td className="px-4 py-2">
-                          {c.local_status ? (
+                          {c.blocked_by ? (
+                            <Badge tone="red">{t("upstreamAdmin.blocked", { rule: c.blocked_by })}</Badge>
+                          ) : c.local_status ? (
                             <span className="inline-flex items-center gap-1.5">
                               <StatusBadge status={c.local_status} />
                               {c.version && c.local_version !== c.version && <Badge tone="amber">{t("registry.upstream.newer", { version: c.version })}</Badge>}
                             </span>
                           ) : (
                             <Badge>{t("upstreamAdmin.notMirrored")}</Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {!c.blocked_by && (
+                            <button
+                              type="button"
+                              className="text-sm text-red-600 hover:text-red-700"
+                              onClick={() => saveBlocklist(Array.from(new Set([...blocklist, c.name])))}
+                            >
+                              {t("upstreamAdmin.block")}
+                            </button>
                           )}
                         </td>
                       </tr>

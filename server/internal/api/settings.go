@@ -234,6 +234,20 @@ func validateSettings(v *store.AppSettings) string {
 			return c.what + "取值不对：" + c.val
 		}
 	}
+	if len(v.Upstream.Blocklist) > registry.MaxBlocklist {
+		return fmt.Sprintf("dshfind 屏蔽名单最多 %d 条", registry.MaxBlocklist)
+	}
+	blocklist := make([]string, 0, len(v.Upstream.Blocklist))
+	for _, raw := range v.Upstream.Blocklist {
+		e, ok := registry.NormalizeBlockEntry(raw)
+		if !ok {
+			return "dshfind 屏蔽规则格式不对：" + raw + "（包名、@作用域/* 或 author:作者）"
+		}
+		if !slices.Contains(blocklist, e) {
+			blocklist = append(blocklist, e)
+		}
+	}
+	v.Upstream.Blocklist = blocklist
 	if v.Upstream.Registry == "custom" {
 		u, err := url.Parse(v.Upstream.CustomRegistry)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {

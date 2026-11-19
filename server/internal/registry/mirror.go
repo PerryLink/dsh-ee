@@ -237,6 +237,9 @@ func (s *Service) StartSync(ctx context.Context, kind string, params SyncParams,
 		if InScopes(r.Name, set.CompanyScopes()) {
 			return nil, errf(400, "%s is in the enterprise scope and can only be published internally; it cannot be prefetched from upstream", r.Name)
 		}
+		if rule := s.BlockedBy(set, r.Name); rule != "" {
+			return nil, errf(403, "%s is blocked by the dshfind blocklist rule %q", r.Name, rule)
+		}
 	}
 	if params.RootStatus != store.StatusPublished {
 		params.RootStatus = store.StatusPending
@@ -548,7 +551,7 @@ func (s *Service) CheckUpdates(ctx context.Context, by int64) (*store.SyncJob, e
 	}
 	var roots []SyncRoot
 	for _, p := range pkgs {
-		if p.Origin != store.OriginUpstream || !p.IsPlugin {
+		if p.Origin != store.OriginUpstream || !p.IsPlugin || s.BlockedBy(set, p.Name) != "" {
 			continue
 		}
 		doc, err := s.up.Packument(ctx, UpstreamBase(set), p.Name, -1)

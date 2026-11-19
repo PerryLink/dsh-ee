@@ -81,6 +81,7 @@ DSH 的 `dsh plugin add` 在 profile 目录里转发给 pnpm，所以「能力�
 - **企业作用域永不回源**：作用域内的包名、以及曾经在本地托管过的包名，无论设置怎么改都只查本地，防依赖混淆。
 - **回源**：「按需回源并缓存」时，作用域之外的包取上游 packument（磁盘缓存 5 分钟，带 ETag 重新验证，上游不可用时用旧缓存），tarball 第一次下载时拉取、校验 integrity 后存下；「只提供已预载的包」或离线模式下只用本地已有的版本。**声明了 `dsh.bundle` 的上游版本（即社区插件）在白名单模式下必须先在本地审核上架才可见**，普通依赖不需要审核。
 - **上游预载**：从 dshfind 插件目录（DSH 索引 format 1）挑插件，镜像插件本身与依赖闭包（dependencies、optionalDependencies、必需的 peerDependencies，按 npm 的 semver 规则解析，含预发布版本的规则），记录闭包大小与是否离线可装。插件进入待审核（或勾选直接上架），依赖直接可用。每 6 小时按「新版本」设置检查已预载插件的新版本。员工也可以「申请引入」某个包，走同样的流程进入待审核。
+- **dshfind 屏蔽名单**（系统设置 `upstream.blocklist`，上游预载页可编辑）：每条是包名、`@作用域/*` 或 `author:<dshfind 作者>`。命中的包在 dshfind 目录里标出 `blocked_by` 并默认隐藏，不能预载、申请引入、按需回源（packument 与 tarball 都返回 404），也不再检查新版本；作者规则按 dshfind 目录登记的作者匹配。已在本地的版本不受影响，要下架请走审核页。
 - **离线包**：能上网的实例导出 tar（`dsh-ee-bundle.json` 清单 + 按 sha512 命名的 tarball），拷进隔离网实例导入；导入时逐个重算 sha512，与文件名、清单 integrity 都一致才入库，插件版本进入待审核。
 - **令牌**：统一 `ee_at_…` 令牌按 `registry:read` / `registry:publish` scope 控制 npm 权限；旧 `ee_npm_…` 只读 / 可发布令牌与 `npm login --auth-type=legacy` 继续支持。设置里「安装也需要令牌」关闭后匿名可装，发布总是要令牌。每次 tarball 下载记入 `npm_downloads`（安装审计与企业内热门）。
 - **接入脚本**：`curl -fsSL <dsh-ee>/setup.sh | sh`（Windows：`irm <dsh-ee>/setup.ps1 | iex`）通过设备确认后用 `npm config` 写好 registry、作用域与令牌；无浏览器环境用 `sh -s -- --token <令牌>`。

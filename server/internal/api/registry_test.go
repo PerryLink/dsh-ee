@@ -232,6 +232,7 @@ func TestRegistry(t *testing.T) {
 		"dependencies":     map[string]any{"left-pad": "^1.0.0"},
 		"peerDependencies": map[string]any{"@deepseek-ai/dsh-core": "^0.2.0"},
 	}), bundleFile)
+	up.add(t, pluginPkg("dsh-plugin-shady", "1.0.0", nil), bundleFile)
 	// 企业作用域的同名包挂在上游：dsh-ee 永远不该去请求它（依赖混淆）
 	up.add(t, map[string]any{"name": "@acme/evil", "version": "9.9.9"}, nil)
 	up.feeds = []map[string]any{{"name": "dsh-plugin-cool", "title": "Cool 插件", "metadata": map[string]any{"category": "tools", "labels": []string{"featured"}, "sortKeys": map[string]any{"stars": 120, "score": 88}}, "versions": []map[string]any{{"version": "2.0.0", "publishTimestamp": 1790000000}}}}
@@ -584,6 +585,61 @@ func TestRegistry(t *testing.T) {
 		if len(feed.Plugins) != 1 || feed.Plugins[0].UpstreamLatest != "2.0.0" || feed.Plugins[0].LocalVersion != "2.0.0" || feed.Plugins[0].Newer {
 			t.Fatalf("应按 npm latest 判断新版本：%s", body)
 		}
+	})
+
+	t.Run("dshfind 屏蔽名单", func(t *testing.T) {
+		up.mu.Lock()
+		up.feeds = append(up.feeds, map[string]any{"name": "dsh-plugin-shady", "author": "ShadyDev", "metadata": map[string]any{"category": "tools"}, "versions": []map[string]any{{"version": "1.0.0"}}})
+		up.mu.Unlock()
+		code, body := admin.do("GET", "/api/settings", nil, nil)
+		s := decodeAs[map[string]any](t, body)
+		s["upstream"].(map[string]any)["blocklist"] = []string{"not a name!"}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "非法屏蔽规则", code, 400, body)
+		s["upstream"].(map[string]any)["blocklist"] = []string{" author:ShadyDev ", "@sketchy/*", "is-number", "is-number"}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "保存屏蔽名单", code, 200, body)
+		saved := decodeAs[store.AppSettings](t, body)
+		if got := strings.Join(saved.Upstream.Blocklist, ","); got != "author:shadydev,@sketchy/*,is-number" {
+			t.Fatalf("屏蔽名单应规整并去重：%s", got)
+		}
+
+		code, body = admin.do("GET", "/api/admin/upstream/feed?refresh=1", nil, nil)
+		expect(t, "dshfind 目录", code, 200, body)
+		type feedRow struct {
+			Name      string `json:"name"`
+			BlockedBy string `json:"blocked_by"`
+		}
+		rows := map[string]string{}
+		for _, p := range decodeAs[struct{ Plugins []feedRow }](t, body).Plugins {
+			rows[p.Name] = p.BlockedBy
+		}
+		if rows["dsh-plugin-shady"] != "author:shadydev" || rows["dsh-plugin-cool"] != "" {
+			t.Fatalf("目录应标出被屏蔽的插件：%s", body)
+		}
+		code, body = admin.do("POST", "/api/admin/upstream/sync", map[string]any{"names": []string{"dsh-plugin-shady"}}, nil)
+		expect(t, "不能预载被屏蔽的插件", code, 403, body)
+		code, body = admin.do("POST", "/api/admin/upstream/sync", map[string]any{"names": []string{"@sketchy/tool"}}, nil)
+		expect(t, "不能预载被屏蔽作用域", code, 403, body)
+		code, body = alice.do("POST", "/api/me/import-requests", map[string]string{"name": "dsh-plugin-shady", "reason": "想用"}, nil)
+		expect(t, "不能申请引入被屏蔽的插件", code, 403, body)
+		before := up.hitCount("is-number")
+		code, body = anon.do("GET", "/npm/is-number", nil, npm(readTok))
+		expect(t, "被屏蔽的包不回源", code, 404, body)
+		code, body = anon.do("GET", "/npm/is-number/-/is-number-7.0.0.tgz", nil, npm(readTok))
+		expect(t, "被屏蔽的 tarball 不回源", code, 404, body)
+		if up.hitCount("is-number") != before {
+			t.Fatal("被屏蔽的包不应请求上游")
+		}
+		if _, err := st.GetVersion(ctx, "dsh-plugin-shady", "1.0.0"); err == nil {
+			t.Fatal("被屏蔽的插件不应镜像进来")
+		}
+
+		s["upstream"].(map[string]any)["blocklist"] = []string{}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "清空屏蔽名单", code, 200, body)
+		code, body = anon.do("GET", "/npm/is-number", nil, npm(readTok))
+		expect(t, "解除屏蔽后可回源", code, 200, body)
 	})
 
 	t.Run("只用已预载的包", func(t *testing.T) {

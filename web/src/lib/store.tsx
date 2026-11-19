@@ -24,6 +24,7 @@ export const defaultSettings: Settings = {
     registry: "npmmirror",
     customRegistry: "",
     autoSync: "review",
+    blocklist: [],
   },
   distribution: {
     enabled: true,
