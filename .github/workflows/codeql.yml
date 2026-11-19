@@ -1,0 +1,41 @@
+# GitHub CodeQL 代码扫描：静态发现注入/路径穿越/SSRF 等模式。
+# 只在 main push、每周定时和手动触发时跑；不挂 PR，避免拉长每次 PR 的反馈时间
+# （PR 的取舍是：依赖审查 + 现有测试；深度静态分析放到后台）。
+name: codeql
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每周日 03:00 Asia/Shanghai（UTC 19:00 周日）
+    - cron: "0 19 * * 0"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, javascript-typescript, python]
+    steps:
+      - uses: actions/checkout@v5
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - name: 自动构建
+        uses: github/codeql-action/autobuild@v3
+      - name: 上传分析结果
+        uses: github/codeql-action/analyze@v3

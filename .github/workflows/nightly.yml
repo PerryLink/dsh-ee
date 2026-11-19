@@ -1,0 +1,85 @@
+# 夜间回归：把「跑得慢、但值得定期跑」的检查从 PR 主链上挪出来。
+#
+# - race：并发敏感包（api/store/registry/kb）开 Go race detector 全量跑一遍。
+#   PR 主链只跑普通测试，race 会把 server job 拉到 2–3 倍时长；夜间跑足够发现
+#   数据竞争（限流器、配额预留、dist-tag 行锁、SSE 计数、PDF 子进程等）。
+# - govulncheck：用官方漏洞库扫描 server 与各独立 Go module 的直接/间接依赖。
+# - 短片生成链的 OpenMotion pin 单测（纯 Node，无外部依赖）。
+#
+# 不跑浏览器 e2e：PR 主链已全量跑；这里重复只会增加时长。
+name: nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每天 02:00 Asia/Shanghai（UTC 18:00）
+    - cron: "0 18 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      tidb:
+        image: pingcap/tidb:v8.5.8
+        ports: ["4000:4000"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: 等待 TiDB
+        run: |
+          for i in $(seq 1 60); do mysql -h127.0.0.1 -P4000 -uroot -e 'select 1' >/dev/null 2>&1 && exit 0; sleep 2; done
+          echo "TiDB 没起来" && exit 1
+      - name: go test -race（并发敏感包）
+        working-directory: server
+        env:
+          DSH_EE_TEST_DSN: root:@tcp(127.0.0.1:4000)/
+        run: |
+          go test -race -count=1 -timeout 50m \
+            ./internal/api/ ./internal/store/ ./internal/registry/ ./internal/kb/
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: 安装 govulncheck（固定版本）
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - name: 扫描 server 与独立 Go module
+        run: |
+          set -e
+          for dir in server extensions/sdk-go extensions/official/ee-jwt-adapter extensions/examples/demo-extension; do
+            echo "== $dir =="
+            (cd "$dir" && govulncheck ./...)
+          done
+
+  promo-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: 短片生成链语法 / pin 单测（无模板依赖）
+        run: |
+          node --check promo/openmotion/build-film.mjs
+          if [ -f promo/openmotion/pin.test.mjs ]; then
+            node --test promo/openmotion/pin.test.mjs
+          else
+            echo "promo/openmotion/pin.test.mjs 尚未合入（见对应 PR），本次跳过 pin 单测"
+          fi
