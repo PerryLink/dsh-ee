@@ -25,6 +25,7 @@ export const defaultSettings: Settings = {
     customRegistry: "",
     autoSync: "review",
     blocklist: [],
+    sources: [],
   },
   distribution: {
     enabled: true,

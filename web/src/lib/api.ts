@@ -393,6 +393,16 @@ export interface FeedPlugin {
   offline_ready: boolean | null;
   /** 命中的 dshfind 屏蔽规则；没被屏蔽时没有 */
   blocked_by?: string;
+  /** 来自哪个插件源 */
+  source?: string;
+}
+
+export interface FeedSourceResult {
+  name: string;
+  url: string;
+  count: number;
+  error?: string;
+  fetched_at?: string;
 }
 
 // ---- 统计与审计 ----
@@ -2226,7 +2236,7 @@ export const api = {
     request<{ ok: boolean; latency_ms?: number; status?: number; message?: string; upstream?: string }>("POST", "/api/admin/registry/check"),
 
   upstreamFeed: (refresh = false) =>
-    request<{ plugins: FeedPlugin[]; fetched_at?: string; error?: string; disabled?: boolean }>(
+    request<{ plugins: FeedPlugin[]; sources?: FeedSourceResult[]; fetched_at?: string; error?: string; disabled?: boolean }>(
       "GET",
       `/api/admin/upstream/feed${refresh ? "?refresh=1" : ""}`,
     ),

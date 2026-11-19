@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileArchive, Loader2, PackageOpen, RefreshCw, ShieldCheck, WifiOff, CloudOff, TriangleAlert } from "lucide-react";
+import { FileArchive, Loader2, PackageOpen, Plus, RefreshCw, ShieldCheck, Trash2, WifiOff, CloudOff, TriangleAlert } from "lucide-react";
 import { categoryIds, categoryLabel } from "../../lib/catalog";
 import { formatNumber } from "../../lib/format";
 import { useScoring, useStore } from "../../lib/store";
@@ -203,6 +203,8 @@ function Online() {
           {publish && <p className="text-xs text-amber-700">{t("registry.upstream.publishDirectlyHint")}</p>}
         </Card>
 
+        <Sources results={feed.data?.sources ?? []} onChange={() => setTimeout(() => api.upstreamFeed(true).then(feed.reload, feed.reload), 1500)} />
+
         <Card className="space-y-3 p-5 text-sm">
           <Field label={t("upstreamAdmin.blocklist")} hint={t("upstreamAdmin.blocklistHint")}>
             <textarea
@@ -225,7 +227,10 @@ function Online() {
           <div className="font-medium text-neutral-800">{t("upstreamAdmin.config")}</div>
           <div className="flex justify-between text-neutral-600">
             <span>{t("upstreamAdmin.catalog")}</span>
-            <span>{settings.upstream.dshfindFeed ? "dshfind.com" : t("upstreamAdmin.notEnabled")}</span>
+            <span>
+              {[...(settings.upstream.dshfindFeed ? ["dshfind.com"] : []), ...(settings.upstream.sources ?? []).filter((s) => s.enabled).map((s) => s.name)].join(" · ") ||
+                t("upstreamAdmin.notEnabled")}
+            </span>
           </div>
           <div className="flex justify-between text-neutral-600">
             <span>{t("upstreamAdmin.npmSource")}</span>
@@ -323,6 +328,9 @@ function Online() {
                           <div className="font-mono text-xs text-neutral-500">
                             {c.name}
                             {c.version && <span>@{c.version}</span>}
+                            {c.source && c.source !== "dshfind" && (
+                              <span className="ml-1.5 rounded bg-neutral-100 px-1 py-0.5 font-sans text-[11px] text-neutral-600">{c.source}</span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-2">{categoryLabel(c.category ?? "") ?? "—"}</td>
@@ -369,6 +377,98 @@ function Online() {
         <JobHistory jobs={jobs.data ?? []} onPick={setJob} />
       </div>
     </div>
+  );
+}
+
+/** 插件源：内置 dshfind 加上管理员添加的第三方源（DSH 索引 format 1）。 */
+function Sources({ results, onChange }: { results: { name: string; count: number; error?: string }[]; onChange: () => void }) {
+  const { t } = useTranslation();
+  const { settings, updateSettings, notify } = useStore();
+  const sources = settings.upstream.sources ?? [];
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const status = (n: string) => {
+    const r = results.find((x) => x.name === n);
+    if (!r) return null;
+    return r.error ? (
+      <span className="text-xs text-red-600" title={r.error}>
+        {t("upstreamAdmin.sourceError")}
+      </span>
+    ) : (
+      <span className="text-xs text-neutral-500">{t("upstreamAdmin.sourceCount", { count: r.count })}</span>
+    );
+  };
+  const setSources = (next: typeof sources) => {
+    updateSettings((cur) => ({ ...cur, upstream: { ...cur.upstream, sources: next } }));
+    onChange();
+  };
+  const add = () => {
+    const n = name.trim();
+    const u = url.trim();
+    if (!n || n === "dshfind" || sources.some((s) => s.name === n || s.url === u)) return notify(t("upstreamAdmin.sourceDuplicate"));
+    if (!/^https?:\/\/[^\s/@]+(\/\S*)?$/.test(u)) return notify(t("upstreamAdmin.sourceInvalidUrl"));
+    setSources([...sources, { name: n, url: u, enabled: true }]);
+    setName("");
+    setUrl("");
+  };
+  return (
+    <Card className="space-y-3 p-5 text-sm">
+      <div>
+        <div className="font-medium text-neutral-800">{t("upstreamAdmin.sources")}</div>
+        <p className="mt-1 text-xs text-neutral-500">{t("upstreamAdmin.sourcesHint")}</p>
+      </div>
+      <ul className="divide-y divide-neutral-100">
+        <li className="flex items-center gap-2 py-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-neutral-800">dshfind.com</div>
+            <div className="flex gap-2">
+              <span className="text-xs text-neutral-400">{t("upstreamAdmin.builtin")}</span>
+              {settings.upstream.dshfindFeed && status("dshfind")}
+            </div>
+          </div>
+          <Toggle
+            checked={settings.upstream.dshfindFeed}
+            onChange={(v) => {
+              updateSettings((cur) => ({ ...cur, upstream: { ...cur.upstream, dshfindFeed: v } }));
+              onChange();
+            }}
+          />
+        </li>
+        {sources.map((s, i) => (
+          <li key={s.url} className="flex items-center gap-2 py-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-neutral-800">{s.name}</div>
+              <div className="truncate font-mono text-xs text-neutral-400" title={s.url}>
+                {s.url}
+              </div>
+              {s.enabled && status(s.name)}
+            </div>
+            <Toggle checked={s.enabled} onChange={(v) => setSources(sources.map((x, j) => (j === i ? { ...x, enabled: v } : x)))} />
+            <button
+              type="button"
+              aria-label={t("upstreamAdmin.removeSource", { name: s.name })}
+              className="text-neutral-400 hover:text-red-600"
+              onClick={() => setSources(sources.filter((_, j) => j !== i))}
+            >
+              <Trash2 size={14} />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="space-y-2">
+        <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("upstreamAdmin.sourceName")} aria-label={t("upstreamAdmin.sourceName")} />
+        <input
+          className={cx(inputCls, "font-mono")}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://example.com/dsh-index.json"
+          aria-label={t("upstreamAdmin.sourceUrl")}
+        />
+        <Button variant="secondary" size="sm" className="w-full" disabled={!name.trim() || !url.trim() || sources.length >= 10} onClick={add}>
+          <Plus size={14} /> {t("upstreamAdmin.addSource")}
+        </Button>
+      </div>
+    </Card>
   );
 }
 

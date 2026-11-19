@@ -863,7 +863,7 @@ type feedItem struct {
 	OfflineReady *bool  `json:"offline_ready"`
 }
 
-// GET /api/admin/upstream/feed：dshfind 插件目录 + 本地镜像状态。
+// GET /api/admin/upstream/feed：各插件源（dshfind 与第三方源）合并后的目录 + 本地镜像状态。
 func (s *Server) handleUpstreamFeed(w http.ResponseWriter, r *http.Request) {
 	if !s.registryReady(w) {
 		return
@@ -873,13 +873,24 @@ func (s *Server) handleUpstreamFeed(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
-	if !set.Upstream.DshfindFeed || set.Upstream.Mode == "offline" {
-		writeJSON(w, http.StatusOK, map[string]any{"plugins": []feedItem{}, "disabled": true})
+	sources := s.registry.Sources(set)
+	if len(sources) == 0 || set.Upstream.Mode == "offline" {
+		writeJSON(w, http.StatusOK, map[string]any{"plugins": []feedItem{}, "sources": []registry.FeedResult{}, "disabled": true})
 		return
 	}
-	plugins, at, err := s.registry.Feed(r.Context(), r.URL.Query().Get("refresh") == "1")
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"plugins": []feedItem{}, "error": err.Error()})
+	plugins, results := s.registry.Feeds(r.Context(), r.URL.Query().Get("refresh") == "1", sources)
+	var errs []string
+	var at time.Time
+	for _, res := range results {
+		if res.Error != "" {
+			errs = append(errs, res.Name+"："+res.Error)
+		}
+		if res.FetchedAt.After(at) {
+			at = res.FetchedAt
+		}
+	}
+	if len(errs) == len(results) {
+		writeJSON(w, http.StatusOK, map[string]any{"plugins": []feedItem{}, "sources": results, "error": strings.Join(errs, "；")})
 		return
 	}
 	names := make([]string, len(plugins))
@@ -925,7 +936,7 @@ func (s *Server) handleUpstreamFeed(w http.ResponseWriter, r *http.Request) {
 		it.Newer = it.LocalVersion != "" && upVer != "" && registry.CompareVersions(upVer, it.LocalVersion) > 0
 		out = append(out, it)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plugins": out, "fetched_at": at})
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": out, "sources": results, "fetched_at": at})
 }
 
 type syncReq struct {
@@ -954,7 +965,8 @@ func (s *Server) handleUpstreamSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	feedByName := map[string]registry.FeedPlugin{}
-	if plugins, _, err := s.registry.Feed(r.Context(), false); err == nil {
+	if set, err := s.appSettings(r.Context()); err == nil && set.Upstream.Mode != "offline" {
+		plugins, _ := s.registry.Feeds(r.Context(), false, s.registry.Sources(set))
 		for _, p := range plugins {
 			feedByName[p.Name] = p
 		}
