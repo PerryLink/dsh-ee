@@ -124,6 +124,28 @@ func UniqueToolName(base string, used map[string]bool) string {
 	}
 }
 
+// MCPToolNames 给上游 MCP 的一组工具起对外的名字，和 raws 一一对应。
+// 名字本身已经合规（字母数字下划线、不超过 64 字符）的工具先占住原名，剩下的再规范、去重：
+// 这样上游新增一个 get-issue 也抢不走已有 get_issue 的名字，结果不随上游列出的顺序变。
+// 只差大小写的合规名字，先列出的保留原名。
+func MCPToolNames(raws []string) []string {
+	out := make([]string, len(raws))
+	used := map[string]bool{}
+	for i, raw := range raws {
+		key := strings.ToLower(raw)
+		if ToolName(raw) == raw && !used[key] {
+			used[key] = true
+			out[i] = raw
+		}
+	}
+	for i, raw := range raws {
+		if out[i] == "" {
+			out[i] = UniqueToolName(ToolName(raw), used)
+		}
+	}
+	return out
+}
+
 var nonName = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
 // ToolName 把 operationId 或「方法_路径」规范成 MCP 工具名。

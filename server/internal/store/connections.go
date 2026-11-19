@@ -22,6 +22,28 @@ type ConnectionTool struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// MCPToolOp 是 MCP 工具在 operation 里记的东西：上游的原名（和对外的名字不一样时才记）。
+type MCPToolOp struct {
+	Name string `json:"mcp_name"`
+}
+
+// mcpName 是 operation 里记的上游原名；没记（OpenAPI 工具、名字本来就合规的 MCP 工具、旧数据）时为空。
+func (t *ConnectionTool) mcpName() string {
+	var op MCPToolOp
+	if len(t.Operation) > 0 && json.Unmarshal(t.Operation, &op) == nil {
+		return op.Name
+	}
+	return ""
+}
+
+// UpstreamName 是这个工具在上游的身份：调上游 MCP 用它，重新同步时也按它把管理员的设置对回来。
+func (t *ConnectionTool) UpstreamName() string {
+	if n := t.mcpName(); n != "" {
+		return n
+	}
+	return t.Name
+}
+
 const connToolCols = "asset_id, name, description, input_schema, operation, read_only, enabled, roles, updated_at"
 
 func scanConnTool(row interface{ Scan(...any) error }) (*ConnectionTool, error) {
@@ -68,16 +90,42 @@ func (s *Store) ConnectionTools(ctx context.Context, assetIDs ...int64) ([]*Conn
 	return out, rows.Err()
 }
 
-// ReplaceConnectionTools 用新发现的工具替换清单。已存在的同名工具保留管理员设置的启用状态与角色限定；
+// ReplaceConnectionTools 用新发现的工具替换清单。已存在的工具保留管理员设置的启用状态与角色限定；
 // 新出现的工具按 defaultEnabled 决定是否启用（OpenAPI 的写操作默认关闭）。
+//
+// 新旧工具按上游身份（UpstreamName）对上，不按对外的名字：对外的名字是规范、去重出来的，
+// 上游多一个工具就可能换主人（get-issue 变成 get_issue，原来的 get_issue 成了 get_issue_2），
+// 按名字对会把管理员给 get_issue 的角色限定挪到别的工具上，真正的 get_issue 反倒没了限制。
 func (s *Store) ReplaceConnectionTools(ctx context.Context, assetID int64, tools []*ConnectionTool) error {
 	existing, err := s.ConnectionTools(ctx, assetID)
 	if err != nil {
 		return err
 	}
-	keep := map[string]*ConnectionTool{}
+	byUpstream := map[string]*ConnectionTool{}
+	// 没记上游原名的旧行：名字可能是规范过的（上游的 get-issue 存成了 get_issue）
+	legacy := map[string]*ConnectionTool{}
 	for _, t := range existing {
-		keep[t.Name] = t
+		byUpstream[t.UpstreamName()] = t
+		if t.mcpName() == "" {
+			legacy[t.Name] = t
+		}
+	}
+	taken := map[*ConnectionTool]bool{}
+	olds := make([]*ConnectionTool, len(tools))
+	for i, t := range tools {
+		if old := byUpstream[t.UpstreamName()]; old != nil {
+			olds[i], taken[old] = old, true
+		}
+	}
+	// 上游原名对不上的，再拿旧行的名字对一次规范后的名字：兼容还没记上游原名时存下的设置。
+	// 放在后面，旧行已经被上游原名对上了就不再给别人。
+	for i, t := range tools {
+		if olds[i] != nil || t.mcpName() == "" {
+			continue
+		}
+		if old := legacy[t.Name]; old != nil && !taken[old] {
+			olds[i], taken[old] = old, true
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -88,8 +136,8 @@ func (s *Store) ReplaceConnectionTools(ctx context.Context, assetID int64, tools
 		return err
 	}
 	t0 := now()
-	for _, t := range tools {
-		if old := keep[t.Name]; old != nil {
+	for i, t := range tools {
+		if old := olds[i]; old != nil {
 			t.Roles = old.Roles
 			// 原来只读、现在成了写操作的工具不沿用「已启用」：等管理员确认后再打开（docs/plugins.md §9.4）
 			if !old.ReadOnly || t.ReadOnly {
