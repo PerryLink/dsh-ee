@@ -103,6 +103,14 @@ jobs:
           echo "TiDB 没起来" && exit 1
       - run: go vet ./...
         working-directory: server
+      # 跨平台编译回归：同一个单文件二进制也会被 Windows/macOS 用户使用。
+      # 之前 cmd/dsh-ee 的扩展调试命令直接用 syscall.SysProcAttr{Setpgid}/syscall.Kill，
+      # 在 Windows 上根本编译不过，而 CI 的 windows job 只测了 internal/api，没人发现。
+      - name: 交叉编译（windows / darwin）
+        working-directory: server
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./...
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./...
       - run: go test -count=1 -timeout 20m ./...
         working-directory: server
         env:
