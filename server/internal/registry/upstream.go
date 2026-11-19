@@ -314,6 +314,9 @@ func (u *Upstream) guardClient(hc *http.Client) *http.Client {
 	direct := tr.Clone()
 	direct.Proxy = nil
 	direct.DialContext = u.guardedDialContext(baseDial)
+	// 自定义 DialContext 的克隆传输层默认不启用 HTTP/2，但 TLS 仍可能经 ALPN 协商成 h2，
+	// 上游（npmmirror、api.dshfind.com 等）回 h2 帧就会报 malformed HTTP response。
+	direct.ForceAttemptHTTP2 = true
 	c.Transport = &upstreamTransport{u: u, direct: direct, proxied: tr, proxy: tr.Proxy}
 	return &c
 }
