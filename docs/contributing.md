@@ -180,19 +180,20 @@ node scripts/check-docs.mjs
 | `docker` | push / PR | 用占位 `.env` 校验三份 compose 与 `install.sh`；构建镜像；`docker run --rm dsh-ee:ci version` 必须等于 CI 版本号 |
 | `setup-windows` | push / PR | `windows-latest` 上跑不依赖数据库的两个 PowerShell 测试（`TestSetupEnvPowerShell`、`TestSetupTokenArgPowerShell`） |
 | `docs` | push / PR（#120 合入后） | `node scripts/check-docs.mjs` |
-| `release` | push `v*` tag；PR（路径过滤） | tag 校验 → Linux 静态二进制 → `SHA256SUMS` / release notes / docs 版本快照 → GitHub Release；PR 上只跑脚本测试、快照 `--check` 与文档检查。不推任何 registry。见 [RELEASING.md](./RELEASING.md) |
+| `release` | push `v*` tag；PR（路径过滤） | tag 校验 → Linux 静态二进制 → `SHA256SUMS` / release notes / docs 版本快照 → GitHub Release；PR 上只跑脚本测试、快照 `--check` 与文档检查。见 [RELEASING.md](./RELEASING.md) |
+| `image` | push `v*` tag；手动输入 tag | tag 校验 → QEMU / Buildx → GHCR 多架构镜像；稳定版另更新 minor / latest |
 | `oceanbase` | 手动 / 每周日 | OceanBase 上跑 Go 集成测试 + e2e（脚本 `scripts/test-oceanbase.sh`） |
 
 ## 8. 发布流程
 
 push `v*` tag 会触发 [`.github/workflows/release.yml`](../.github/workflows/release.yml)：先只读校验 tag 与版本/主干一致，
 再构建两个架构的 Linux 静态二进制，生成 `SHA256SUMS`、release notes 与 docs 版本快照，最后创建 GitHub Release；
-**不向任何包 registry / 容器 registry 发布**。完整流程、checklist、回滚与常见失败见 [RELEASING.md](./RELEASING.md)，
+同时由 `image.yml` 自动推送 GHCR 容器镜像；不发布 npm 等包 registry，不自动部署。完整流程、checklist、回滚与常见失败见 [RELEASING.md](./RELEASING.md)，
 版本号/兼容窗口见 [VERSIONING.md](./VERSIONING.md)。以下手工步骤仍由发布负责人执行：
 
 1. 按 [VERSIONING.md](./VERSIONING.md) 选版本号（例如 `v0.1.0`），确认 `main` 上 CI 全绿，并按 [RELEASING.md](./RELEASING.md) §1 做本地只读校验；
 2. 在 `main` 的已合并 commit 上打注解 tag 并 push（见 [RELEASING.md](./RELEASING.md) §3），由 workflow 构建；本地单独产出二进制仍可用 `make release VERSION=v0.1.0`；
-3. `make image VERSION=v0.1.0`，需要分发镜像时推到内部 registry（workflow 不做）；
+3. 确认 image workflow 成功，`docker pull ghcr.io/hikariming/dsh-ee:v0.2.0`；首次推送后把包设为 public 才能匿名拉取。内部 registry 仍由运维按需推送；
 4. `make bundle VERSION=v0.1.0 ARCH=amd64`（arm64 再来一次；`WITH_DB=tidb` 可减小包体），产物在 `deploy/out/`，内含 `SHA256SUMS`；
 5. 补齐 Release notes：workflow 生成的提交列表只是底稿，行为变化、升级步骤、回滚说明、已知限制要人工补；升级/回滚口径见 [deploy/README.md](../deploy/README.md)、[server/README.md](../server/README.md) 与 [operations.md](./operations.md) §5；
 6. **升级必须保留 `.env`（`DSH_EE_SECRET_KEY`）**；迁移不保证只增不改，回滚前用备份与发布说明确认，见 [operations.md](./operations.md) §5.5；新令牌（`ee_at_`）在旧版可能不可用，要改回旧令牌或前滚。

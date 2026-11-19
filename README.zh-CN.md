@@ -133,12 +133,19 @@ sha256sum -c SHA256SUMS
 
 ### docker compose
 
+发布 tag 自动把 linux/amd64 与 linux/arm64 镜像推送到 GHCR。建议固定完整版本（如 `v0.2.0`）；
+稳定版另更新 `0.2` 与 `latest`，预发布不更新浮动标签。首次推送后维护者须把 GHCR 包设为 **public** 一次，
+才支持匿名拉取。离线安装包仍手工构建。
+
 ```bash
 cd deploy
 cp ../server/.env.example .env   # 填 DSH_EE_SECRET_KEY（openssl rand -base64 32）等
-docker build -t dsh-ee:latest ..
+docker pull ghcr.io/hikariming/dsh-ee:v0.2.0
+# 在 .env 中加入 DSH_EE_IMAGE=ghcr.io/hikariming/dsh-ee:v0.2.0
 docker compose -f compose.yml -f compose.tidb.yml up -d
 ```
+
+本地开发仍可用 `docker build -t dsh-ee:latest ..`，不设置 `DSH_EE_IMAGE` 即使用本地镜像。
 
 ### 不用 docker
 

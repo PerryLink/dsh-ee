@@ -136,12 +136,20 @@ Build a bundle yourself with `make bundle VERSION=v0.1.0 ARCH=amd64` (or `ARCH=a
 
 ### Docker Compose
 
+Release tags automatically publish multi-platform images (linux/amd64 and linux/arm64) to GHCR.
+Use a full version such as `v0.2.0`; stable releases also update `0.2` and `latest`, while prereleases do not.
+After the first push, a maintainer must set the GHCR package to **public** once to allow anonymous pulls.
+Offline bundles are still built manually.
+
 ```bash
 cd deploy
 cp ../server/.env.example .env   # set DSH_EE_SECRET_KEY (openssl rand -base64 32) etc.
-docker build -t dsh-ee:latest ..
+docker pull ghcr.io/hikariming/dsh-ee:v0.2.0
+# Add DSH_EE_IMAGE=ghcr.io/hikariming/dsh-ee:v0.2.0 to .env
 docker compose -f compose.yml -f compose.tidb.yml up -d
 ```
+
+For a local development image, use `docker build -t dsh-ee:latest ..` and omit `DSH_EE_IMAGE`.
 
 ### Without Docker
 

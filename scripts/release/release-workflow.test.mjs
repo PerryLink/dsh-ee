@@ -3,9 +3,11 @@
 // 仓库没有 JS 依赖，所以不引入 yaml 库：测试里实现「映射 / 序列 / 块标量 / 引号标量 / 注释」
 // 这个够用的子集解析器，既验证 release.yml 能被解析成预期结构，也顺带测了解析器自己。
 // 关键断言：tag 触发、PR 只读校验、构建/校验和/notes/docs 快照/GitHub Release 的步骤，
-// 以及「不向任何 registry 发布」。
+// 以及「二进制发布与 GHCR 镜像发布分离」。
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -308,7 +310,7 @@ test("release 流程顺序：校验 tag → 构建 → 二进制版本 → 快�
   assert.equal(releaseStep.env.GH_TOKEN, "${{ github.token }}");
 });
 
-test("release job 上传 artifact，且不向任何 registry 发布", () => {
+test("release job 上传 artifact，不承担 registry 发布", () => {
   const job = workflow.jobs.release;
   const upload = stepsOf(job).find((step) => step.uses === "actions/upload-artifact@v4");
   assert.ok(upload, "缺少 upload-artifact");
@@ -322,7 +324,6 @@ test("release job 上传 artifact，且不向任何 registry 发布", () => {
     "yarn publish",
     "cargo publish",
     "twine upload",
-    "ghcr.io",
     "registry-url",
     "NPM_TOKEN",
   ]) {
@@ -337,4 +338,55 @@ test("所有第三方 action 固定到主版本，步骤都有 name 或 uses", (
     if (step.uses) assert.match(step.uses, /^[a-z0-9-]+\/[a-z0-9-]+@v\d+$/, `action 版本应固定为 @vN：${step.uses}`);
     if (step.run) assert.match(step.run, /\n?$/, "run 只能是字符串");
   }
+});
+
+const imageWorkflow = parseYaml(readFileSync(join(HERE, "..", "..", ".github", "workflows", "image.yml"), "utf8"));
+
+test("image workflow 校验 tag 后用内置 token 发布多架构镜像", () => {
+  assert.deepEqual(imageWorkflow.on.push.tags, ["v*"]);
+  assert.equal(imageWorkflow.on.workflow_dispatch.inputs.tag.required, true);
+  assert.deepEqual(imageWorkflow.permissions, { contents: "read", packages: "write" });
+  const steps = imageWorkflow.jobs.image.steps;
+  const checkout = steps.find((step) => step.uses === "actions/checkout@v5");
+  assert.equal(checkout.with["fetch-depth"], 0);
+  assert.equal(checkout.with.ref, "refs/tags/${{ inputs.tag || github.ref_name }}");
+  const verify = steps.findIndex((step) => step.run?.includes("verify-tag.mjs"));
+  assert.ok(verify >= 0);
+  assert.match(steps[verify].run, /--ref origin\/main/);
+  const build = steps.findIndex((step) => step.uses === "docker/build-push-action@v6");
+  assert.ok(build > verify);
+  assert.equal(steps[build].with.platforms, "linux/amd64,linux/arm64");
+  assert.equal(steps[build].with.push, true);
+  assert.match(steps[build].with["build-args"], /VERSION=\$\{\{ env.RELEASE_TAG \}\}/);
+  for (const label of ["source", "version", "revision"]) {
+    assert.ok(steps[build].with.labels.includes(`org.opencontainers.image.${label}=`));
+  }
+  assert.ok(steps.some((step) => step.uses === "docker/setup-qemu-action@v3"));
+  assert.ok(steps.some((step) => step.uses === "docker/setup-buildx-action@v3"));
+  assert.equal(steps.find((step) => step.uses === "docker/login-action@v3").with.password, "${{ secrets.GITHUB_TOKEN }}");
+  for (const step of steps.filter((step) => step.uses)) assert.match(step.uses, /@v\d+$/);
+});
+
+test("image 标签：稳定版、预发布、元数据与空输入", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "image-tags-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const script = imageWorkflow.jobs.image.steps.find((step) => step.id === "meta").run;
+  for (const [tag, expected] of [
+    ["v0.2.0", ["v0.2.0", "0.2", "latest"]],
+    ["v0.2.0-rc.1", ["v0.2.0-rc.1"]],
+    ["v0.2.0-beta.1", ["v0.2.0-beta.1"]],
+    ["v0.2.0-alpha.1", ["v0.2.0-alpha.1"]],
+    ["v0.2.0+build.1", ["v0.2.0_build.1", "0.2", "latest"]],
+  ]) {
+    const result = spawnSync("bash", ["-c", script], {
+      cwd: join(HERE, "..", ".."), encoding: "utf8",
+      env: { ...process.env, RELEASE_TAG: tag, GITHUB_REPOSITORY: "Hikariming/DSH-EE", GITHUB_OUTPUT: join(dir, tag) },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readFileSync(join(dir, tag), "utf8").split("\n").filter((line) => line.startsWith("ghcr.io/")),
+      expected.map((value) => `ghcr.io/hikariming/dsh-ee:${value}`));
+  }
+  const verify = spawnSync(process.execPath, [join(HERE, "verify-tag.mjs"), "--tag", "", "--no-github-output"], { encoding: "utf8" });
+  assert.notEqual(verify.status, 0);
+  assert.match(verify.stderr, /需要一个值/);
 });
