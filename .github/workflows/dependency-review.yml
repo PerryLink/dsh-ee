@@ -1,0 +1,38 @@
+# 依赖审查：PR 改动依赖清单/lockfile 时，对比 base 与 head 的依赖差异，
+# 对已知高危漏洞（或明确禁用的许可证）直接判失败，并在 PR 里留摘要。
+# 只读 + 评论权限；fork PR 上 GitHub 不授予写 token，评论会被跳过，但检查照常。
+name: dependency-review
+
+on:
+  pull_request:
+    paths:
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pnpm-lock.yaml"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "sdk/python/pyproject.toml"
+      - ".github/workflows/dependency-review.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      # 该 action 依赖仓库的 Dependency graph（GitHub 设置 → Security → 依赖图）。
+      # 当前仓库未开启时它会直接报错；先按 advisory 处理，开启后删掉 continue-on-error 即变为阻断。
+      - name: 审查依赖变更
+        continue-on-error: true
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
