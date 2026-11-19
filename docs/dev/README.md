@@ -39,6 +39,7 @@ lang: zh-CN
 | [beta-completions.md](./beta-completions.md) | Harness 接入 | DeepSeek FIM / Chat Prefix beta 透传：两个入口、上游选择、治理与边界 |
 | [extension-quickstart.md](./extension-quickstart.md) | dsh-ee 扩展 | 三种扩展形态、CLI 与交付前检查 |
 | [access-rules.md](./access-rules.md) | 权限 | 权限点、字段访问规则、管理约束速查 |
+| [data-access.md](./data-access.md) | 权限 | 企业数据对接：数据集范围与行过滤、连接员工身份、应用数据表 |
 | [publish-precheck.md](./publish-precheck.md) | 发布 | 发布入口、预检结果语义与自查清单 |
 | [quality-standards.md](./quality-standards.md) | 规范 | 上游规范三层与 dsh-ee 预检的边界 |
 | [responses-api.md](./responses-api.md) | Harness 接入 | Codex / OpenAI Agents SDK 等 Responses 客户端调 `POST /v1/responses`：请求映射、output item、SSE 与 v0 边界 |
@@ -80,6 +81,7 @@ lang: zh-CN
 | [plugin-quickstart.md](./plugin-quickstart.md) | 站内导读：插件骨架、清单字段、本地自查与发布入口 | draft |
 | [extension-quickstart.md](./extension-quickstart.md) | 站内导读：扩展清单、CLI 命令与交付前检查 | draft |
 | [access-rules.md](./access-rules.md) | 站内导读：权限点、字段访问规则、管理约束速查 | draft |
+| [data-access.md](./data-access.md) | 企业数据对接与员工查询权限：选型、负责人 / 部门过滤及验收步骤 | draft |
 | [publish-precheck.md](./publish-precheck.md) | 站内导读：发布入口与预检结果语义 | draft |
 | [quality-standards.md](./quality-standards.md) | 站内导读：上游规范三层与 dsh-ee 预检的边界 | draft |
 | [responses-api.md](./responses-api.md) | 站内导读：OpenAI Responses API 兼容入口的请求/响应/事件映射、错误与 v0 边界 | draft |
