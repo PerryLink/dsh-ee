@@ -101,7 +101,8 @@
 | `GET /healthz` | JSON 里的 `version` | 运维探活用，见 [operations.md](./operations.md) §8 |
 | `GET /.well-known/dsh-ee` | `version` 与 `api_version` | 第三方接入的版本发现，api_version 与产品版本独立 |
 | docs 快照索引 | `tag` / `version` / `commit` | `docs/versions/index.json` |
-| Docker 镜像 / 离线包 | `dsh-ee:vX.Y.Z` / `dsh-ee-vX.Y.Z-linux-<arch>` | 手工构建，见 [RELEASING.md](./RELEASING.md) §6 |
+| Docker 镜像 | `ghcr.io/hikariming/dsh-ee:vX.Y.Z` | tag 自动发布 amd64 / arm64；稳定版另有 minor / latest，见 [RELEASING.md](./RELEASING.md) §4 |
+| 离线包 | `dsh-ee-vX.Y.Z-linux-<arch>` | 仍手工构建，见 [RELEASING.md](./RELEASING.md) §6 |
 
 ## 7. 相关文档
 

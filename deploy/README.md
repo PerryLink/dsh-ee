@@ -97,6 +97,25 @@ cp systemd/dsh-ee.service /etc/systemd/system/
 systemctl enable --now dsh-ee
 ```
 
+## 在线使用 GHCR 镜像
+
+每次 push 发布 tag，image workflow 校验 tag 在主干上后，自动构建并推送 linux/amd64 与 linux/arm64 镜像。
+完整版本标签如 `v0.2.0`；稳定版另更新 `0.2` 与 `latest`，预发布（rc / beta / alpha 等）不更新浮动标签。
+**首次推送后维护者必须在 GitHub Packages 把包设为 public 一次**，之后才支持匿名拉取。
+
+```bash
+cd deploy
+cp ../server/.env.example .env   # 填主密钥、管理员密码、DSN 等；已有 .env 不要覆盖
+docker pull ghcr.io/hikariming/dsh-ee:v0.2.0
+# 在 .env 中加入（升级时改这一行，保留其它配置）：
+# DSH_EE_IMAGE=ghcr.io/hikariming/dsh-ee:v0.2.0
+docker compose -f compose.yml -f compose.tidb.yml up -d
+```
+
+Compose 会按主机架构选择镜像。正式环境建议固定完整版本，不使用 `latest`；换外部数据库时只用 `compose.yml`，
+并设置 `DSH_EE_DSN`。在线部署直接用 Compose，不运行离线包的 `install.sh`（它会把镜像名重设为本地镜像）。
+已存在的 tag 可手动触发 image workflow 补发，见 [发布流程](../docs/RELEASING.md) §4。
+
 ## 自己打安装包
 
 在能上网、装了 docker（含 buildx）、Go 与 Node 的机器上：
@@ -106,7 +125,7 @@ make bundle VERSION=v0.1.0 ARCH=amd64     # 或 ARCH=arm64（鲲鹏等）
 WITH_DB=tidb make bundle VERSION=v0.1.0   # 只带 TiDB 镜像，包小一些
 ```
 
-产物在 `deploy/out/`。
+产物在 `deploy/out/`。离线包仍手工构建、归档，不由 GHCR workflow 自动生成或上传。
 
 ## 开发环境直接用 compose
 

@@ -1,0 +1,81 @@
+# 发布 tag 自动推送 GHCR；workflow_dispatch 可补发已存在的 tag。
+name: image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的发布 tag（例如 v0.2.0）
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: 校验 tag 与主干一致
+        run: |
+          node scripts/release/verify-tag.mjs \
+            --tag "$RELEASE_TAG" \
+            --sha "$(git rev-parse HEAD)" \
+            --ref origin/main
+      - name: 镜像名称、标签与 revision
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          # Docker tag 不接受 SemVer 的 +；保留元数据并用 _ 表示分隔符。
+          image_tag="${RELEASE_TAG//+/_}"
+          {
+            echo "image=$image"
+            echo "revision=$(git rev-parse HEAD)"
+            echo 'tags<<EOF'
+            echo "$image:$image_tag"
+            if [[ "$RELEASE_TAG" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+(\+.*)?$ ]]; then
+              echo "$image:${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+              echo "$image:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ env.RELEASE_TAG }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.RELEASE_TAG }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}

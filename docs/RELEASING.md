@@ -4,8 +4,9 @@
 > 产物有哪些、怎么回滚。版本号与兼容窗口的规则见 [VERSIONING.md](./VERSIONING.md)。
 >
 > **自动化边界**：push `v*` tag 触发 [release.yml](../.github/workflows/release.yml)，完成「校验 tag →
-> 构建 Linux 静态二进制 → 校验和 / release notes / docs 版本快照 → GitHub Release」。它**不**推送任何
-> 包 registry、容器 registry，也**不**部署任何环境；镜像、离线包和部署仍按 §6 手工执行。
+> 构建 Linux 静态二进制 → 校验和 / release notes / docs 版本快照 → GitHub Release」。同时
+> [image.yml](../.github/workflows/image.yml) 校验 tag 后自动推送 GHCR 多架构镜像。
+> 不发布 npm 等包 registry，也**不**部署任何环境；离线包和部署仍按 §6 手工执行。
 
 ## 1. 发布前（本地只读校验）
 
@@ -60,7 +61,7 @@ rm -rf "$tmp/dsh-ee"
 git checkout main
 git pull --ff-only
 git tag -a v0.2.0 -m "dsh-ee v0.2.0"     # 注解 tag；tag 必须指向 main 上已合并的 commit
-git push origin v0.2.0                    # 只推这一个 tag，触发 release workflow
+git push origin v0.2.0                    # 只推这一个 tag，触发 release 与 image workflow
 ```
 
 规则与常见错误：
@@ -87,6 +88,24 @@ git push origin v0.2.0                    # 只推这一个 tag，触发 release
 workflow 只用仓库内置的 `GITHUB_TOKEN`（`contents: write`），不需要 secrets；`validate` job 只在 PR 上跑，
 只读地重复 §1 的脚本测试、快照 `--check` 与文档链接检查。
 
+`image.yml` 独立运行：检出 tag（`fetch-depth: 0`），先跑同一个 `verify-tag.mjs --ref origin/main`，
+再用 QEMU + Buildx 构建现有 `Dockerfile`（`VERSION=<tag>`），推送 `linux/amd64`、`linux/arm64` 到
+`ghcr.io/hikariming/dsh-ee`。仅用 `GITHUB_TOKEN`，权限为 `contents: read`、`packages: write`，无需额外 secret。
+镜像带 OCI source/version/revision 标签；revision 是 tag 的 commit，而不是手动触发时的分支 HEAD。
+
+每次发布都有完整版本标签（如 `v0.2.0`）；只有稳定版更新 `0.2` 与 `latest`，`-rc` / `-beta` / `-alpha`
+等预发布不更新浮动标签。SemVer 若有 `+build` 元数据，Docker 标签用 `_build`（Docker 不接受 `+`）。
+生产环境建议固定完整版本。**第一次推送后，维护者须在 GitHub Packages 中把 GHCR 包设为 public 一次**，
+匿名用户才能拉取；后续发布无需重复设置。
+
+已存在的 tag 可在合并 workflow 后补发，例如 v0.2.0：
+
+```bash
+gh workflow run image.yml --ref main -f tag=v0.2.0
+```
+
+手动触发会检出输入的 tag 并校验其在 `origin/main` 上，不重打 tag，也不重建 GitHub Release。
+
 ## 5. Release notes 要求
 
 workflow 自动生成的 notes 只是**提交列表底稿**（`## 变更（vX.Y.Z..vA.B.C）`）。发布负责人在 GitHub Release
@@ -104,20 +123,25 @@ workflow 自动生成的 notes 只是**提交列表底稿**（`## 变更（vX.Y.
 gh release edit v0.2.0 --notes-file dist/release-notes.md   # 或直接在网页编辑
 ```
 
-## 6. 手工补充分发物（不在 release workflow 里）
+## 6. 镜像使用与手工离线包
 
-workflow 刻意不发布 registry 和部署环境，以下由发布负责人/运维按需执行：
+在线镜像由 image workflow 自动发布，Compose 用 `DSH_EE_IMAGE` 选择版本（详见 [部署说明](../deploy/README.md)）：
 
 ```bash
-# 容器镜像（推不推内部 registry 由运维流程决定，workflow 不做）
-make image VERSION=v0.2.0
-docker push <内部 registry>/dsh-ee:v0.2.0
+docker pull ghcr.io/hikariming/dsh-ee:v0.2.0
+# 在 deploy/.env 中设置 DSH_EE_IMAGE=ghcr.io/hikariming/dsh-ee:v0.2.0
+# 填好主密钥等配置后：
+cd deploy
+docker compose -f compose.yml -f compose.tidb.yml up -d
+cd ..
 
 # 离线安装包（镜像 + 数据库镜像 + compose + 安装脚本 + 静态二进制）
 make bundle VERSION=v0.2.0 ARCH=amd64
 make bundle VERSION=v0.2.0 ARCH=arm64
 # 产物在 deploy/out/，内含 SHA256SUMS；目标机器按 deploy/README.md 升级
 ```
+
+离线安装包仍由发布负责人手工构建、归档；不会自动上传。需要推内部 registry 时也由运维按需执行。
 
 - 离线包/镜像与 GitHub Release 上的二进制必须同 tag、同 commit；升级时**保留 `.env`**（主密钥/DSN 不变）。
 - 分发物归档一份（上一版尤其重要），否则回滚无物可回。
@@ -135,7 +159,8 @@ make bundle VERSION=v0.2.0 ARCH=arm64
       `docs-versions-<tag>.tar.gz`
 - [ ] 下载二进制与 docs 快照包复核：`sha256sum -c SHA256SUMS`，`./dsh-ee-<tag>-linux-amd64 version` 输出等于 tag
 - [ ] release notes 已补齐行为变化/升级步骤/回滚说明/已知限制；弃用项按 VERSIONING §4 标注
-- [ ] 需要时补发镜像/离线包，并确认与 tag 同 commit；分发物已归档
+- [ ] image workflow 成功，GHCR 完整版本的 amd64 / arm64 可拉取；首次发布已将包设为 public
+- [ ] 稳定版有 minor / latest 标签，预发布不更新浮动标签；需要时手工补发离线包，与 tag 同 commit，分发物已归档
 - [ ] 部署验证至少覆盖：`/healthz`、`/readyz`、登录、`/v1/models` 或模型网关、npm 源（见
       [operations.md](./operations.md) §8）
 - [ ] 触发一次 docs 快照归档 PR（可选）；`--check` 与 `check-docs` 通过
@@ -158,7 +183,7 @@ docs 版本快照是归档物：历史目录不动；要重算索引只能重新
 | 现象 / 报错 | 原因 | 处理 |
 | --- | --- | --- |
 | `release: 本地没有 tag` | checkout 没拿到 tag（fetch-depth 不全）或 tag 还没 push | 确认 workflow 用 `fetch-depth: 0`；先 push tag |
-| `release: 当前 checkout 的 HEAD … 不是 tag` | 触发方式不是 tag push（例如手动在分支上跑） | 用 push tag 触发；本地校验先 `git checkout <tag>` |
+| `release: 当前 checkout 的 HEAD … 不是 tag` | 检出的不是目标 tag | image 手动补发需填已存在的 tag；本地校验先 `git checkout <tag>` |
 | `release: … 不在 origin/main 上` | tag 打在未合并的 commit/分支上 | 先合并到 `main`，再在 `main` 的 commit 打 tag |
 | `release: tag「…」不是 vMAJOR.MINOR.PATCH` | tag 名不合规 | 删除本地错误 tag，换合规版本号重打（已推送的错 tag 不要覆盖，发新版本） |
 | `make release` 失败 | 前端/插件构建或 Go 交叉编译失败 | 本地跑 `make release VERSION=<tag>` 复现并修 |
@@ -167,6 +192,8 @@ docs 版本快照是归档物：历史目录不动；要重算索引只能重新
 | `gh release create` 报已存在 | 同版本 Release 已经创建过 | `gh release view <tag>` 查看；修正后发新版本，不要复用版本号 |
 | docs 快照 `--check` 失败 | 快照被手改 / 索引与目录不一致 | 用 `version-snapshot.mjs --tag <tag>` 重新生成（必要时 `--force`），再提交 |
 | artifact 上传失败 | 权限/大小/action 版本问题 | 看 job 日志；`dist/` 被 `.gitignore` 忽略不影响上传 |
+| GHCR push 被拒绝 | 包写权限或包与仓库关联不正确 | 确认 `packages: write` 与包的 Actions 访问权限，查看 image job 日志 |
+| 匿名 `docker pull` 被拒绝 | 包仍为 private | 首次 push 后在 GitHub Packages 把包设为 public |
 
 ## 10. 相关文档
 

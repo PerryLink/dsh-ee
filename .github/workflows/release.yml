@@ -1,8 +1,8 @@
 # dsh-ee 发布：push `v*` tag 触发。
 #
 # 只做「校验 → 构建 → 校验和 / release notes / docs 版本快照 → GitHub Release」；
-# 不向任何包 registry / 容器 registry 发布。镜像与离线安装包仍按 docs/RELEASING.md
-# 由发布负责人手工执行（make image / make bundle），推内部 registry 也留在流水线之外。
+# 容器镜像由 image.yml 自动推送 GHCR；离线安装包与部署仍按 docs/RELEASING.md
+# 由发布负责人手工执行（make bundle），推内部 registry 也留在流水线之外。
 #
 # PR 上只跑同一套脚本的只读校验（脚本测试 + 已提交的 docs 版本快照 + 文档链接），
 # 不打 tag、不构建发布产物。
@@ -128,7 +128,7 @@ jobs:
           name: release-${{ github.ref_name }}
           path: dist/
           retention-days: 14
-      - name: 创建 GitHub Release（不推任何 registry）
+      - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
