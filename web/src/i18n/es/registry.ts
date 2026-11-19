@@ -161,7 +161,7 @@ export default {
       "checkUpdates": "Buscar nuevas versiones ahora",
       "noUpdates": "Todos los plugins precargados están en la última versión",
       "closureNote": "Al precargar se replica también el cierre de dependencias (dependencies, optionalDependencies y peerDependencies obligatorias, incluidos los paquetes principales @deepseek-ai/dsh-*), para poder instalar sin conexión.",
-      "feedCount": "Catálogo dshfind: {{count}} plugins · actualizado el {{at}}",
+      "feedCount": "Catálogo de plugins: {{count}} plugins · actualizado el {{at}}",
       "refreshFeed": "Actualizar catálogo",
       "feedDisabled": "Modo sin conexión o catálogo dshfind desactivado en la configuración del sistema: puede usar la importación sin conexión o permitir que los empleados soliciten la introducción de paquetes concretos.",
       "feedError": "No se pudo obtener el catálogo dshfind: {{msg}}",

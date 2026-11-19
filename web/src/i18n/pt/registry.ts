@@ -161,7 +161,7 @@ export default {
       checkUpdates: "Verificar novas versões agora",
       noUpdates: "Todos os plugins pré-carregados estão na versão mais recente",
       closureNote: "O pré-carregamento espelha todo o fecho de dependências (dependencies, optionalDependencies e peerDependencies obrigatórias, incluindo os pacotes principais @deepseek-ai/dsh-*), para que a instalação funcione offline.",
-      feedCount: "Catálogo dshfind: {{count}} plugins · atualizado em {{at}}",
+      feedCount: "Catálogo de plugins: {{count}} plugins · atualizado em {{at}}",
       refreshFeed: "Atualizar catálogo",
       feedDisabled: "Modo offline ou catálogo dshfind desativado nas configurações do sistema: use a importação offline ou deixe os funcionários solicitarem pacotes específicos.",
       feedError: "Não foi possível carregar o catálogo dshfind: {{msg}}",
