@@ -178,6 +178,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &next)
 }
 
+const maxFeedSources = 10
+
 func validateSettings(v *store.AppSettings) string {
 	v.OrgName = strings.TrimSpace(v.OrgName)
 	v.BaseURL = strings.TrimRight(strings.TrimSpace(v.BaseURL), "/")
@@ -234,6 +236,42 @@ func validateSettings(v *store.AppSettings) string {
 			return c.what + "取值不对：" + c.val
 		}
 	}
+	if len(v.Upstream.Blocklist) > registry.MaxBlocklist {
+		return fmt.Sprintf("dshfind 屏蔽名单最多 %d 条", registry.MaxBlocklist)
+	}
+	blocklist := make([]string, 0, len(v.Upstream.Blocklist))
+	for _, raw := range v.Upstream.Blocklist {
+		e, ok := registry.NormalizeBlockEntry(raw)
+		if !ok {
+			return "dshfind 屏蔽规则格式不对：" + raw + "（包名、@作用域/* 或 author:作者）"
+		}
+		if !slices.Contains(blocklist, e) {
+			blocklist = append(blocklist, e)
+		}
+	}
+	v.Upstream.Blocklist = blocklist
+	if len(v.Upstream.Sources) > maxFeedSources {
+		return fmt.Sprintf("第三方插件源最多 %d 个", maxFeedSources)
+	}
+	sources := make([]store.FeedSource, 0, len(v.Upstream.Sources))
+	for _, src := range v.Upstream.Sources {
+		src.Name = strings.TrimSpace(src.Name)
+		src.URL = strings.TrimSpace(src.URL)
+		if src.Name == "" || len([]rune(src.Name)) > 40 || src.Name == registry.DshfindSource {
+			return "插件源名称不能为空、不超过 40 个字符，且不能叫 " + registry.DshfindSource
+		}
+		u, err := url.Parse(src.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+			return "插件源 " + src.Name + " 的地址必须是 http(s) 地址，且不能在地址里带账号密码"
+		}
+		for _, o := range sources {
+			if o.Name == src.Name || o.URL == src.URL {
+				return "插件源 " + src.Name + " 与已有的源重名或地址重复"
+			}
+		}
+		sources = append(sources, src)
+	}
+	v.Upstream.Sources = sources
 	if v.Upstream.Registry == "custom" {
 		u, err := url.Parse(v.Upstream.CustomRegistry)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {

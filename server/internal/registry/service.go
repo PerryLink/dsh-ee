@@ -59,6 +59,7 @@ type Service struct {
 	// dshfind 插件目录（DSH 索引 format 1）的地址，上游预载从这里挑插件
 	FeedURL string
 	feed    feedCache
+	authors feedAuthors
 	// 同步任务准入（数量上限与 (name,version) 去重）
 	gate syncGate
 }
@@ -148,7 +149,7 @@ func (s *Service) Packument(ctx context.Context, name string) (*Packument, error
 		tags = pkg.DistTags
 	}
 
-	if !localOnly(set, name, pkg) && proxying(set) {
+	if !localOnly(set, name, pkg) && proxying(set) && s.BlockedBy(set, name) == "" {
 		doc, err := s.up.Packument(ctx, UpstreamBase(set), name, 0)
 		switch {
 		case errors.Is(err, ErrUpstreamNotFound):
@@ -222,7 +223,7 @@ func (s *Service) Tarball(ctx context.Context, name, version string) (*os.File, 
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, nil, err
 	}
-	if localOnly(set, name, pkg) || !proxying(set) {
+	if localOnly(set, name, pkg) || !proxying(set) || s.BlockedBy(set, name) != "" {
 		return nil, nil, ErrNotFound
 	}
 	base := UpstreamBase(set)
@@ -257,6 +258,13 @@ func (s *Service) mirror(ctx context.Context, name string, uv *UpstreamVersion, 
 		return v, nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
+	}
+	set, err := s.settings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if rule := s.BlockedBy(set, name); rule != "" {
+		return nil, fmt.Errorf("%s is blocked by the dshfind blocklist rule %q", name, rule)
 	}
 	d, err := s.up.FetchTarball(ctx, s.blobs, uv.Tarball, uv.Integrity, uv.Shasum, s.MaxTarball)
 	if err != nil {

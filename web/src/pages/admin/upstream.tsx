@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileArchive, Loader2, PackageOpen, RefreshCw, ShieldCheck, WifiOff, CloudOff, TriangleAlert } from "lucide-react";
+import { FileArchive, Loader2, PackageOpen, Plus, RefreshCw, ShieldCheck, Trash2, WifiOff, CloudOff, TriangleAlert } from "lucide-react";
 import { categoryIds, categoryLabel } from "../../lib/catalog";
 import { formatNumber } from "../../lib/format";
 import { useScoring, useStore } from "../../lib/store";
@@ -16,6 +16,13 @@ type RankBy = "stars" | "score";
 const packageName = /^(@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9_][A-Za-z0-9._~-]*$/;
 function isPackageName(name: string): boolean {
   return packageName.test(name) && !name.includes("..");
+}
+
+/** dshfind 屏蔽规则：包名、@作用域/*、author:作者（与服务端 NormalizeBlockEntry 同一口径）。 */
+function isBlockRule(rule: string): boolean {
+  if (rule.startsWith("author:")) return /^author:[^\s/]{1,100}$/.test(rule);
+  if (rule.endsWith("/*")) return /^@[A-Za-z0-9][A-Za-z0-9._~-]*$/.test(rule.slice(0, -2));
+  return isPackageName(rule);
 }
 
 export default function AdminUpstream() {
@@ -63,7 +70,7 @@ function useJob(onFinish?: () => void) {
 
 function Online() {
   const { t } = useTranslation();
-  const { settings, notify, reloadPending, reloadPlugins } = useStore();
+  const { settings, updateSettings, notify, reloadPending, reloadPlugins } = useStore();
   const scoring = useScoring();
   const feed = useApi(() => api.upstreamFeed());
   const jobs = useApi(api.jobs);
@@ -76,6 +83,10 @@ function Online() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [publish, setPublish] = useState(false);
   const [manual, setManual] = useState("");
+  const [showBlocked, setShowBlocked] = useState(false);
+  const blocklist = settings.upstream.blocklist ?? [];
+  const [blockText, setBlockText] = useState(blocklist.join("\n"));
+  useEffect(() => setBlockText(blocklist.join("\n")), [blocklist.join("\n")]); // eslint-disable-line react-hooks/exhaustive-deps
   const [job, setJob] = useJob(() => {
     feed.reload();
     jobs.reload();
@@ -94,7 +105,19 @@ function Online() {
         .slice(0, topN),
     [all, cats, scoring.upstream, minScore, rankBy, topN],
   );
-  const fresh = ranked.filter((c) => !c.local_version);
+  const fresh = ranked.filter((c) => !c.local_version && !c.blocked_by);
+  const blockedCount = ranked.filter((c) => c.blocked_by).length;
+  const blockEntries = useMemo(
+    () => Array.from(new Set(blockText.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))),
+    [blockText],
+  );
+  const blockValid = blockEntries.filter(isBlockRule);
+  const saveBlocklist = (next: string[]) => {
+    updateSettings((cur) => ({ ...cur, upstream: { ...cur.upstream, blocklist: next } }));
+    setPicked((p) => new Set([...p].filter((n) => !next.includes(n))));
+    notify(t("upstreamAdmin.blocklistSaved"));
+    setTimeout(feed.reload, 1500);
+  };
   const manualEntries = useMemo(
     () => Array.from(new Set(manual.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))),
     [manual],
@@ -169,6 +192,10 @@ function Online() {
             <span className="text-neutral-700">{t("upstreamAdmin.hideMirrored")}</span>
             <Toggle checked={hideMirrored} onChange={setHideMirrored} />
           </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-neutral-700">{t("upstreamAdmin.showBlocked")}</span>
+            <Toggle checked={showBlocked} onChange={setShowBlocked} />
+          </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-neutral-700">{t("registry.upstream.publishDirectly")}</span>
             <Toggle checked={publish} onChange={setPublish} />
@@ -176,11 +203,34 @@ function Online() {
           {publish && <p className="text-xs text-amber-700">{t("registry.upstream.publishDirectlyHint")}</p>}
         </Card>
 
+        <Sources results={feed.data?.sources ?? []} onChange={() => setTimeout(() => api.upstreamFeed(true).then(feed.reload, feed.reload), 1500)} />
+
+        <Card className="space-y-3 p-5 text-sm">
+          <Field label={t("upstreamAdmin.blocklist")} hint={t("upstreamAdmin.blocklistHint")}>
+            <textarea
+              aria-label={t("upstreamAdmin.blocklist")}
+              className={cx(inputCls, "h-24 py-2 font-mono")}
+              value={blockText}
+              onChange={(e) => setBlockText(e.target.value)}
+              placeholder={"dsh-plugin-foo\n@someone/*\nauthor:someone"}
+            />
+          </Field>
+          {blockEntries.length > blockValid.length && (
+            <p className="text-xs text-amber-700">{t("upstreamAdmin.blocklistInvalid", { count: blockEntries.length - blockValid.length })}</p>
+          )}
+          <Button variant="secondary" size="sm" className="w-full" onClick={() => saveBlocklist(blockValid)}>
+            {t("upstreamAdmin.blocklistSave")}
+          </Button>
+        </Card>
+
         <Card className="space-y-2 p-5 text-sm">
           <div className="font-medium text-neutral-800">{t("upstreamAdmin.config")}</div>
           <div className="flex justify-between text-neutral-600">
             <span>{t("upstreamAdmin.catalog")}</span>
-            <span>{settings.upstream.dshfindFeed ? "dshfind.com" : t("upstreamAdmin.notEnabled")}</span>
+            <span>
+              {[...(settings.upstream.dshfindFeed ? ["dshfind.com"] : []), ...(settings.upstream.sources ?? []).filter((s) => s.enabled).map((s) => s.name)].join(" · ") ||
+                t("upstreamAdmin.notEnabled")}
+            </span>
           </div>
           <div className="flex justify-between text-neutral-600">
             <span>{t("upstreamAdmin.npmSource")}</span>
@@ -222,6 +272,7 @@ function Online() {
                     ? t("upstreamAdmin.manualOnly")
                     : t("upstreamAdmin.allUnmirrored")}
             </span>
+            {blockedCount > 0 && !showBlocked && <span className="ml-2 text-neutral-500">{t("upstreamAdmin.blockedCount", { count: blockedCount })}</span>}
             <span className="ml-2 text-neutral-500">{t("registry.upstream.feedCount", { count: all.length, at: feed.data?.fetched_at ? formatTime(feed.data.fetched_at) : "—" })}</span>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -253,18 +304,21 @@ function Online() {
                     {scoring.upstream && <th className="px-4 py-2.5 text-right">{t("upstreamAdmin.colScore")}</th>}
                     <th className="px-4 py-2.5">{t("upstreamAdmin.colDeps")}</th>
                     <th className="px-4 py-2.5">{t("upstreamAdmin.colStatus")}</th>
+                    <th className="px-4 py-2.5 text-right">{t("upstreamAdmin.colActions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {ranked
                     .filter((c) => !hideMirrored || !c.local_version)
+                    .filter((c) => showBlocked || !c.blocked_by)
                     .map((c) => (
-                      <tr key={c.name} className={cx(c.local_version && "text-neutral-500")}>
+                      <tr key={c.name} className={cx((c.local_version || c.blocked_by) && "text-neutral-500")}>
                         <td className="px-4 py-2">
                           <input
                             type="checkbox"
                             aria-label={c.name}
                             checked={picked.has(c.name)}
+                            disabled={!!c.blocked_by}
                             onChange={() => toggle(c.name)}
                             className="accent-brand-500"
                           />
@@ -274,6 +328,9 @@ function Online() {
                           <div className="font-mono text-xs text-neutral-500">
                             {c.name}
                             {c.version && <span>@{c.version}</span>}
+                            {c.source && c.source !== "dshfind" && (
+                              <span className="ml-1.5 rounded bg-neutral-100 px-1 py-0.5 font-sans text-[11px] text-neutral-600">{c.source}</span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-2">{categoryLabel(c.category ?? "") ?? "—"}</td>
@@ -288,13 +345,26 @@ function Online() {
                           )}
                         </td>
                         <td className="px-4 py-2">
-                          {c.local_status ? (
+                          {c.blocked_by ? (
+                            <Badge tone="red">{t("upstreamAdmin.blocked", { rule: c.blocked_by })}</Badge>
+                          ) : c.local_status ? (
                             <span className="inline-flex items-center gap-1.5">
                               <StatusBadge status={c.local_status} />
                               {c.version && c.local_version !== c.version && <Badge tone="amber">{t("registry.upstream.newer", { version: c.version })}</Badge>}
                             </span>
                           ) : (
                             <Badge>{t("upstreamAdmin.notMirrored")}</Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {!c.blocked_by && (
+                            <button
+                              type="button"
+                              className="text-sm text-red-600 hover:text-red-700"
+                              onClick={() => saveBlocklist(Array.from(new Set([...blocklist, c.name])))}
+                            >
+                              {t("upstreamAdmin.block")}
+                            </button>
                           )}
                         </td>
                       </tr>
@@ -307,6 +377,98 @@ function Online() {
         <JobHistory jobs={jobs.data ?? []} onPick={setJob} />
       </div>
     </div>
+  );
+}
+
+/** 插件源：内置 dshfind 加上管理员添加的第三方源（DSH 索引 format 1）。 */
+function Sources({ results, onChange }: { results: { name: string; count: number; error?: string }[]; onChange: () => void }) {
+  const { t } = useTranslation();
+  const { settings, updateSettings, notify } = useStore();
+  const sources = settings.upstream.sources ?? [];
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const status = (n: string) => {
+    const r = results.find((x) => x.name === n);
+    if (!r) return null;
+    return r.error ? (
+      <span className="text-xs text-red-600" title={r.error}>
+        {t("upstreamAdmin.sourceError")}
+      </span>
+    ) : (
+      <span className="text-xs text-neutral-500">{t("upstreamAdmin.sourceCount", { count: r.count })}</span>
+    );
+  };
+  const setSources = (next: typeof sources) => {
+    updateSettings((cur) => ({ ...cur, upstream: { ...cur.upstream, sources: next } }));
+    onChange();
+  };
+  const add = () => {
+    const n = name.trim();
+    const u = url.trim();
+    if (!n || n === "dshfind" || sources.some((s) => s.name === n || s.url === u)) return notify(t("upstreamAdmin.sourceDuplicate"));
+    if (!/^https?:\/\/[^\s/@]+(\/\S*)?$/.test(u)) return notify(t("upstreamAdmin.sourceInvalidUrl"));
+    setSources([...sources, { name: n, url: u, enabled: true }]);
+    setName("");
+    setUrl("");
+  };
+  return (
+    <Card className="space-y-3 p-5 text-sm">
+      <div>
+        <div className="font-medium text-neutral-800">{t("upstreamAdmin.sources")}</div>
+        <p className="mt-1 text-xs text-neutral-500">{t("upstreamAdmin.sourcesHint")}</p>
+      </div>
+      <ul className="divide-y divide-neutral-100">
+        <li className="flex items-center gap-2 py-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-neutral-800">dshfind.com</div>
+            <div className="flex gap-2">
+              <span className="text-xs text-neutral-400">{t("upstreamAdmin.builtin")}</span>
+              {settings.upstream.dshfindFeed && status("dshfind")}
+            </div>
+          </div>
+          <Toggle
+            checked={settings.upstream.dshfindFeed}
+            onChange={(v) => {
+              updateSettings((cur) => ({ ...cur, upstream: { ...cur.upstream, dshfindFeed: v } }));
+              onChange();
+            }}
+          />
+        </li>
+        {sources.map((s, i) => (
+          <li key={s.url} className="flex items-center gap-2 py-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-neutral-800">{s.name}</div>
+              <div className="truncate font-mono text-xs text-neutral-400" title={s.url}>
+                {s.url}
+              </div>
+              {s.enabled && status(s.name)}
+            </div>
+            <Toggle checked={s.enabled} onChange={(v) => setSources(sources.map((x, j) => (j === i ? { ...x, enabled: v } : x)))} />
+            <button
+              type="button"
+              aria-label={t("upstreamAdmin.removeSource", { name: s.name })}
+              className="text-neutral-400 hover:text-red-600"
+              onClick={() => setSources(sources.filter((_, j) => j !== i))}
+            >
+              <Trash2 size={14} />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="space-y-2">
+        <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("upstreamAdmin.sourceName")} aria-label={t("upstreamAdmin.sourceName")} />
+        <input
+          className={cx(inputCls, "font-mono")}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://example.com/dsh-index.json"
+          aria-label={t("upstreamAdmin.sourceUrl")}
+        />
+        <Button variant="secondary" size="sm" className="w-full" disabled={!name.trim() || !url.trim() || sources.length >= 10} onClick={add}>
+          <Plus size={14} /> {t("upstreamAdmin.addSource")}
+        </Button>
+      </div>
+    </Card>
   );
 }
 

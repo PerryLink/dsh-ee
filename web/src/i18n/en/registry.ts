@@ -160,7 +160,7 @@ export default {
       checkUpdates: "Check for new versions now",
       noUpdates: "All preloaded plugins are up to date",
       closureNote: "Preloading mirrors the full dependency closure (dependencies, optionalDependencies and required peerDependencies, including the @deepseek-ai/dsh-* core packages), so installs work offline.",
-      feedCount: "dshfind catalog: {{count}} plugins · updated {{at}}",
+      feedCount: "Plugin catalog: {{count}} plugins · updated {{at}}",
       refreshFeed: "Refresh catalog",
       feedDisabled: "Offline mode, or the dshfind catalog is turned off in settings. Use offline import, or let employees request specific packages.",
       feedError: "Couldn't load the dshfind catalog: {{msg}}",

@@ -863,7 +863,7 @@ func adminSpecs() map[string]*agentSpec {
 			Params: []agentParam{{Name: "name", Type: "string", Required: true, In: "path"}, {Name: "title", Type: "string"}, {Name: "description", Type: "string"}, {Name: "category", Type: "string"}, {Name: "kind", Type: "string"}, {Name: "icon", Type: "string"}, {Name: "featured", Type: "boolean"}},
 		},
 		"GET /api/admin/upstream/feed": {
-			Tool: "ee_registry", Action: "upstream_feed", Summary: "上游插件目录（dshfind），可按关键词筛", Effect: rd,
+			Tool: "ee_registry", Action: "upstream_feed", Summary: "上游插件目录（dshfind 与第三方插件源合并），可按关键词筛", Effect: rd,
 			Params: []agentParam{pQ, pLimit30},
 			Shape: func(_ *Principal, args map[string]any, body []byte) any {
 				q := argStr(args, "q")
@@ -877,7 +877,7 @@ func adminSpecs() map[string]*agentSpec {
 					}
 					total++
 					if len(out) < limit {
-						o := pick(it, "name", "title", "version", "score", "stars", "preloaded", "status")
+						o := pick(it, "name", "title", "version", "score", "stars", "preloaded", "status", "source", "blocked_by")
 						o["description"] = clip(fmt.Sprint(it["description"]), 100)
 						out = append(out, o)
 					}

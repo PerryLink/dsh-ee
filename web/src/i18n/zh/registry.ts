@@ -158,7 +158,7 @@ export default {
       checkUpdates: "立即检查新版本",
       noUpdates: "已预载的插件都是最新版本",
       closureNote: "预载时连同依赖闭包（dependencies、optionalDependencies 与必需的 peerDependencies，含 @deepseek-ai/dsh-* 核心包）一起镜像，离线也能装。",
-      feedCount: "dshfind 目录 {{count}} 个插件 · 更新于 {{at}}",
+      feedCount: "插件目录 {{count}} 个插件 · 更新于 {{at}}",
       refreshFeed: "刷新目录",
       feedDisabled: "离线模式或系统设置里关闭了 dshfind 目录：可以用离线导入，或让员工申请引入指定的包。",
       feedError: "取不到 dshfind 目录：{{msg}}",

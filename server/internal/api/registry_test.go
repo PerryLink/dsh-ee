@@ -79,11 +79,12 @@ func publishBody(name, version string, tgz []byte, pkg map[string]any, tag strin
 // fakeRegistry 是一个假的上游 npm registry，记录每个包被请求了几次。
 type fakeRegistry struct {
 	*httptest.Server
-	mu    sync.Mutex
-	docs  map[string]map[string]any
-	tgz   map[string][]byte
-	hits  map[string]int
-	feeds []map[string]any
+	mu     sync.Mutex
+	docs   map[string]map[string]any
+	tgz    map[string][]byte
+	hits   map[string]int
+	feeds  []map[string]any
+	feeds2 []map[string]any
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
@@ -125,6 +126,10 @@ func (f *fakeRegistry) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/feed.json" {
 		_ = json.NewEncoder(w).Encode(map[string]any{"format": 1, "plugins": f.feeds})
+		return
+	}
+	if r.URL.Path == "/feed2.json" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"format": 1, "plugins": f.feeds2})
 		return
 	}
 	p := strings.TrimPrefix(r.URL.Path, "/")
@@ -232,6 +237,8 @@ func TestRegistry(t *testing.T) {
 		"dependencies":     map[string]any{"left-pad": "^1.0.0"},
 		"peerDependencies": map[string]any{"@deepseek-ai/dsh-core": "^0.2.0"},
 	}), bundleFile)
+	up.add(t, pluginPkg("dsh-plugin-shady", "1.0.0", nil), bundleFile)
+	up.add(t, pluginPkg("dsh-plugin-third", "1.2.0", nil), bundleFile)
 	// 企业作用域的同名包挂在上游：dsh-ee 永远不该去请求它（依赖混淆）
 	up.add(t, map[string]any{"name": "@acme/evil", "version": "9.9.9"}, nil)
 	up.feeds = []map[string]any{{"name": "dsh-plugin-cool", "title": "Cool 插件", "metadata": map[string]any{"category": "tools", "labels": []string{"featured"}, "sortKeys": map[string]any{"stars": 120, "score": 88}}, "versions": []map[string]any{{"version": "2.0.0", "publishTimestamp": 1790000000}}}}
@@ -584,6 +591,150 @@ func TestRegistry(t *testing.T) {
 		if len(feed.Plugins) != 1 || feed.Plugins[0].UpstreamLatest != "2.0.0" || feed.Plugins[0].LocalVersion != "2.0.0" || feed.Plugins[0].Newer {
 			t.Fatalf("应按 npm latest 判断新版本：%s", body)
 		}
+	})
+
+	t.Run("dshfind 屏蔽名单", func(t *testing.T) {
+		up.mu.Lock()
+		up.feeds = append(up.feeds, map[string]any{"name": "dsh-plugin-shady", "author": "ShadyDev", "metadata": map[string]any{"category": "tools"}, "versions": []map[string]any{{"version": "1.0.0"}}})
+		up.mu.Unlock()
+		code, body := admin.do("GET", "/api/settings", nil, nil)
+		s := decodeAs[map[string]any](t, body)
+		s["upstream"].(map[string]any)["blocklist"] = []string{"not a name!"}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "非法屏蔽规则", code, 400, body)
+		s["upstream"].(map[string]any)["blocklist"] = []string{" author:ShadyDev ", "@sketchy/*", "is-number", "is-number"}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "保存屏蔽名单", code, 200, body)
+		saved := decodeAs[store.AppSettings](t, body)
+		if got := strings.Join(saved.Upstream.Blocklist, ","); got != "author:shadydev,@sketchy/*,is-number" {
+			t.Fatalf("屏蔽名单应规整并去重：%s", got)
+		}
+
+		code, body = admin.do("GET", "/api/admin/upstream/feed?refresh=1", nil, nil)
+		expect(t, "dshfind 目录", code, 200, body)
+		type feedRow struct {
+			Name      string `json:"name"`
+			BlockedBy string `json:"blocked_by"`
+		}
+		rows := map[string]string{}
+		for _, p := range decodeAs[struct{ Plugins []feedRow }](t, body).Plugins {
+			rows[p.Name] = p.BlockedBy
+		}
+		if rows["dsh-plugin-shady"] != "author:shadydev" || rows["dsh-plugin-cool"] != "" {
+			t.Fatalf("目录应标出被屏蔽的插件：%s", body)
+		}
+		code, body = admin.do("POST", "/api/admin/upstream/sync", map[string]any{"names": []string{"dsh-plugin-shady"}}, nil)
+		expect(t, "不能预载被屏蔽的插件", code, 403, body)
+		code, body = admin.do("POST", "/api/admin/upstream/sync", map[string]any{"names": []string{"@sketchy/tool"}}, nil)
+		expect(t, "不能预载被屏蔽作用域", code, 403, body)
+		code, body = alice.do("POST", "/api/me/import-requests", map[string]string{"name": "dsh-plugin-shady", "reason": "想用"}, nil)
+		expect(t, "不能申请引入被屏蔽的插件", code, 403, body)
+		before := up.hitCount("is-number")
+		code, body = anon.do("GET", "/npm/is-number", nil, npm(readTok))
+		expect(t, "被屏蔽的包不回源", code, 404, body)
+		code, body = anon.do("GET", "/npm/is-number/-/is-number-7.0.0.tgz", nil, npm(readTok))
+		expect(t, "被屏蔽的 tarball 不回源", code, 404, body)
+		if up.hitCount("is-number") != before {
+			t.Fatal("被屏蔽的包不应请求上游")
+		}
+		if _, err := st.GetVersion(ctx, "dsh-plugin-shady", "1.0.0"); err == nil {
+			t.Fatal("被屏蔽的插件不应镜像进来")
+		}
+
+		s["upstream"].(map[string]any)["blocklist"] = []string{}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "清空屏蔽名单", code, 200, body)
+		code, body = anon.do("GET", "/npm/is-number", nil, npm(readTok))
+		expect(t, "解除屏蔽后可回源", code, 200, body)
+	})
+
+	t.Run("第三方插件源", func(t *testing.T) {
+		up.mu.Lock()
+		up.feeds2 = []map[string]any{
+			{"name": "dsh-plugin-third", "title": "第三方插件", "author": "acme-labs", "metadata": map[string]any{"category": "tools"}, "versions": []map[string]any{{"version": "1.2.0"}}},
+			// 和 dshfind 重名的条目以排在前面的 dshfind 为准
+			{"name": "dsh-plugin-cool", "title": "别处的 Cool", "versions": []map[string]any{{"version": "2.0.0"}}},
+		}
+		up.mu.Unlock()
+		code, body := admin.do("GET", "/api/settings", nil, nil)
+		s := decodeAs[map[string]any](t, body)
+		s["upstream"].(map[string]any)["sources"] = []map[string]any{{"name": "Acme Hub", "url": "ftp://example.com/x.json", "enabled": true}}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "非法插件源地址", code, 400, body)
+		s["upstream"].(map[string]any)["sources"] = []map[string]any{{"name": "dshfind", "url": up.URL + "/feed2.json", "enabled": true}}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "不能占用内置源名称", code, 400, body)
+		s["upstream"].(map[string]any)["sources"] = []map[string]any{
+			{"name": " Acme Hub ", "url": up.URL + "/feed2.json", "enabled": true},
+			{"name": "Broken", "url": up.URL + "/missing.json", "enabled": true},
+			{"name": "Off", "url": up.URL + "/off.json", "enabled": false},
+		}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "保存插件源", code, 200, body)
+
+		code, body = admin.do("GET", "/api/admin/upstream/feed?refresh=1", nil, nil)
+		expect(t, "合并后的目录", code, 200, body)
+		type row struct {
+			Name, Title, Source string
+		}
+		type result struct {
+			Name  string
+			Count int
+			Error string
+		}
+		feed := decodeAs[struct {
+			Plugins []row
+			Sources []result
+			Error   string
+		}](t, body)
+		got := map[string]row{}
+		for _, p := range feed.Plugins {
+			got[p.Name] = p
+		}
+		if got["dsh-plugin-third"].Source != "Acme Hub" || got["dsh-plugin-cool"].Source != "dshfind" || got["dsh-plugin-cool"].Title != "Cool 插件" || feed.Error != "" {
+			t.Fatalf("应合并 dshfind 与第三方源：%s", body)
+		}
+		if len(feed.Sources) != 3 || feed.Sources[1].Name != "Acme Hub" || feed.Sources[1].Count != 2 || feed.Sources[2].Error == "" {
+			t.Fatalf("各源结果不对（停用的源不取，失败的源单独报错）：%s", body)
+		}
+
+		code, body = admin.do("POST", "/api/admin/upstream/sync", map[string]any{"names": []string{"dsh-plugin-third"}}, nil)
+		expect(t, "预载第三方源的插件", code, 202, body)
+		if j := waitJob(t, admin, decodeAs[store.SyncJob](t, body).ID); j.Status != "succeeded" {
+			t.Fatalf("预载失败：%+v", j)
+		}
+		if pkg, err := st.GetPackage(ctx, "dsh-plugin-third"); err != nil || pkg.Title != "第三方插件" {
+			t.Fatalf("应带上第三方源的展示信息：%+v %v", pkg, err)
+		}
+
+		// 屏蔽名单对第三方源同样生效（作者按该源登记的作者匹配）
+		s["upstream"].(map[string]any)["blocklist"] = []string{"author:acme-labs"}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "屏蔽第三方作者", code, 200, body)
+		code, body = admin.do("GET", "/api/admin/upstream/feed", nil, nil)
+		if !strings.Contains(string(body), `"blocked_by":"author:acme-labs"`) {
+			t.Fatalf("第三方源的插件也应能被屏蔽：%s", body)
+		}
+
+		// 只开第三方源、关掉 dshfind 也能用；全关则目录停用
+		s["upstream"].(map[string]any)["blocklist"] = []string{}
+		s["upstream"].(map[string]any)["dshfindFeed"] = false
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "关掉 dshfind", code, 200, body)
+		code, body = admin.do("GET", "/api/admin/upstream/feed", nil, nil)
+		if strings.Contains(string(body), `"source":"dshfind"`) || !strings.Contains(string(body), `"source":"Acme Hub"`) {
+			t.Fatalf("关掉 dshfind 后只剩第三方源：%s", body)
+		}
+		s["upstream"].(map[string]any)["sources"] = []map[string]any{}
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "清空第三方源", code, 200, body)
+		code, body = admin.do("GET", "/api/admin/upstream/feed", nil, nil)
+		if !strings.Contains(string(body), `"disabled":true`) {
+			t.Fatalf("没有启用的源时目录应停用：%s", body)
+		}
+		s["upstream"].(map[string]any)["dshfindFeed"] = true
+		code, body = admin.do("PUT", "/api/admin/settings", s, nil)
+		expect(t, "恢复 dshfind", code, 200, body)
 	})
 
 	t.Run("只用已预载的包", func(t *testing.T) {

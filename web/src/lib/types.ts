@@ -97,6 +97,10 @@ export interface Settings {
     registry: "npmjs" | "npmmirror" | "custom";
     customRegistry: string;
     autoSync: "auto" | "review" | "off";
+    /** dshfind 屏蔽名单：包名、@作用域/*、author:作者 */
+    blocklist: string[];
+    /** 第三方插件源（DSH 索引 format 1），与 dshfind 合并 */
+    sources: { name: string; url: string; enabled: boolean }[];
   };
   distribution: {
     enabled: boolean;
