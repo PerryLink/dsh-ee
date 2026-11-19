@@ -42,7 +42,7 @@ jobs:
         working-directory: dsh-plugin
       - run: npm run build
         working-directory: dsh-plugin
-      - run: git diff --exit-code server/internal/api/connectpkg/index.js
+      - run: git diff --exit-code server/internal/api/connectpkg/index.js server/internal/api/connectpkg/client.js
       # 端侧扩展 SDK、端侧模板和 Claude Code 适配器（docs/plugins.md §8、§10）
       # SDK 是可发布 npm 包：dry-run 检查打包内容（prepack 会先构建 dist/）
       - run: npm ci --no-audit --no-fund && npm test && npm run build && npm pack --dry-run

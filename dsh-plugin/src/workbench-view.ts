@@ -361,7 +361,10 @@ export function formView(h: H, index: number, widget: WorkbenchWidget, handlers:
   const values = handlers.formValues(index);
   const fields = widget.fields ?? [];
   const key = `${index}:form`;
+  // 提交中（写表或发给 AI）：表单只读、再点提交不动，免得双击插两行或改了一半的值被清掉
+  const busy = handlers.sending.has(key);
   const submit = () => {
+    if (busy) return;
     const error = checkForm(fields, values);
     handlers.setFormError(index, error);
     if (!error && widget.submit) handlers.send(key, widget.submit, { form: values });
@@ -375,9 +378,9 @@ export function formView(h: H, index: number, widget: WorkbenchWidget, handlers:
       style: inputStyle,
     };
     if (field.kind === "select") {
-      return h("select", common, h("option", { value: "" }, t("workbenchView.selectPlaceholder")), ...(field.options ?? []).map((option) => h("option", { key: option, value: option }, option)));
+      return h("select", { ...common, disabled: busy }, h("option", { value: "" }, t("workbenchView.selectPlaceholder")), ...(field.options ?? []).map((option) => h("option", { key: option, value: option }, option)));
     }
-    return h("input", { ...common, type: field.kind === "number" ? "number" : field.kind === "date" ? "date" : "text" });
+    return h("input", { ...common, readOnly: busy, type: field.kind === "number" ? "number" : field.kind === "date" ? "date" : "text" });
   };
   return h("section", { className: "dshee-card", style: card },
     header(h, widget),
@@ -386,7 +389,7 @@ export function formView(h: H, index: number, widget: WorkbenchWidget, handlers:
         h("span", null, field.label, field.required ? h("span", { style: { color: "#dc2626" } }, " *") : null),
         input(field)))),
     handlers.formError(index) ? h("div", { role: "alert", style: { color: "#dc2626", fontSize: 12, marginTop: 8 } }, handlers.formError(index)) : null,
-    h("div", { style: { marginTop: 12, display: "flex", justifyContent: "flex-end" } }, button(h, widget.submit ? actionLabel(handlers, widget.submit) || t("common.submit") : t("common.submit"), submit, handlers.sending.has(key), undefined, "primary")));
+    h("div", { style: { marginTop: 12, display: "flex", justifyContent: "flex-end" } }, button(h, widget.submit ? actionLabel(handlers, widget.submit) || t("common.submit") : t("common.submit"), submit, busy, undefined, "primary")));
 }
 
 export function actionsView(h: H, index: number, widget: WorkbenchWidget, handlers: PanelHandlers) {

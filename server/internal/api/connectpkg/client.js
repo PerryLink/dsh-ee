@@ -25547,7 +25547,9 @@ function formView(h, index, widget, handlers) {
   const values = handlers.formValues(index);
   const fields = widget.fields ?? [];
   const key = `${index}:form`;
+  const busy = handlers.sending.has(key);
   const submit = () => {
+    if (busy) return;
     const error62 = checkForm(fields, values);
     handlers.setFormError(index, error62);
     if (!error62 && widget.submit) handlers.send(key, widget.submit, { form: values });
@@ -25561,9 +25563,9 @@ function formView(h, index, widget, handlers) {
       style: inputStyle
     };
     if (field.kind === "select") {
-      return h("select", common, h("option", { value: "" }, t("workbenchView.selectPlaceholder")), ...(field.options ?? []).map((option) => h("option", { key: option, value: option }, option)));
+      return h("select", { ...common, disabled: busy }, h("option", { value: "" }, t("workbenchView.selectPlaceholder")), ...(field.options ?? []).map((option) => h("option", { key: option, value: option }, option)));
     }
-    return h("input", { ...common, type: field.kind === "number" ? "number" : field.kind === "date" ? "date" : "text" });
+    return h("input", { ...common, readOnly: busy, type: field.kind === "number" ? "number" : field.kind === "date" ? "date" : "text" });
   };
   return h(
     "section",
@@ -25580,7 +25582,7 @@ function formView(h, index, widget, handlers) {
       ))
     ),
     handlers.formError(index) ? h("div", { role: "alert", style: { color: "#dc2626", fontSize: 12, marginTop: 8 } }, handlers.formError(index)) : null,
-    h("div", { style: { marginTop: 12, display: "flex", justifyContent: "flex-end" } }, button2(h, widget.submit ? actionLabel(handlers, widget.submit) || t("common.submit") : t("common.submit"), submit, handlers.sending.has(key), void 0, "primary"))
+    h("div", { style: { marginTop: 12, display: "flex", justifyContent: "flex-end" } }, button2(h, widget.submit ? actionLabel(handlers, widget.submit) || t("common.submit") : t("common.submit"), submit, busy, void 0, "primary"))
   );
 }
 function actionsView(h, index, widget, handlers) {
@@ -26205,6 +26207,36 @@ function askNote(win, message) {
   }
 }
 
+// src/vote-mark.ts
+async function markVote(flow, value) {
+  if (flow.voted() || flow.pending.current) return;
+  flow.pending.current = true;
+  flow.setPending(true);
+  try {
+    const sessionId = flow.sessionId();
+    let note = "";
+    if (value < 0) {
+      const asked = flow.askNote();
+      if (asked === null) return;
+      note = asked;
+    }
+    let app = "";
+    try {
+      const bindings = flow.unwrapRemote(await flow.appBindings());
+      app = Object.entries(bindings ?? {}).find(([, b]) => b?.sessionId === sessionId)?.[0] ?? "";
+    } catch {
+    }
+    try {
+      flow.unwrapRemote(await flow.vote({ app, session: sessionId, message: flow.messageId, vote: value, note }));
+      flow.setVoted(value);
+    } catch {
+    }
+  } finally {
+    flow.pending.current = false;
+    flow.setPending(false);
+  }
+}
+
 // src/votes.ts
 function registerVotes(ctx, remote, unwrapRemote2) {
   if (!ctx?.slots?.inject) return;
@@ -26212,32 +26244,26 @@ function registerVotes(ctx, remote, unwrapRemote2) {
   const VoteButtons = (props) => {
     const messageId = String(props?.messageId ?? props?.message_id ?? props?.node?.id ?? props?.id ?? "");
     const [voted, setVoted] = (0, import_react3.useState)(0);
-    const mark = async (value) => {
-      if (voted) return;
-      const sessionId = currentSessionOf(ctx.sessions?.list?.getSnapshot?.());
-      let note = "";
-      if (value < 0) {
-        const asked = askNote(typeof window !== "undefined" ? window : void 0, t("votes.notePrompt"));
-        if (asked === null) return;
-        note = asked;
-      }
-      let app = "";
-      try {
-        const bindings = unwrapRemote2(await remote.appBindings());
-        app = Object.entries(bindings ?? {}).find(([, b]) => b?.sessionId === sessionId)?.[0] ?? "";
-      } catch {
-      }
-      try {
-        unwrapRemote2(await remote.vote({ app, session: sessionId, message: messageId, vote: value, note }));
-        setVoted(value);
-      } catch {
-      }
-    };
+    const [pending, setPending] = (0, import_react3.useState)(false);
+    const pendingRef = (0, import_react3.useRef)(false);
+    const mark = (value) => markVote({
+      pending: pendingRef,
+      voted: () => voted,
+      setPending,
+      setVoted,
+      askNote: () => askNote(typeof window !== "undefined" ? window : void 0, t("votes.notePrompt")),
+      sessionId: () => currentSessionOf(ctx.sessions?.list?.getSnapshot?.()),
+      messageId,
+      appBindings: () => remote.appBindings(),
+      vote: (request) => remote.vote(request),
+      unwrapRemote: unwrapRemote2
+    }, value);
+    const disabled = voted !== 0 || pending;
     return (0, import_react3.createElement)(
       "span",
       { "data-dsh-ee-ui": "votes", style: { display: "inline-flex", gap: 2 } },
-      (0, import_react3.createElement)("button", { type: "button", title: t("votes.helpful"), "aria-label": t("votes.helpful"), disabled: voted !== 0, style: { ...buttonStyle3, opacity: voted === 1 ? 1 : buttonStyle3.opacity }, onClick: () => void mark(1) }, "👍"),
-      (0, import_react3.createElement)("button", { type: "button", title: t("votes.notHelpful"), "aria-label": t("votes.notHelpful"), disabled: voted !== 0, style: { ...buttonStyle3, opacity: voted === -1 ? 1 : buttonStyle3.opacity }, onClick: () => void mark(-1) }, "👎")
+      (0, import_react3.createElement)("button", { type: "button", title: t("votes.helpful"), "aria-label": t("votes.helpful"), disabled, style: { ...buttonStyle3, opacity: voted === 1 ? 1 : buttonStyle3.opacity }, onClick: () => void mark(1) }, "👍"),
+      (0, import_react3.createElement)("button", { type: "button", title: t("votes.notHelpful"), "aria-label": t("votes.notHelpful"), disabled, style: { ...buttonStyle3, opacity: voted === -1 ? 1 : buttonStyle3.opacity }, onClick: () => void mark(-1) }, "👎")
     );
   };
   try {

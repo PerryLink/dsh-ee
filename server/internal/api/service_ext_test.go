@@ -781,13 +781,11 @@ func TestKnowledgeSources(t *testing.T) {
 	browsed := ext.hits
 	ext.mu.Unlock()
 	code, body = alice.do("POST", fmt.Sprintf("/api/kb/%d/sources/browse", kbID), map[string]any{"asset_id": assetID}, nil)
-	if code == 200 || strings.Contains(string(body), "space-hr") {
-		t.Fatalf("不能管理连接的维护者不能用扩展的系统身份浏览：%d %s", code, body)
+	if code != 403 || strings.Contains(string(body), "space-hr") {
+		t.Fatalf("不能管理连接的维护者不能用扩展的系统身份浏览，应是 403：%d %s", code, body)
 	}
 	code, body = alice.do("POST", fmt.Sprintf("/api/kb/%d/sources", kbID), map[string]any{"asset_id": assetID, "mode": "sync", "title": "偷偷同步"}, nil)
-	if code == 201 {
-		t.Fatalf("不能管理连接的维护者不能挂同步：%s", body)
-	}
+	expect(t, "不能管理连接的维护者不能挂同步", code, 403, body)
 	ext.mu.Lock()
 	if ext.hits != browsed {
 		t.Fatalf("被拒绝的请求不该碰到扩展（多打了 %d 次）", ext.hits-browsed)
