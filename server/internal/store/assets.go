@@ -331,28 +331,55 @@ func nullID(id int64) any {
 
 // AddAssetVersion 追加一个版本，返回版本号。
 func (s *Store) AddAssetVersion(ctx context.Context, assetID int64, spec json.RawMessage, status string, by int64) (int, error) {
+	v, _, err := s.AddAssetVersionWith(ctx, assetID, spec, by, func(Scope, *Scope) (string, error) { return status, nil })
+	return v, err
+}
+
+// AddAssetVersionWith 追加一个版本，版本状态由 decide 在资产行锁内决定，返回版本号和状态。
+// decide 拿到的是锁住之后读到的当前范围和在审的范围申请（没有申请时为 nil）：
+// 调用方在锁外读到的资产是旧快照，拿它判断要不要审核，并发的范围申请（或撤回、批准）
+// 会在判断和落库之间插进来——比如申请全员刚提交，新版本却按「只有自己能用」免审上线。
+// 范围申请（RequestAssetScope）、审批（ResolveAssetScope）和改范围（UpdateAsset）都会写这一行，
+// 所以锁内读到的就是落库这一刻的范围状态。
+func (s *Store) AddAssetVersionWith(ctx context.Context, assetID int64, spec json.RawMessage, by int64, decide func(scope Scope, pending *Scope) (string, error)) (int, string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer tx.Rollback()
 	var max sql.NullInt64
-	// 锁住资产行，避免两个人同时提交拿到同一个版本号
-	if _, err := tx.ExecContext(ctx, "SELECT id FROM assets WHERE id = ? FOR UPDATE", assetID); err != nil {
-		return 0, err
+	var scopeRaw string
+	var pendingRaw sql.NullString
+	// 锁住资产行，避免两个人同时提交拿到同一个版本号；范围要在同一句 FOR UPDATE 里读，
+	// 普通 SELECT 在 TiDB 悲观事务里读的是事务开始时的快照，看不到刚提交的申请。
+	err = tx.QueryRowContext(ctx, "SELECT scope, pending_scope FROM assets WHERE id = ? FOR UPDATE", assetID).Scan(&scopeRaw, &pendingRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", ErrNotFound
+	}
+	if err != nil {
+		return 0, "", err
+	}
+	var pending *Scope
+	if pendingRaw.Valid && pendingRaw.String != "" {
+		p := parseScope(pendingRaw.String)
+		pending = &p
+	}
+	status, err := decide(parseScope(scopeRaw), pending)
+	if err != nil {
+		return 0, "", err
 	}
 	if err := tx.QueryRowContext(ctx, "SELECT MAX(version) FROM asset_versions WHERE asset_id = ?", assetID).Scan(&max); err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	v := int(max.Int64) + 1
 	t := now()
 	if err := insertAssetVersion(ctx, tx, assetID, v, spec, status, by, t); err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE assets SET updated_at = ? WHERE id = ?", t, assetID); err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return v, tx.Commit()
+	return v, status, tx.Commit()
 }
 
 // DeleteAssetVersion 撤销一个刚追加、还没生效的版本（回滚在写库之后失败时用）。
