@@ -547,14 +547,14 @@ func TestFeishuDingTalkIdentityBinding(t *testing.T) {
 	if loc := feishuLogin(bobWeb, "ou-2", "bob@example.com"); loc != "/build" {
 		t.Fatalf("飞书登录失败：%s", loc)
 	}
-	if loc := dingTalkSignIn(t, bobWeb, "provider=dingtalk&bind=1", "staff-a"); !strings.HasPrefix(loc, "/account?identity_error=") {
+	if loc := dingTalkSignIn(t, bobWeb, "provider=dingtalk&bind=1", "staff-a"); !strings.HasPrefix(loc, "/account?identity_error=") || !strings.Contains(loc, "identity_error_code=identity.linked_elsewhere") {
 		t.Fatalf("别人的钉钉身份不该能绑：%s", loc)
 	}
-	if loc := dingTalkSignIn(t, aliceWeb, "provider=dingtalk&bind=1", "staff-b"); !strings.HasPrefix(loc, "/account?identity_error=") {
+	if loc := dingTalkSignIn(t, aliceWeb, "provider=dingtalk&bind=1", "staff-b"); !strings.HasPrefix(loc, "/account?identity_error=") || !strings.Contains(loc, "identity_error_code=identity.already_linked") {
 		t.Fatalf("一个账号只能绑一个钉钉身份：%s", loc)
 	}
 	// 本地账号（管理员）不能绑定
-	if loc := dingTalkSignIn(t, admin, "provider=dingtalk&bind=1", "staff-b"); !strings.HasPrefix(loc, "/account?identity_error=") {
+	if loc := dingTalkSignIn(t, admin, "provider=dingtalk&bind=1", "staff-b"); !strings.HasPrefix(loc, "/account?identity_error=") || !strings.Contains(loc, "identity_error_code=identity.account_ineligible") {
 		t.Fatalf("本地账号不该能绑定钉钉身份：%s", loc)
 	}
 
@@ -580,6 +580,39 @@ func TestFeishuDingTalkIdentityBinding(t *testing.T) {
 		t.Fatalf("同手机号的第二个钉钉成员不该进 alice 的账号：%s", loc)
 	}
 	ding.remove("staff-x", 0)
+
+	code, body = aliceWeb.do("DELETE", "/api/me/identities/dingtalk", nil, nil)
+	expect(t, "解除 alice 的钉钉身份", code, 200, body)
+	mine = decodeAs[identities](t, mustGet(t, aliceWeb, "/api/me/identities"))
+	if mine.Identities[1].Bound || !mine.Identities[1].CanBind {
+		t.Fatalf("解除后应显示未绑定并允许重绑：%+v", mine)
+	}
+	if res = dingSync("同步不能恢复主动解除的身份"); res.Linked != 1 || !slices.Contains(res.Skipped, "staff-a") {
+		t.Fatalf("同步应跳过主动解除的身份：%+v", res)
+	}
+	second["autoCreate"] = true
+	code, body = admin.do("PUT", "/api/admin/auth/oidc?slot=secondary", second, nil)
+	expect(t, "打开钉钉自动建号", code, 200, body)
+	fresh := newClient(t, ts.URL)
+	if loc := dingTalkSignIn(t, fresh, "provider=dingtalk&next=/build", "staff-a"); !strings.HasPrefix(loc, "/login?oidc_error=") || whoAmI(t, fresh) != "" || users() != before {
+		t.Fatalf("主动解除的身份不能自动恢复或建号：%s", loc)
+	}
+	second["autoCreate"] = false
+	code, body = admin.do("PUT", "/api/admin/auth/oidc?slot=secondary", second, nil)
+	expect(t, "还原钉钉自动建号设置", code, 200, body)
+	ding.put(map[string]any{"userid": "staff-y", "name": "吴安"}, 1)
+	if loc := dingTalkSignIn(t, aliceWeb, "provider=dingtalk&bind=1", "staff-y"); loc != "/account?identity_bound=dingtalk" {
+		t.Fatalf("主动解除的身份不该阻止绑定另一个账号：%s", loc)
+	}
+	code, body = aliceWeb.do("DELETE", "/api/me/identities/dingtalk", nil, nil)
+	expect(t, "解除临时绑定", code, 200, body)
+	ding.remove("staff-y", 0)
+	if loc := dingTalkSignIn(t, aliceWeb, "provider=dingtalk&bind=1", "staff-a"); loc != "/account?identity_bound=dingtalk" {
+		t.Fatalf("alice 应能自己重新绑定：%s", loc)
+	}
+	if loc := dingTalkSignIn(t, fresh, "provider=dingtalk&next=/build", "staff-a"); loc != "/build" || whoAmI(t, fresh) != "alice" {
+		t.Fatalf("显式重新绑定后应恢复登录：%s", loc)
+	}
 
 	// bob 从钉钉离职：只解除钉钉关联，账号归飞书管，不禁用。
 	second["dingTalkSyncDisable"] = true

@@ -3,6 +3,17 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  identity: {
+    entrance_disabled: "Este método de inicio de sesión está deshabilitado y no se puede vincular.",
+    session_changed: "Tu sesión ha cambiado. Vuelve a iniciar sesión antes de vincular la identidad.",
+    provider_invalid: "Solo se pueden vincular identidades de Feishu y DingTalk.",
+    account_ineligible: "Solo las cuentas de empleados creadas mediante el inicio de sesión único de la empresa pueden vincular identidades de Feishu o DingTalk.",
+    home_provider: "Esta cuenta ya inicia sesión con este proveedor. No puedes vincular otra identidad del mismo proveedor.",
+    home_elsewhere: "Esta identidad es la identidad de inicio de sesión de otra cuenta de dsh-ee. Contacta con un administrador para solicitar la fusión de las cuentas.",
+    linked_elsewhere: "Esta identidad pertenece a otra cuenta de dsh-ee. Si sigue vinculada allí, desvincúlala primero en esa cuenta; si no, contacta con un administrador.",
+    already_linked: "Esta cuenta ya tiene una identidad vinculada de este proveedor. Desvincúlala antes de cambiarla.",
+    unlink_missing: "No hay ninguna identidad vinculada que se pueda desvincular.",
+  },
   dingtalk_chat: {
     disabled: "El bot de DingTalk está desactivado.",
     unbound: "Inicia sesión con DingTalk y conecta DSH.",

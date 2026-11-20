@@ -15,7 +15,7 @@
 ## 数据模型
 
 - `users.external_dn` 仍是账号的**主身份**：账号建出来时的那个（`feishu:<open_id>` 或 `dingtalk:<CorpId>:<userId>`）。显示名、部门、邮箱和「组与角色的映射」只由主身份所在的来源在登录和同步时更新，另一边不动它们，两边的映射不会互相打架。
-- `user_identities`（迁移 `0047_user_identities.sql`）记每个账号的飞书 / 钉钉身份：`via=home` 是主身份的镜像，`explicit` / `mobile` / `email` 是**关联身份**及其来历。约束：一个身份只能属于一个账号（`subject` 唯一），一个账号在每个来源上最多一个身份（`user_id + provider` 唯一）。
+- `user_identities` 记每个账号的飞书 / 钉钉身份：`via=home` 是主身份的镜像，`explicit` / `mobile` / `email` 是**关联身份**及其来历，`unlinked` 记录员工主动解除的身份。约束：一个身份只能属于一个账号（`subject` 唯一），一个账号在每个来源上最多一个有效身份。
 - 表里还存目录里核实过的手机号和企业邮箱的 **SHA-256 摘要**（不存明文），只用来比对。
 
 ## 绑定规则
@@ -39,7 +39,7 @@
 
 ## 解除与离职
 
-- 员工可以在「个人账号」解除自己的**关联身份**；主身份只能由管理员在用户管理里「解除身份绑定」，那会连同关联身份一起清掉并踢下会话。
+- 员工可以在「个人账号」解除自己的**关联身份**。主动解除后，登录和通讯录同步不会自动关联或为该身份建号；员工可从当前账号重新显式绑定。主身份只能由管理员在用户管理里「解除身份绑定」，那会连同关联身份和主动解除记录一起清掉并踢下会话。
 - 组织同步发现人离职（需要开对应的同步禁用开关，且来源明确确认）：
   - 离职的是账号的**主身份**所在来源：禁用账号，两条登录路径都进不来；
   - 离职的只是**关联身份**所在来源：只解除这条关联，账号不禁用（它归主身份那边管），结果里单独列出。
@@ -48,7 +48,7 @@
 ## 接口
 
 - `GET /api/me/identities`：当前账号的两个身份及能否绑定 / 解除（第二入口没开时为空）。
-- `GET /api/auth/oidc/start?provider=<feishu|dingtalk>&bind=1`：发起绑定，结果回到 `/account?identity_bound=…` 或 `/account?identity_error=…`。
+- `GET /api/auth/oidc/start?provider=<feishu|dingtalk>&bind=1`：发起绑定，结果回到 `/account?identity_bound=…` 或带错误文案和 `identity_error_code` 的 `/account`。
 - `DELETE /api/me/identities/{provider}`：解除自己的关联身份。
 - `GET/PUT /api/admin/auth/oidc?slot=secondary`、`POST /api/admin/auth/oidc/test?slot=secondary`：第二入口的配置，权限与主登录方式相同。
 

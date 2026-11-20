@@ -151,8 +151,11 @@ func (s *Server) linkedLogin(ctx context.Context, cfg *oidc.Config, subject stri
 	if provider == "" || provider != cfg.Preset {
 		return nil, nil
 	}
-	row, err := s.store.GetLinkedIdentity(ctx, subject)
+	row, err := s.store.GetSecondaryIdentity(ctx, subject)
 	if err == nil {
+		if row.Via == store.IdentityUnlinked {
+			return nil, errNotProvisioned
+		}
 		u, err := s.store.GetUser(ctx, row.UserID)
 		if err != nil {
 			return nil, err
@@ -191,10 +194,12 @@ func (s *Server) recordLoginIdentity(ctx context.Context, cfg *oidc.Config, u *s
 }
 
 // syncLinkedIdentity：组织同步里，这名成员是不是已经（或可以安全地）关联在另一个来源建的账号上。
-// handled 为真时不要再给他建号；fresh 表示是这一轮新关联的。
-func (s *Server) syncLinkedIdentity(ctx context.Context, provider, subject string, c identityContacts, auto bool) (handled, fresh bool, err error) {
-	row, err := s.store.GetLinkedIdentity(ctx, subject)
+func (s *Server) syncLinkedIdentity(ctx context.Context, provider, subject string, c identityContacts, auto bool) (linked, suppressed bool, err error) {
+	row, err := s.store.GetSecondaryIdentity(ctx, subject)
 	if err == nil {
+		if row.Via == store.IdentityUnlinked {
+			return false, true, nil
+		}
 		return true, false, s.store.TouchLinkedIdentity(ctx, row.ID, c.mobile, c.email)
 	}
 	if !notFound(err) {
@@ -207,7 +212,7 @@ func (s *Server) syncLinkedIdentity(ctx context.Context, provider, subject strin
 		return false, false, err
 	}
 	u, err := s.autoLinkIdentity(ctx, provider, subject, c)
-	return u != nil, u != nil, err
+	return u != nil, false, err
 }
 
 // recordSyncIdentity 在组织同步建号 / 核对之后记下主身份和联系方式摘要。出错只记日志。
@@ -237,8 +242,10 @@ func (s *Server) pruneLinkedIdentities(ctx context.Context, provider, prefix str
 		} else if !left {
 			continue
 		}
-		if _, err := s.store.DeleteLinkedIdentity(ctx, row.UserID, provider); err != nil {
+		if deleted, err := s.store.DeleteLinkedIdentity(ctx, row.ID); err != nil {
 			return out, err
+		} else if !deleted {
+			continue
 		}
 		name := ""
 		if u, err := s.store.GetUser(ctx, row.UserID); err == nil {
@@ -266,8 +273,10 @@ func (s *Server) sessionUser(r *http.Request) *store.User {
 }
 
 // bindError 回到个人账号页并带上绑定失败的原因。
-func bindError(w http.ResponseWriter, r *http.Request, msg string) {
-	http.Redirect(w, r, "/account?identity_error="+url.QueryEscape(msg), http.StatusFound)
+func bindError(w http.ResponseWriter, code, msg string) {
+	q := url.Values{"identity_error": {msg}, "identity_error_code": {code}}
+	w.Header().Set("Location", "/account?"+q.Encode())
+	writeErrCode(w, http.StatusFound, code, nil, msg)
 }
 
 // finishIdentityBind 是绑定流程的回调：员工已经在飞书 / 钉钉完成授权，把这个身份关联到发起绑定的账号上。
@@ -277,40 +286,42 @@ func (s *Server) finishIdentityBind(w http.ResponseWriter, r *http.Request, cfg 
 	u := s.sessionUser(r)
 	switch {
 	case u == nil || u.ID != bindUser:
-		bindError(w, r, "登录状态变了，请重新登录后再绑定")
+		bindError(w, codeIdentitySessionChanged, "登录状态变了，请重新登录后再绑定")
 		return
 	case provider == "" || provider != cfg.Preset:
-		bindError(w, r, "只能绑定飞书或钉钉身份")
+		bindError(w, codeIdentityProviderInvalid, "只能绑定飞书或钉钉身份")
 		return
 	case u.AccountType != store.AccountHuman || u.AuthSource != store.AuthOIDC || u.ExternalDN == "":
-		bindError(w, r, "只有通过企业统一登录建立的员工账号可以绑定飞书 / 钉钉身份")
+		bindError(w, codeIdentityAccountIneligible, "只有通过企业统一登录建立的员工账号可以绑定飞书 / 钉钉身份")
 		return
 	case u.ExternalDN == id.Subject:
 		http.Redirect(w, r, "/account?identity_bound="+provider, http.StatusFound)
 		return
 	case identityProvider(u.ExternalDN) == provider:
-		bindError(w, r, "这个账号本来就是用这个入口登录的，不能再绑定另一个同类身份")
+		bindError(w, codeIdentityHomeProvider, "这个账号本来就是用这个入口登录的，不能再绑定另一个同类身份")
 		return
 	}
-	fail := func(reason, msg string) {
+	fail := func(reason, code, msg string) {
 		s.auditAs(r, u, auditLoginFailed, u.Username, map[string]any{"via": "identity_bind", "provider": provider, "reason": reason})
-		bindError(w, r, msg)
+		bindError(w, code, msg)
 	}
 	// 这个身份已经是别的账号的登录身份：不改挂、不合并
 	if other, err := s.store.GetUserByExternalDN(ctx, store.AuthOIDC, id.Subject); err == nil && other != nil {
-		fail("subject_is_home_of_another_account", "这个身份已经是另一个 dsh-ee 账号的登录身份，不能绑定到当前账号；需要合并请联系管理员")
+		fail("subject_is_home_of_another_account", codeIdentityHomeElsewhere, "这个身份已经是另一个 dsh-ee 账号的登录身份，不能绑定到当前账号；需要合并请联系管理员")
 		return
 	} else if err != nil && !notFound(err) {
 		s.internalErr(w, r, err)
 		return
 	}
-	if row, err := s.store.GetLinkedIdentity(ctx, id.Subject); err == nil {
+	if row, err := s.store.GetSecondaryIdentity(ctx, id.Subject); err == nil {
 		if row.UserID != u.ID {
-			fail("subject_linked_to_another_account", "这个身份已经绑定在另一个 dsh-ee 账号上；请先在那个账号里解除")
+			fail("subject_linked_to_another_account", codeIdentityLinkedElsewhere, "这个身份属于另一个 dsh-ee 账号。若仍有绑定，请先在原账号解除；否则请联系管理员。")
 			return
 		}
-		http.Redirect(w, r, "/account?identity_bound="+provider, http.StatusFound)
-		return
+		if row.Via != store.IdentityUnlinked {
+			http.Redirect(w, r, "/account?identity_bound="+provider, http.StatusFound)
+			return
+		}
 	} else if !notFound(err) {
 		s.internalErr(w, r, err)
 		return
@@ -318,7 +329,7 @@ func (s *Server) finishIdentityBind(w http.ResponseWriter, r *http.Request, cfg 
 	c := s.fetchContacts(ctx, cfg, id.Subject)
 	if err := s.store.LinkIdentity(ctx, u.ID, provider, id.Subject, store.IdentityExplicit, c.mobile, c.email); err != nil {
 		if errors.Is(err, store.ErrDuplicate) {
-			fail("account_already_linked", "当前账号已经绑定过这个入口的身份；要换一个请先解除")
+			fail("account_already_linked", codeIdentityAlreadyLinked, "当前账号已经绑定过这个入口的身份；要换一个请先解除")
 			return
 		}
 		s.internalErr(w, r, err)
@@ -375,13 +386,13 @@ func (s *Server) handleMyIdentities(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUnlinkMyIdentity(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
 	u := currentUser(r)
-	removed, err := s.store.DeleteLinkedIdentity(r.Context(), u.ID, provider)
+	removed, err := s.store.SuppressLinkedIdentity(r.Context(), u.ID, provider)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
 	if !removed {
-		writeErr(w, http.StatusNotFound, "没有可以解除的关联身份")
+		writeErrCode(w, http.StatusNotFound, codeIdentityUnlinkMissing, nil, "没有可以解除的关联身份")
 		return
 	}
 	s.audit(r, auditIdentityUnlink, u.Username, map[string]any{"provider": provider, "reason": "self"})

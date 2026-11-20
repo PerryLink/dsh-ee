@@ -67,6 +67,12 @@ export default async function (t) {
   await shot(admin, "dingtalk-identity-card");
   step("个人账号页显示飞书 / 钉钉身份；本地账号不提供绑定");
 
+  const english = await newPage(t, { lang: "en" });
+  await login(english, "admin", ADMIN_PW);
+  await english.goto(`${BASE}/account?identity_error=${encodeURIComponent("身份冲突")}&identity_error_code=identity.already_linked`);
+  await english.locator("[data-identity-bindings]").getByText("This account already has a linked identity from this provider. Unlink it before switching.").waitFor();
+  step("账号页按机器码翻译绑定冲突，不直接显示回调的中文文案");
+
   // 登录页：两个入口
   await logout(admin);
   await admin.goto(`${BASE}/login`);

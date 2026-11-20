@@ -14,8 +14,9 @@ const (
 	// IdentityExplicit 是员工登录后自己绑定的
 	IdentityExplicit = "explicit"
 	// IdentityMobile / IdentityEmail 是按目录里核实过的手机号 / 企业邮箱自动关联的
-	IdentityMobile = "mobile"
-	IdentityEmail  = "email"
+	IdentityMobile   = "mobile"
+	IdentityEmail    = "email"
+	IdentityUnlinked = "unlinked"
 )
 
 // Identity 是账号带的一个飞书或钉钉身份。
@@ -71,7 +72,7 @@ func (s *Store) RecordHomeIdentity(ctx context.Context, userID int64, provider, 
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE user_identities SET subject=?, via=?,
 		mobile_hash=COALESCE(NULLIF(?, ''), mobile_hash), email_hash=COALESCE(NULLIF(?, ''), email_hash), updated_at=?
-		WHERE user_id=? AND provider=?`, subject, IdentityHome, mobileHash, emailHash, t, userID, provider)
+		WHERE user_id=? AND provider=? AND via<>?`, subject, IdentityHome, mobileHash, emailHash, t, userID, provider, IdentityUnlinked)
 	if isDuplicate(err) {
 		return ErrDuplicate
 	}
@@ -81,6 +82,21 @@ func (s *Store) RecordHomeIdentity(ctx context.Context, userID int64, provider, 
 // LinkIdentity 给账号关联一个身份。这个身份已经在别处、或账号已有同一来源的身份时返回 ErrDuplicate。
 func (s *Store) LinkIdentity(ctx context.Context, userID int64, provider, subject, via, mobileHash, emailHash string) error {
 	t := now()
+	if via == IdentityExplicit {
+		res, err := s.db.ExecContext(ctx, `UPDATE user_identities SET via=?, mobile_hash=?, email_hash=?, updated_at=?
+			WHERE subject=? AND user_id=? AND provider=? AND via=?`,
+			via, mobileHash, emailHash, t, subject, userID, provider, IdentityUnlinked)
+		if isDuplicate(err) {
+			return ErrDuplicate
+		}
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if n > 0 || err != nil {
+			return err
+		}
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_identities (user_id, provider, subject, via, mobile_hash, email_hash, created_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?)`, userID, provider, subject, via, mobileHash, emailHash, t, t)
 	if isDuplicate(err) {
@@ -89,30 +105,39 @@ func (s *Store) LinkIdentity(ctx context.Context, userID int64, provider, subjec
 	return err
 }
 
-// GetLinkedIdentity 按身份找关联（不含主身份的镜像行：主身份按 users.external_dn 找）。
-func (s *Store) GetLinkedIdentity(ctx context.Context, subject string) (*Identity, error) {
+// GetSecondaryIdentity finds a linked or explicitly unlinked subject.
+func (s *Store) GetSecondaryIdentity(ctx context.Context, subject string) (*Identity, error) {
 	return scanIdentity(s.db.QueryRowContext(ctx, "SELECT "+identityColumns+" FROM user_identities WHERE subject = ? AND via <> ?", subject, IdentityHome))
 }
 
 func (s *Store) ListUserIdentities(ctx context.Context, userID int64) ([]*Identity, error) {
-	return s.listIdentities(ctx, "user_id = ?", userID)
+	return s.listIdentities(ctx, "user_id = ? AND via <> ?", userID, IdentityUnlinked)
 }
 
 // ListLinkedIdentities 列出某个来源的全部关联身份（不含主身份）。
 func (s *Store) ListLinkedIdentities(ctx context.Context, provider string) ([]*Identity, error) {
-	return s.listIdentities(ctx, "provider = ? AND via <> ?", provider, IdentityHome)
+	return s.listIdentities(ctx, "provider = ? AND via NOT IN (?, ?)", provider, IdentityHome, IdentityUnlinked)
 }
 
 // TouchLinkedIdentity 更新关联身份的联系方式摘要；为空的保留原值。
 func (s *Store) TouchLinkedIdentity(ctx context.Context, id int64, mobileHash, emailHash string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE user_identities SET mobile_hash=COALESCE(NULLIF(?, ''), mobile_hash),
-		email_hash=COALESCE(NULLIF(?, ''), email_hash), updated_at=? WHERE id=?`, mobileHash, emailHash, now(), id)
+		email_hash=COALESCE(NULLIF(?, ''), email_hash), updated_at=? WHERE id=? AND via <> ?`, mobileHash, emailHash, now(), id, IdentityUnlinked)
 	return err
 }
 
-// DeleteLinkedIdentity 解除账号在某个来源上的关联身份，返回是否真的删了一行。
-func (s *Store) DeleteLinkedIdentity(ctx context.Context, userID int64, provider string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, "DELETE FROM user_identities WHERE user_id = ? AND provider = ? AND via <> ?", userID, provider, IdentityHome)
+func (s *Store) DeleteLinkedIdentity(ctx context.Context, id int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM user_identities WHERE id = ? AND via NOT IN (?, ?)", id, IdentityHome, IdentityUnlinked)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *Store) SuppressLinkedIdentity(ctx context.Context, userID int64, provider string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE user_identities SET via=?, mobile_hash='', email_hash='', updated_at=?
+		WHERE user_id=? AND provider=? AND via NOT IN (?, ?)`, IdentityUnlinked, now(), userID, provider, IdentityHome, IdentityUnlinked)
 	if err != nil {
 		return false, err
 	}

@@ -66,14 +66,15 @@ function DingTalkConnection() {
 
 /** 飞书 / 钉钉身份绑定：两个登录入口都开着时，员工可以把另一个身份绑到当前账号上，之后用哪边登录都是这个账号。 */
 function IdentityBindings() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { notify } = useStore();
   const { data, reload } = useApi(api.myIdentities);
   const unlink = useAction();
   const confirm = useConfirm();
   // 绑定流程从飞书 / 钉钉回来时，结果带在地址上
   const params = new URLSearchParams(window.location.search);
-  const failed = params.get("identity_error");
+  const errorKey = `apiErrors.${params.get("identity_error_code")}`;
+  const failed = i18n.exists(errorKey) ? t(errorKey as never) : params.get("identity_error");
   const bound = params.get("identity_bound");
   if (!data || data.identities.length === 0) return null;
   const onUnlink = async (provider: string, name: string) => {

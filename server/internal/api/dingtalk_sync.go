@@ -104,9 +104,12 @@ func (s *Server) syncDingTalk(ctx context.Context) (*dingTalkSyncResult, error) 
 		seen[subject] = true
 		contacts := dingTalkContacts(remote)
 		// 已经（或可以安全地）关联在飞书建的账号上：不另外建号，资料和角色由那边管
-		if handled, _, err := s.syncLinkedIdentity(ctx, dingtalk.Preset, subject, contacts, autoLink); err != nil {
+		if linked, suppressed, err := s.syncLinkedIdentity(ctx, dingtalk.Preset, subject, contacts, autoLink); err != nil {
 			return finish(err)
-		} else if handled {
+		} else if suppressed {
+			res.Skipped = append(res.Skipped, remote.UserID)
+			continue
+		} else if linked {
 			res.Linked++
 			continue
 		}

@@ -533,7 +533,7 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ok || !chatPreset(cfg.Preset) {
-			bindError(w, r, "这个登录入口没有开启，不能绑定")
+			bindError(w, codeIdentityEntranceDisabled, "这个登录入口没有开启，不能绑定")
 			return
 		}
 		bindUser = u.ID
