@@ -135,9 +135,9 @@ export default {
   },
   "demo": {
     "title": "डेमो कंपनी",
-    "desc": "एक क्लिक में डेमो कंपनी “Xinghe Tech” आयात करें: R&D, बिक्री, वित्त, HR, IT, कानूनी — 6 विभागों के ज्ञान आधार, यात्रा, CRM, IT टिकट — 3 डेमो सिस्टम, वर्कबेंच वाले ऐप, 10 डेमो कर्मचारी और पिछले 30 दिनों का उपयोग डेटा (अवलोकन और संचालन डेटा खोलते ही रुझान दिखते हैं)। सब कुछ बाइनरी में बिल्ट-इन है, ऑफ़लाइन भी आयात हो जाता है; दोबारा आयात करने पर मौजूदा सामग्री अधिलेखित नहीं होती।",
+    "desc": "मौजूदा सामग्री बदले बिना डेमो ज्ञान, ऐप, खाते और उपयोग डेटा आयात करें।",
     "heroTitle": "डेमो कंपनी आयात करें, तुरंत आज़माएँ",
-    "heroDesc": "No data to prepare: pick the scenario closest to yours (a company, or a team of a few people) and in a minute you get its knowledge bases, apps, experts and people. Sign in with a demo account and try it in DSH. Clear it with one click afterwards; your own content stays.",
+    "heroDesc": "परिदृश्य चुनें और आयात के बाद डेमो खाते से आज़माएँ; डेमो सामग्री हटा सकते हैं।",
     "import": "डेमो कंपनी आयात करें",
     "importTeam": "Import demo team",
     "importing": "आयात हो रहा है… (लगभग आधा मिनट)",
@@ -154,11 +154,11 @@ export default {
       "names": {
         "xinghe": {
           "title": "Xinghe Tech",
-          "summary": "A software company of about 200: knowledge bases for 6 departments, 3 business systems (travel, CRM, IT tickets), apps with workbenches, experts and admin policies."
+          "summary": "सॉफ़्टवेयर कंपनी: विभागीय ज्ञान, बिज़नेस सिस्टम और कर्मचारी ऐप।"
         },
         "novel": {
           "title": "Shanhai Studio",
-          "summary": "A 4-person team serialising a novel: a story bible and a writing guide as knowledge bases, a lore Q&A app and a chapter tracker, and two review experts. No business systems to connect."
+          "summary": "लेखन टीम: संदर्भ, अध्याय सहयोग और विशेषज्ञ समीक्षा।"
         }
       }
     },
@@ -166,9 +166,9 @@ export default {
     "failed": "नहीं बन सका",
     "superOnly": "डेमो कंपनी केवल सुपर एडमिन आयात कर सकता है।",
     "tryIt": "आगे करें:",
-    "next1": "नीचे दिए किसी डेमो कर्मचारी से दूसरे ब्राउज़र (या इनकॉग्निटो विंडो) में dsh-ee पर साइन इन करें और “शुरू करें” पेज के अनुसार DSH जोड़ें।",
-    "next2": "DSH की होम स्क्रीन पर “कंपनी ऐप” में अनुशंसित ऐप खोलें और एक प्रश्न पूछकर देखें:",
-    "next3": "वापस अवलोकन, संचालन डेटा और मासिक रिपोर्ट पर जाएँ, 30 दिनों की उपयोग रेखा देखें।",
+    "next1": "दूसरे ब्राउज़र में डेमो खाते से लॉगिन करें और शुरू करें से DSH जोड़ें।",
+    "next2": "DSH में सुझाया ऐप खोलें और पूछें:",
+    "next3": "अवलोकन, उपयोग आँकड़े और मासिक रिपोर्ट देखें।",
     "guideLine": "{{name}} ({{department}} · {{title}}) → “{{app}}”: {{try}}",
     "clear": "डेमो डेटा साफ़ करें",
     "clearing": "साफ़ हो रहा है…",

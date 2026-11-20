@@ -135,9 +135,9 @@ export default {
   },
   "demo": {
     "title": "Empresa de demonstração",
-    "desc": "Importe com um clique a empresa de demonstração “Xinghe Tech”: bases de conhecimento dos 6 departamentos (P&D, vendas, finanças, RH, TI, jurídico), 3 sistemas de demonstração (viagens, CRM, chamados de TI), aplicativos com áreas de trabalho, 10 funcionários de demonstração e dados de uso dos últimos 30 dias (a visão geral e os dados operacionais já abrem com curvas). Tudo é embutido no programa e funciona offline; reimportar não substitui o conteúdo existente.",
+    "desc": "Importe conhecimento, aplicativos, contas e uso de exemplo sem sobrescrever conteúdo.",
     "heroTitle": "Importe a empresa de demonstração e experimente agora",
-    "heroDesc": "No data to prepare: pick the scenario closest to yours (a company, or a team of a few people) and in a minute you get its knowledge bases, apps, experts and people. Sign in with a demo account and try it in DSH. Clear it with one click afterwards; your own content stays.",
+    "heroDesc": "Escolha um cenário e entre com uma conta de demonstração após importar; o conteúdo pode ser removido.",
     "import": "Importar empresa de demonstração",
     "importTeam": "Import demo team",
     "importing": "Importando… (cerca de meio minuto)",
@@ -154,11 +154,11 @@ export default {
       "names": {
         "xinghe": {
           "title": "Xinghe Tech",
-          "summary": "A software company of about 200: knowledge bases for 6 departments, 3 business systems (travel, CRM, IT tickets), apps with workbenches, experts and admin policies."
+          "summary": "Empresa de software: conhecimento, sistemas e aplicativos para funcionários."
         },
         "novel": {
           "title": "Shanhai Studio",
-          "summary": "A 4-person team serialising a novel: a story bible and a writing guide as knowledge bases, a lore Q&A app and a chapter tracker, and two review experts. No business systems to connect."
+          "summary": "Equipe de escrita: referências, colaboração e revisão especializada."
         }
       }
     },
@@ -166,9 +166,9 @@ export default {
     "failed": "falhou",
     "superOnly": "Somente um superadministrador pode importar a empresa de demonstração.",
     "tryIt": "Próximos passos:",
-    "next1": "Entre no dsh-ee com qualquer funcionário de demonstração abaixo em outro navegador (ou janela anônima) e conecte o DSH pela página “Primeiros passos”.",
-    "next2": "Na tela inicial do DSH, abra o aplicativo recomendado em “Aplicativos da empresa” e faça uma pergunta para experimentar:",
-    "next3": "Volte à visão geral, aos dados operacionais e ao relatório mensal para ver as curvas de uso dos 30 dias.",
+    "next1": "Entre com uma conta de demonstração em outro navegador e conecte o DSH em Começar.",
+    "next2": "Abra um aplicativo recomendado no DSH e pergunte:",
+    "next3": "Veja a visão geral, as estatísticas e o relatório mensal.",
     "guideLine": "{{name}} ({{department}} · {{title}}) → “{{app}}”: {{try}}",
     "clear": "Limpar dados de demonstração",
     "clearing": "Limpando…",
