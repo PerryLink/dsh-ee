@@ -111,8 +111,8 @@ func (s *Server) routes() []route {
 		pub("POST /api/auth/feishu/card", s.handleFeishuCard),
 		pub("POST /api/auth/feishu/event", s.handleFeishuChatEvent),
 		prmt("GET /api/me/feishu-chat", s.handleFeishuChatStatus),
-		prmt("GET /api/me/feishu-chat/next", s.handleFeishuChatNext),
-		prmt("POST /api/me/feishu-chat/{id}/reply", s.handleFeishuChatReply),
+		agt("GET /api/me/feishu-chat/next", s.handleFeishuChatNext),
+		agt("POST /api/me/feishu-chat/{id}/reply", s.handleFeishuChatReply),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
 		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
 		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),

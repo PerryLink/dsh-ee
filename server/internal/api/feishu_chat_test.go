@@ -84,6 +84,17 @@ func TestFeishuBotChat(t *testing.T) {
 	u, bearer := mk("chat-user")
 	_, other := mk("chat-other")
 	c := newClient(t, ts.URL)
+	for _, scope := range []string{"models", "connections"} {
+		token := "ee_at_" + secret.Token()
+		if err := st.CreateAccessToken(ctx, &store.AccessToken{UserID: u.ID, Name: scope, Prefix: token[:12], Scopes: []string{scope}, CreatedBy: u.ID}, secret.Hash(token)); err != nil {
+			t.Fatal(err)
+		}
+		restricted := map[string]string{"Authorization": "Bearer " + token}
+		code, body = c.do("GET", "/api/me/feishu-chat/next", nil, restricted)
+		expect(t, scope+" cannot receive chat", code, 403, body)
+		code, body = c.do("POST", "/api/me/feishu-chat/1/reply", map[string]string{"text": "restricted reply"}, restricted)
+		expect(t, scope+" cannot reply", code, 403, body)
+	}
 	event := func(id, openID, kind string) map[string]any {
 		return map[string]any{"schema": "2.0", "header": map[string]any{"token": feishuTestToken, "app_id": "dsh-ee", "event_type": "im.message.receive_v1"}, "event": map[string]any{"sender": map[string]any{"sender_id": map[string]string{"open_id": openID}}, "message": map[string]string{"message_id": id, "chat_id": "oc-chat", "chat_type": "p2p", "message_type": kind, "content": `{"text":"hello"}`}}}
 	}
