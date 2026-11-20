@@ -87,6 +87,7 @@ export default {
     desc: "Sync directory fields; enabling authoritative sync overwrites manual values.",
     source: "Source",
     sourceFeishu: "Feishu",
+    sourceDingTalk: "DingTalk",
     attr: "Directory attribute",
     attrHint: "LDAP: attribute name (title, employeeType…); Feishu: job_title, city, employee_no, employee_type or a custom field id (C-…)",
     field: "User field",

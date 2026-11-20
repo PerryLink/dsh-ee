@@ -114,6 +114,7 @@ export default {
     "desc": "Sincroniza campos del directorio; la sincronización autoritativa sobrescribe valores manuales.",
     "source": "Origen",
     "sourceFeishu": "Feishu",
+    "sourceDingTalk": "DingTalk",
     "attr": "Atributo del directorio",
     "attrHint": "En LDAP, el nombre del atributo (title, employeeType…); en Feishu, job_title, city, employee_no, employee_type, o el id de un campo personalizado (C-…)",
     "field": "Campo de usuario",

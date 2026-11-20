@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useLabels } from "../lib/labels";
 import { PageLink, useMenus } from "../lib/menus";
 import { useStore } from "../lib/store";
+import { useConfirm } from "../lib/confirm";
 import type { PageKey } from "../lib/page-meta";
 import { LANGUAGE_OPTIONS, isLanguageCode, setUiLanguage, type LanguageCode } from "../lib/languages";
 
@@ -59,6 +60,53 @@ function DingTalkConnection() {
       <p className="mt-1 text-sm text-neutral-600">
         {t(!data.enabled ? "oidcAdmin.dingTalkDisabled" : data.online ? "oidcAdmin.dingTalkOnline" : "oidcAdmin.dingTalkOffline")}
       </p>
+    </Card>
+  );
+}
+
+/** 飞书 / 钉钉身份绑定：两个登录入口都开着时，员工可以把另一个身份绑到当前账号上，之后用哪边登录都是这个账号。 */
+function IdentityBindings() {
+  const { t } = useTranslation();
+  const { notify } = useStore();
+  const { data, reload } = useApi(api.myIdentities);
+  const unlink = useAction();
+  const confirm = useConfirm();
+  // 绑定流程从飞书 / 钉钉回来时，结果带在地址上
+  const params = new URLSearchParams(window.location.search);
+  const failed = params.get("identity_error");
+  const bound = params.get("identity_bound");
+  if (!data || data.identities.length === 0) return null;
+  const onUnlink = async (provider: string, name: string) => {
+    if (!(await confirm({ kind: "unbind", description: t("oidcAdmin.identity.unlinkConfirm", { name }) }))) return;
+    const r = await unlink.run(() => api.unlinkIdentity(provider));
+    if (!r.ok) return notify(r.error);
+    notify(t("oidcAdmin.identity.unlinked", { name }));
+    reload();
+  };
+  return (
+    <Card className="mt-4 p-5" data-identity-bindings="">
+      <h2 className="text-[15px] font-semibold leading-6 text-neutral-900">{t("oidcAdmin.identity.title")}</h2>
+      <p className="mt-1 text-sm text-neutral-600">{t("oidcAdmin.identity.desc")}</p>
+      {bound && <p className="mt-2 text-sm text-emerald-700" data-identity-bound="">{t("oidcAdmin.identity.boundNow")}</p>}
+      <ErrorNote>{failed}</ErrorNote>
+      <div className="mt-3 space-y-2">
+        {data.identities.map((it) => (
+          <div key={it.provider} className="flex flex-wrap items-center gap-3 text-sm" data-identity={it.provider}>
+            <span className="w-20 shrink-0 font-medium text-neutral-900">{it.name}</span>
+            <span className="min-w-0 flex-1 text-neutral-600">{t(it.bound ? `oidcAdmin.identity.via.${it.via ?? "explicit"}` : "oidcAdmin.identity.unbound")}</span>
+            {it.canBind && (
+              <a href={`/api/auth/oidc/start?provider=${it.provider}&bind=1`} className="rounded-md border border-neutral-200 px-2.5 py-1 text-sm text-neutral-700 transition-colors hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-900 dark:border-white/10">
+                {t("oidcAdmin.identity.bind", { name: it.name })}
+              </a>
+            )}
+            {it.canUnlink && (
+              <Button size="sm" variant="secondary" disabled={unlink.busy} onClick={() => void onUnlink(it.provider, it.name)}>
+                {t("oidcAdmin.identity.unlink")}
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }
@@ -196,6 +244,7 @@ export default function Account() {
         </div>
       </Card>
 
+      <IdentityBindings />
       <DingTalkConnection />
       <Shortcuts />
 

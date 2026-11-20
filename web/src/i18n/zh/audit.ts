@@ -73,7 +73,7 @@ export default {
       connection: { tool: "设置连接工具", request: "申请使用企业连接", credential_set: "填写连接凭据", credential_delete: "删除连接凭据", credential_revoke: "收回员工的连接凭据", ee_jwt_rotate: "轮换 ee_jwt 签名密钥", shared_credential_set: "保存命名共享凭据", shared_credential_delete: "删除命名共享凭据" },
       extension: { install: "安装或升级扩展", rollback: "回滚扩展版本" },
       connect: { publish: "发布接入插件" },
-      oidc: { update: "修改 OIDC 配置", bind: "绑定企业身份", feishu_sync: "飞书组织同步" },
+      oidc: { update: "修改 OIDC 配置", bind: "绑定企业身份", feishu_sync: "飞书组织同步", dingtalk_sync: "钉钉组织同步", identity_link: "关联飞书 / 钉钉身份", identity_unlink: "解除飞书 / 钉钉身份关联" },
       access: { request: "申请访问" },
       app: { export: "导出应用", import: "导入应用" },
       demo: { clear: "清空演示数据", import: "导入演示数据" },

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { copyText } from "../../lib/clipboard";
 import { Check, Copy, Plus, X } from "lucide-react";
-import { api, type OidcConfig, type OidcTestResult, type OidcView } from "../../lib/api";
+import { api, type FeishuSyncResult, type OidcConfig, type OidcSlot, type OidcTestResult, type OidcView } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useStore } from "../../lib/store";
 import { useAction, useApi } from "../../lib/use-api";
@@ -29,13 +29,39 @@ function SubHeading({ children }: { children: ReactNode }) {
   return <h3 className="border-t border-neutral-100 pt-5 text-sm font-semibold text-neutral-900">{children}</h3>;
 }
 
-/** 系统设置里的企业统一登录（OIDC）。Client secret 只写不读。 */
-export default function OidcSettings() {
+/** 最近一次组织同步的结果；飞书和钉钉共用，ns 是各自的文案前缀。 */
+function SyncReport({ last, ns }: { last: FeishuSyncResult; ns: "oidcAdmin.feishu" | "oidcAdmin.dingTalkSync" }) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1 rounded-md border border-neutral-200 p-3 text-xs text-neutral-600" data-sync-report="">
+      <div>{t(`${ns}.lastAt`, { time: last.at })}</div>
+      {last.ok ? (
+        <div>{t(`${ns}.lastResult`, { remote: last.remote, created: last.created, reconciled: last.reconciled, disabled: last.disabled.length, conflicts: last.conflicts.length })}</div>
+      ) : (
+        <div className="text-red-700">{last.error}</div>
+      )}
+      {(last.linked ?? 0) > 0 && <div>{t("oidcAdmin.secondary.syncLinked", { count: last.linked })}</div>}
+      {last.conflicts.length > 0 && <div className="break-all">{t(`${ns}.conflicts`, { users: last.conflicts.join("、") })}</div>}
+      {last.disabled.length > 0 && <div className="break-all">{t(`${ns}.disabled`, { users: last.disabled.join("、") })}</div>}
+      {(last.unlinked?.length ?? 0) > 0 && <div className="break-all">{t("oidcAdmin.secondary.syncUnlinked", { users: last.unlinked!.join("、") })}</div>}
+      {(last.kept?.length ?? 0) > 0 && <div className="break-all text-amber-700">{t(`${ns}.kept`, { users: last.kept!.join("、") })}</div>}
+      {last.skipped.length > 0 && <div className="break-all">{t(`${ns}.skipped`, { count: last.skipped.length })}</div>}
+    </div>
+  );
+}
+
+/**
+ * 系统设置里的企业统一登录（OIDC）。Client secret 只写不读。
+ * slot="secondary" 是第二登录入口：只能选主登录方式之外的那个（only：飞书或钉钉），只管登录、组织同步和身份关联。
+ * onSaved 在保存成功后回调，登录方式页据此决定要不要显示第二登录入口。
+ */
+export default function OidcSettings({ slot = "primary", only, onSaved }: { slot?: OidcSlot; only?: "feishu" | "dingtalk"; onSaved?: (v: OidcView) => void }) {
+  const secondary = slot === "secondary";
   const { t } = useTranslation();
   const { can } = useAuth();
   const { notify } = useStore();
   const L = useLabels();
-  const { data, error, loading, reload } = useApi(api.oidc);
+  const { data, error, loading, reload } = useApi(() => api.oidc(slot));
   const canRoles = can("roles.manage");
   const roles = useApi(() => (canRoles || can("users.manage") ? api.roles() : Promise.resolve(null)));
   const [saved, setSaved] = useState<OidcView | null>(null);
@@ -46,6 +72,7 @@ export default function OidcSettings() {
   const save = useAction();
   const tester = useAction();
   const syncStatus = useApi(api.feishuSyncStatus);
+  const dingSyncStatus = useApi(api.dingTalkSyncStatus);
   const synchronize = useAction();
   const workspace = useAction();
   const [workspaceNext, setWorkspaceNext] = useState("/go");
@@ -78,17 +105,18 @@ export default function OidcSettings() {
 
   const onSave = async () => {
     setSaveError(null);
-    const r = await save.run(() => api.saveOidc(input()));
+    const r = await save.run(() => api.saveOidc(input(), slot));
     if (!r.ok) return setSaveError(r.error);
     setSaved(r.value);
     setForm(configOf(r.value));
     setSecret("");
+    onSaved?.(r.value);
     notify(t("oidcAdmin.saved"));
   };
 
   const onTest = async () => {
     setTest(null);
-    const r = await tester.run(() => api.testOidc(input()));
+    const r = await tester.run(() => api.testOidc(input(), slot));
     if (r.ok) setTest(r.value);
     else setTest({ ok: false, error: r.error });
   };
@@ -101,6 +129,15 @@ export default function OidcSettings() {
     notify(t("oidcAdmin.feishu.syncDone", { created: r.value.created, reconciled: r.value.reconciled, disabled: r.value.disabled.length }));
   };
 
+  const onDingTalkSync = async () => {
+    setSaveError(null);
+    const r = await synchronize.run(api.syncDingTalk);
+    if (!r.ok) return setSaveError(r.error);
+    dingSyncStatus.reload();
+    if (!r.value.ok) return setSaveError(r.value.error ?? t("oidcAdmin.dingTalkSync.failed"));
+    notify(t("oidcAdmin.dingTalkSync.syncDone", { created: r.value.created, reconciled: r.value.reconciled, disabled: r.value.disabled.length }));
+  };
+
   const onWorkspace = async () => {
     const r = await workspace.run(() => api.feishuWorkspaceURL(workspaceNext));
     if (!r.ok) return notify(r.error);
@@ -110,18 +147,18 @@ export default function OidcSettings() {
 
   return (
     <div className="space-y-5">
-      <ToggleRow label={t("oidcAdmin.enabled")} desc={t("oidcAdmin.desc")} checked={form.enabled} onChange={(v) => set({ enabled: v })} />
+      <ToggleRow label={t(secondary ? "oidcAdmin.secondary.enabled" : "oidcAdmin.enabled")} desc={t(secondary ? "oidcAdmin.secondary.enabledDesc" : "oidcAdmin.desc")} checked={form.enabled} onChange={(v) => set({ enabled: v })} />
 
       <div className={cx("space-y-5", off && "opacity-60")}>
         <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-600">
           <span>{t("oidcAdmin.preset")}</span>
-          {(Object.keys(PRESETS) as OidcConfig["preset"][]).map((k) => (
+          {(Object.keys(PRESETS) as OidcConfig["preset"][]).filter((k) => !secondary || k === only).map((k) => (
             <Button key={k} size="sm" variant={form.preset === k ? "primary" : "secondary"} onClick={() => set(k === "feishu" || k === "dingtalk" ? { ...PRESETS[k], name: t(`oidcAdmin.presets.${k}`) } : PRESETS[k])}>
               {t(`oidcAdmin.presets.${k}`)}
             </Button>
           ))}
         </div>
-        <p className="text-xs text-neutral-500">{t(`oidcAdmin.presetHints.${form.preset || "custom"}`)}</p>
+        {(form.preset || !secondary) && <p className="text-xs text-neutral-500">{t(`oidcAdmin.presetHints.${form.preset || "custom"}`)}</p>}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t("oidcAdmin.name")}>
@@ -177,10 +214,11 @@ export default function OidcSettings() {
             </Field>
           ))}
         </div>
+        </>}
 
         <div>
           <div className="text-sm font-medium text-neutral-800">{t("oidcAdmin.mappings")}</div>
-          <p className="mt-0.5 mb-3 text-xs text-neutral-500">{t("oidcAdmin.mappingsDesc")}</p>
+          <p className="mt-0.5 mb-3 text-xs text-neutral-500">{t(dingTalk ? "oidcAdmin.mappingsDescDingTalk" : "oidcAdmin.mappingsDesc")}</p>
           {form.roleMappings.length === 0 && <p className="mb-3 text-sm text-neutral-600">{t("ldapAdmin.noMappings")}</p>}
           <div className="space-y-2">
             {form.roleMappings.map((m, i) => (
@@ -222,10 +260,25 @@ export default function OidcSettings() {
           )}
         </div>
 
-        </>}
         <ToggleRow label={t("oidcAdmin.autoCreate")} desc={t("oidcAdmin.autoCreateDesc")} checked={form.autoCreate} onChange={(v) => set({ autoCreate: v })} />
         <ToggleRow label={t("oidcAdmin.requireEmailVerified")} desc={t("oidcAdmin.requireEmailVerifiedDesc")} checked={form.requireEmailVerified} onChange={(v) => set({ requireEmailVerified: v })} />
-        {dingTalk && <ToggleRow label={t("oidcAdmin.dingTalkBot")} desc={t("oidcAdmin.dingTalkBotDesc")} checked={!!form.dingTalkBot} onChange={(v) => set({ dingTalkBot: v })} />}
+        {secondary && <ToggleRow label={t("oidcAdmin.secondary.linkByContact")} desc={t("oidcAdmin.secondary.linkByContactDesc")} checked={!!form.linkByContact} onChange={(v) => set({ linkByContact: v })} />}
+        {dingTalk && !secondary && <ToggleRow label={t("oidcAdmin.dingTalkBot")} desc={t("oidcAdmin.dingTalkBotDesc")} checked={!!form.dingTalkBot} onChange={(v) => set({ dingTalkBot: v })} />}
+        {dingTalk && (
+          <section className="space-y-4" data-dingtalk-sync>
+            <SubHeading>{t("oidcAdmin.dingTalkSync.title")}</SubHeading>
+            <p className="text-xs leading-5 text-neutral-500">{t("oidcAdmin.dingTalkSync.desc")}</p>
+            <ToggleRow label={t("oidcAdmin.dingTalkSync.autoSync")} desc={t("oidcAdmin.dingTalkSync.autoSyncDesc")} checked={!!form.dingTalkSync} onChange={(v) => set({ dingTalkSync: v })} />
+            <ToggleRow label={t("oidcAdmin.dingTalkSync.syncDisable")} desc={t("oidcAdmin.dingTalkSync.syncDisableDesc")} checked={!!form.dingTalkSyncDisable} onChange={(v) => set({ dingTalkSyncDisable: v })} />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" variant="secondary" disabled={dirty || synchronize.busy || !form.enabled} onClick={() => void onDingTalkSync()}>
+                {synchronize.busy ? t("oidcAdmin.dingTalkSync.syncing") : t("oidcAdmin.dingTalkSync.syncNow")}
+              </Button>
+              {dirty && <span className="text-sm text-amber-700">{t("oidcAdmin.dingTalkSync.saveFirst")}</span>}
+            </div>
+            {dingSyncStatus.data?.last && <SyncReport last={dingSyncStatus.data.last} ns="oidcAdmin.dingTalkSync" />}
+          </section>
+        )}
         {form.preset === "feishu" && (
           <section className="space-y-4" data-feishu-sync>
             <SubHeading>{t("oidcAdmin.feishu.title")}</SubHeading>
@@ -235,6 +288,7 @@ export default function OidcSettings() {
             </Field>
             <ToggleRow label={t("oidcAdmin.feishu.autoSync")} desc={t("oidcAdmin.feishu.autoSyncDesc")} checked={!!form.feishuSync} onChange={(v) => set({ feishuSync: v })} />
             <ToggleRow label={t("oidcAdmin.feishu.syncDisable")} desc={t("oidcAdmin.feishu.syncDisableDesc")} checked={!!form.feishuSyncDisable} onChange={(v) => set({ feishuSyncDisable: v })} />
+            {!secondary && <>
             <ToggleRow label={t("oidcAdmin.feishu.notify")} desc={t("oidcAdmin.feishu.notifyDesc")} checked={!!form.feishuNotify} onChange={(v) => set({ feishuNotify: v })} />
             <ToggleRow label={t("oidcAdmin.feishu.notifyActions")} desc={t("oidcAdmin.feishu.notifyActionsDesc")} checked={!!form.feishuNotifyActions} onChange={(v) => set({ feishuNotifyActions: v })} />
             <ToggleRow label={t("oidcAdmin.feishu.bot")} desc={t("oidcAdmin.feishu.botDesc")} checked={!!form.feishuBot} onChange={(v) => set({ feishuBot: v })} />
@@ -264,26 +318,14 @@ export default function OidcSettings() {
               <CopyBox text={`${window.location.origin}/api/auth/feishu/card`} wrap />
             </Field>
             <p className="text-xs leading-5 text-neutral-500">{t("oidcAdmin.feishu.workbookNote")}</p>
+            </>}
             <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="secondary" disabled={dirty || synchronize.busy || !form.feishuApiBase} onClick={() => void onSync()}>
                 {synchronize.busy ? t("oidcAdmin.feishu.syncing") : t("oidcAdmin.feishu.syncNow")}
               </Button>
               {dirty && <span className="text-sm text-amber-700">{t("oidcAdmin.feishu.saveFirst")}</span>}
             </div>
-            {syncStatus.data?.last && (
-              <div className="space-y-1 rounded-md border border-neutral-200 p-3 text-xs text-neutral-600">
-                <div>{t("oidcAdmin.feishu.lastAt", { time: syncStatus.data.last.at })}</div>
-                {syncStatus.data.last.ok ? (
-                  <div>{t("oidcAdmin.feishu.lastResult", { remote: syncStatus.data.last.remote, created: syncStatus.data.last.created, reconciled: syncStatus.data.last.reconciled, disabled: syncStatus.data.last.disabled.length, conflicts: syncStatus.data.last.conflicts.length })}</div>
-                ) : (
-                  <div className="text-red-700">{syncStatus.data.last.error}</div>
-                )}
-                {syncStatus.data.last.conflicts.length > 0 && <div className="break-all">{t("oidcAdmin.feishu.conflicts", { users: syncStatus.data.last.conflicts.join("、") })}</div>}
-                {syncStatus.data.last.disabled.length > 0 && <div className="break-all">{t("oidcAdmin.feishu.disabled", { users: syncStatus.data.last.disabled.join("、") })}</div>}
-                {(syncStatus.data.last.kept?.length ?? 0) > 0 && <div className="break-all text-amber-700">{t("oidcAdmin.feishu.kept", { users: syncStatus.data.last.kept!.join("、") })}</div>}
-                {syncStatus.data.last.skipped.length > 0 && <div className="break-all">{t("oidcAdmin.feishu.skipped", { count: syncStatus.data.last.skipped.length })}</div>}
-              </div>
-            )}
+            {syncStatus.data?.last && <SyncReport last={syncStatus.data.last} ns="oidcAdmin.feishu" />}
           </section>
         )}
       </div>

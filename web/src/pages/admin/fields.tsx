@@ -451,6 +451,7 @@ function SyncTab({ fields }: { fields: FieldItem[] }) {
                 <select className={inputCls} value={m.source} onChange={(e) => set(i, { source: e.target.value as FieldSyncMapping["source"] })}>
                   <option value="ldap">LDAP</option>
                   <option value="feishu">{t("fieldSync.sourceFeishu")}</option>
+                  <option value="dingtalk">{t("fieldSync.sourceDingTalk")}</option>
                 </select>
               </Field>
               <Field label={t("fieldSync.attr")}>

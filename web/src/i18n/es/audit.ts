@@ -169,7 +169,7 @@ export default {
       "oidc": {
         "update": "Cambió la configuración OIDC",
         "bind": "Vinculó una identidad SSO",
-        "feishu_sync": "Sincronizó la organización de Feishu"
+        "feishu_sync": "Sincronizó la organización de Feishu", "dingtalk_sync": "Sincronizó la organización de DingTalk", "identity_link": "Vinculó una identidad de Feishu / DingTalk", "identity_unlink": "Desvinculó una identidad de Feishu / DingTalk"
       },
       "access": {
         "request": "Solicitó acceso"

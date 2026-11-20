@@ -38,6 +38,8 @@ export default function Login() {
   const methods = useApi(api.authMethods);
   const ldap = !!methods.data?.ldap;
   const sso = methods.data?.oidc ?? null;
+  // 飞书和钉钉同时开着时的第二个登录入口
+  const sso2 = methods.data?.oidc_secondary ?? null;
   const demo = methods.data?.demo ?? null;
   // 企业统一登录失败时，回调把原因放在 oidc_error 里带回来
   const ssoError = params.get("oidc_error");
@@ -184,6 +186,11 @@ export default function Login() {
             <a href={`/api/auth/oidc/start?next=${encodeURIComponent(next)}`} className={buttonCls("primary", "lg", "mt-6 w-full")}>
               {t("ssoLogin.button", { name: sso.name })}
             </a>
+            {sso2 && (
+              <a href={`/api/auth/oidc/start?provider=${sso2.provider}&next=${encodeURIComponent(next)}`} className={buttonCls("secondary", "lg", "mt-3 w-full")} data-sso-secondary="">
+                {t("ssoLogin.button", { name: sso2.name })}
+              </a>
+            )}
             <div className="mt-5 flex items-center gap-3 text-xs text-neutral-500">
               <span className="h-px flex-1 bg-neutral-200" />
               {t("ssoLogin.or")}
