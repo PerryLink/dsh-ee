@@ -30,7 +30,7 @@ export default {
     "apiKeyKeep": "Actualmente {{hint}}; déjalo vacío para mantenerla",
     "apiKeyNew": "Se almacena cifrada y nunca se vuelve a mostrar",
     "priority": "Prioridad",
-    "priorityHint": "Cuando varios upstreams sirven el mismo modelo público, se prueban primero los números más bajos y los fallos pasan al siguiente",
+    "priorityHint": "Para el mismo modelo, menor valor primero; si falla, cambia de proveedor.",
     "addModels": "Añadir también modelos",
     "addProvider": "Añadir upstream",
     "unchecked": "Sin comprobar",
@@ -72,10 +72,10 @@ export default {
     "reasoning": "Reasoning",
     "reasoningOn": "Supported",
     "reasoningEfforts": "Reasoning efforts",
-    "reasoningEffortsHint": "Comma-separated reasoning_effort values, e.g. low,high,max; leave empty for the upstream default. Used only for the /v1/models capability declaration; the gateway always forwards requests unchanged",
+    "reasoningEffortsHint": "Separados por comas; vacío usa valores del proveedor. Solo declara capacidades.",
     "reasoningEffortsPlaceholder": "e.g. low,high,max",
     "colInput": "Inputs",
-    "inputModalitiesHint": "Declare what the model accepts (text is always included). Used only for capability discovery and the dsh-connect config; the gateway does not validate or convert requests against it",
+    "inputModalitiesHint": "Siempre incluye text; solo declaración, sin validar ni convertir solicitudes.",
     "modalities": {
       "text": "Text",
       "image": "Image",
@@ -89,8 +89,8 @@ export default {
     "colModel": "Modelo",
     "colRoutes": "Rutas (probadas en orden)",
     "title": "Acceso a modelos",
-    "desc": "Configura los servicios de modelos que tiene tu empresa con proveedores upstream. Los empleados llaman a dsh-ee con su propia clave; dsh-ee reenvía con la clave de la empresa, que los empleados nunca ven.",
-    "empty": "Aún no hay upstreams. Los empleados podrán llamar a los modelos cuando añadas un servicio compatible con OpenAI, como DeepSeek o Qwen."
+    "desc": "Configura servicios de modelos sin exponer claves de empresa al personal.",
+    "empty": "Añade un proveedor compatible con OpenAI para el personal."
   },
   "quotas": {
     "invalid": "La cuota debe ser 0 o un número positivo; déjala vacía para no poner límite",

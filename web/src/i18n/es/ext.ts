@@ -46,7 +46,7 @@ export default {
   },
   "fieldsAdmin": {
     "title": "Campos y reglas de acceso",
-    "desc": "Añada campos a documentos, bases de conocimiento y usuarios, y decida según esos campos quién puede ver cada documento. Las reglas solo endurecen los permisos que ya tiene la base de conocimiento.",
+    "desc": "Configura campos y reglas para restringir el acceso existente.",
     "tabs": {
       "fields": "Campos",
       "rules": "Reglas de acceso",
@@ -77,7 +77,7 @@ export default {
     "options": "Opciones",
     "optionsHint": "Una por línea; los campos de nivel se escriben de menor a mayor",
     "access": "Usar para control de acceso",
-    "accessHint": "Si se activa, solo quienes tengan el permiso «Gestionar campos y reglas de acceso» podrán cambiar el valor de este campo, y los cambios se registran en auditoría",
+    "accessHint": "Solo administradores de campos pueden editar; se auditan los cambios.",
     "source": "De la extensión {{source}}",
     "values": "{{count}} objetos con valor",
     "usedBy": "Usado por la regla «{{rules}}»",
@@ -106,12 +106,12 @@ export default {
       "@username": "Nombre de usuario",
       "@roles": "Roles del usuario"
     },
-    "dualNotice": "Aprobación de dos personas activada: los cambios de campos, reglas y restricciones de administración deben pasar por una solicitud de cambio y solo entran en vigor tras la aprobación de otro administrador.",
+    "dualNotice": "Aprobación doble activa; los cambios requieren otro administrador.",
     "saved": "Guardado",
     "cliHint": "También puede modificar toda la configuración como archivo: dsh-ee config export / plan / test / apply (requiere un token con el scope config)."
   },
   "fieldSync": {
-    "desc": "Sincronice atributos de LDAP o del directorio de Feishu como campos de usuario: LDAP se sincroniza cuando el empleado inicia sesión y Feishu durante la sincronización de la organización. Cuando alguien cambia de puesto, cambia también el alcance de lo que puede ver. Los valores modificados a mano no se sobrescriben salvo que se marque «La sincronización prevalece».",
+    "desc": "Sincroniza campos del directorio; la sincronización autoritativa sobrescribe valores manuales.",
     "source": "Origen",
     "sourceFeishu": "Feishu",
     "attr": "Atributo del directorio",
@@ -133,7 +133,7 @@ export default {
     "noSelfGrant": "No puede concederse permisos a uno mismo",
     "noSelfGrantDesc": "Los administradores no pueden cambiar sus propios roles y atributos.",
     "exclusive": "Roles mutuamente excluyentes",
-    "exclusiveDesc": "Una línea por grupo de códigos de rol, separados por comas; los roles de un mismo grupo no pueden estar en la misma persona a la vez.",
+    "exclusiveDesc": "Un grupo de códigos separado por comas por línea; sus roles son incompatibles.",
     "dual": "Aprobación de dos personas",
     "dualDesc": "Estas operaciones requieren la aprobación de otro administrador; quien aprueba no puede ser quien las inicia.",
     "dualRoles": "Conceder roles con permisos de administración",

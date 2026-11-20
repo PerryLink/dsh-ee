@@ -121,7 +121,7 @@ export default {
     approvedMsg: "Approved: {{name}} is published",
     rejectedMsg: "Rejected: {{name}}",
     title: "Review queue",
-    desc: "Internal plugins submitted by employees and new upstream versions land here. Anything with warnings from the automatic checks needs a human to confirm.",
+    desc: "Review plugins and versions; check warnings require manual confirmation.",
     empty: "The queue is empty",
     internalSubmission: "Internal",
     upstreamVersion: "Upstream update",

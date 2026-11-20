@@ -122,7 +122,7 @@ export default {
     "approvedMsg": "Aprovado: {{name}} foi publicado",
     "rejectedMsg": "Rejeitado: {{name}}",
     "title": "Fila de revisão",
-    "desc": "Plugins internos enviados por funcionários e novas versões da origem chegam aqui. Itens com avisos das verificações automáticas precisam de confirmação humana antes de serem aprovados.",
+    "desc": "Revise plugins e versões; avisos exigem confirmação manual.",
     "empty": "A fila está vazia",
     "internalSubmission": "Envio interno",
     "upstreamVersion": "Atualização da origem",

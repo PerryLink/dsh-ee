@@ -62,7 +62,7 @@ export default {
     agent: {
       intro: "विशेषज्ञ का वर्णन DSH को भेजें; योजना की पुष्टि पर केवल आपके लिए विशेषज्ञ बनेगा।",
       describeTitle: "1. Describe the expert you want",
-      describePlaceholder: "e.g. A contract review expert that helps legal and procurement check payment terms, liability and confidentiality clauses in purchase contracts, listing risks and suggested edits",
+      describePlaceholder: "जैसे: खरीद अनुबंध की समीक्षा करके जोखिम और सुधार बताएँ",
       example: {
         contract: { label: "Contract review", text: "Contract review expert: helps procurement and legal check purchase contracts, focusing on payment terms, liability and confidentiality; lists risks as high/medium/low with suggested edits." },
         tax: { label: "Tax expert", text: "Tax expert: answers questions on VAT invoices, input tax deductions and personal income tax deductions, citing company finance policy; refers to Finance when unsure." },
@@ -88,15 +88,15 @@ export default {
     },
     admin: {
       title: "Experts & connectors policy",
-      desc: "Categorize experts, skills and connectors, pick featured items, block capabilities for people or departments, and look up what any employee can finally use. Changes reach employees' DSH within a minute.",
-      agentHint: "You can also ask the AI in DSH: with admin mode on, say “put the contract expert in Legal and feature it”, “block the ERP connector for contractors”, or “what experts can Zhang San use?”.",
+      desc: "श्रेणी, विशेष चयन और ब्लॉक नीति प्रबंधित करें; कर्मचारी ऐक्सेस देखें।",
+      agentHint: "या DSH में एडमिन मोड चालू करके AI से कॉन्फ़िगर कराएँ।",
       reload: "Refresh",
       tabs: { categories: "Categories", catalog: "Featured & categories", blocks: "Block policies", effective: "Access lookup" },
       tabHints: {
-        categories: "Categories are grouped by the three tabs of the DSH panel. A category has its own availability: people outside it don't see the capabilities in it. Categories only narrow, never widen, a capability's own availability.",
-        catalog: "Pick a category and featured flag for each capability. Featured items come first in the DSH panel and on the apps page; up to 20 per group.",
-        blocks: "People in scope can't use these capabilities even if they are within the capability's availability — for handovers, contractor accounts or temporary suspensions.",
-        effective: "Pick an employee to see the final result for each capability and which step stopped it: publish state → availability → category → block policies → enabled.",
+        categories: "श्रेणी स्कोप केवल ऐक्सेस सीमित करता है, बढ़ाता नहीं।",
+        catalog: "श्रेणी और विशेष चयन तय करें; हर समूह में अधिकतम 20, पहले दिखेंगे।",
+        blocks: "ब्लॉक नीति क्षमता के ऐक्सेस स्कोप से ऊपर है।",
+        effective: "अंतिम ऐक्सेस और रोकने के कारण देखने के लिए कर्मचारी चुनें।",
       },
       group: "Group",
       categoryName: "Category name",

@@ -102,7 +102,7 @@ export default {
     agent: {
       intro: "Descreva o especialista e envie o prompt ao DSH; confirme o plano para criá-lo só para você.",
       describeTitle: "1. Describe the expert you want",
-      describePlaceholder: "e.g. A contract review expert that helps legal and procurement check payment terms, liability and confidentiality clauses in purchase contracts, listing risks and suggested edits",
+      describePlaceholder: "Exemplo: revisar contratos de compra e sugerir correções de riscos",
       example: {
         contract: {
           label: "Contract review",
@@ -140,8 +140,8 @@ export default {
     },
     admin: {
       title: "Experts & connectors policy",
-      desc: "Categorize experts, skills and connectors, pick featured items, block capabilities for people or departments, and look up what any employee can finally use. Changes reach employees' DSH within a minute.",
-      agentHint: "You can also ask the AI in DSH: with admin mode on, say “put the contract expert in Legal and feature it”, “block the ERP connector for contractors”, or “what experts can Zhang San use?”.",
+      desc: "Gerencie categorias, destaques e bloqueios; consulte o acesso dos funcionários.",
+      agentHint: "Ou ative o modo administrador no DSH e peça à IA para configurar.",
       reload: "Refresh",
       tabs: {
         categories: "Categories",
@@ -150,10 +150,10 @@ export default {
         effective: "Access lookup",
       },
       tabHints: {
-        categories: "Categories are grouped by the three tabs of the DSH panel. A category has its own availability: people outside it don't see the capabilities in it. Categories only narrow, never widen, a capability's own availability.",
-        catalog: "Pick a category and featured flag for each capability. Featured items come first in the DSH panel and on the apps page; up to 20 per group.",
-        blocks: "People in scope can't use these capabilities even if they are within the capability's availability — for handovers, contractor accounts or temporary suspensions.",
-        effective: "Pick an employee to see the final result for each capability and which step stopped it: publish state → availability → category → block policies → enabled.",
+        categories: "Escopos de categoria só restringem permissões, nunca ampliam.",
+        catalog: "Categorize e destaque até 20 por grupo, exibidos primeiro.",
+        blocks: "Bloqueios prevalecem sobre o escopo de acesso.",
+        effective: "Escolha um funcionário para ver o acesso efetivo e motivos de bloqueio.",
       },
       group: "Group",
       categoryName: "Category name",

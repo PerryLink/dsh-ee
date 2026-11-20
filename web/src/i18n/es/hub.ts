@@ -191,7 +191,7 @@ export default {
     "dataTab": "Datos",
     "back": "Volver a las aplicaciones de empresa",
     "manage": "Gestionar",
-    "previewOnly": "Esta aplicación aún no tiene versión web: solo el autor y los administradores pueden ver esta vista previa. Cuando se active «También disponible en la web» en el editor, podrá abrirla cualquiera que pueda usar la aplicación.",
+    "previewOnly": "Acceso web desactivado; solo el autor y administradores ven la vista previa.",
     "noPanel": "El banco de trabajo de esta aplicación no tiene paneles que se puedan mostrar en la web.",
     "board": "Panel de IA",
     "boardNote": "El panel de IA solo se muestra en DSH: abra esta aplicación en DSH y la IA escribirá los resultados aquí.",
@@ -204,7 +204,7 @@ export default {
     "open": "Abrir la versión web",
     "short": "Versión web",
     "toggle": "También disponible en la web",
-    "toggleDesc": "Quienes puedan usar esta aplicación podrán abrir su banco de trabajo en el navegador (incluido el móvil) en /a/identificador. La web no tiene IA: los formularios enviados a la tabla de datos se guardan directamente y los botones que se envían a la IA indican que hay que continuar en DSH."
+    "toggleDesc": "Abre el panel en navegadores; los formularios guardan directamente y la IA continúa en DSH."
   },
   "appData": {
     "label": "Tabla de datos (opcional)",

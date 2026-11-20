@@ -168,7 +168,7 @@ export default {
     dataTab: "数据",
     back: "返回企业应用",
     manage: "管理",
-    previewOnly: "这个应用还没有开放网页版：只有作者和管理员能看到这个预览。在编辑器里打开「在网页上也能用」后，能用这个应用的人都能打开。",
+    previewOnly: "网页版未开放，仅作者和管理员可预览。",
     noPanel: "这个应用的工作台里没有能在网页上显示的面板。",
     board: "AI 看板",
     boardNote: "AI 看板只在 DSH 里显示：在 DSH 里打开这个应用，AI 会把结果写在这里。",
@@ -181,7 +181,7 @@ export default {
     open: "打开网页版",
     short: "网页版",
     toggle: "在网页上也能用",
-    toggleDesc: "能用这个应用的人可以在浏览器（含手机）里打开它的工作台，地址是 /a/标识。网页上没有 AI：表单提交到数据表会直接保存，发给 AI 的按钮会提示到 DSH 里继续。",
+    toggleDesc: "在浏览器开放工作台；表单直接保存，AI 操作须回 DSH。",
   },
   appData: {
     label: "数据表（可选）",

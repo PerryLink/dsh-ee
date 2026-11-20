@@ -122,7 +122,7 @@ export default {
     "approvedMsg": "Aprobado: {{name}} está publicado",
     "rejectedMsg": "Rechazado: {{name}}",
     "title": "Cola de revisión",
-    "desc": "Aquí llegan los plugins internos enviados por los empleados y las nuevas versiones de origen. Todo lo que tenga advertencias de las comprobaciones automáticas requiere confirmación humana.",
+    "desc": "Revisa plugins y versiones; las advertencias requieren confirmación manual.",
     "empty": "La cola está vacía",
     "internalSubmission": "Interno",
     "upstreamVersion": "Actualización de origen",

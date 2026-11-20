@@ -119,7 +119,7 @@ export default {
     approvedMsg: "已通过：{{name}} 已上架",
     rejectedMsg: "已驳回：{{name}}",
     title: "审核队列",
-    desc: "员工提交的内部插件与上游新版本都在这里。自动检查有警告的需要人工确认后才能通过。",
+    desc: "审核插件与版本；自动检查警告须人工确认。",
     empty: "队列已清空",
     internalSubmission: "内部提交",
     upstreamVersion: "上游新版本",

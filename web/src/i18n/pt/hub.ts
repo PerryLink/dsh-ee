@@ -191,7 +191,7 @@ export default {
     dataTab: "Dados",
     back: "Voltar aos aplicativos",
     manage: "Gerenciar",
-    previewOnly: "Este aplicativo ainda não tem a versão web aberta: somente o autor e os administradores podem ver esta prévia. Ao ativar “Disponível na web” no editor, todos que podem usar o aplicativo poderão abri-lo.",
+    previewOnly: "Acesso web desativado; só o autor e administradores podem visualizar.",
     noPanel: "A área de trabalho deste aplicativo não tem nenhum painel que possa ser exibido na web.",
     board: "Painel de IA",
     boardNote: "O painel de IA só aparece no DSH: abra este aplicativo no DSH e a IA escreverá os resultados aqui.",
@@ -204,7 +204,7 @@ export default {
     open: "Abrir versão web",
     short: "Web",
     toggle: "Disponível na web",
-    toggleDesc: "Quem pode usar este aplicativo pode abrir sua área de trabalho no navegador (inclusive no celular) em /a/identificador. Não há IA na web: formulários que enviam para uma tabela de dados são salvos diretamente; botões que pedem à IA orientam a continuar no DSH.",
+    toggleDesc: "Abra o painel em navegadores; formulários salvam diretamente e ações de IA continuam no DSH.",
   },
   appData: {
     label: "Tabelas de dados (opcional)",

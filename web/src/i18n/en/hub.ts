@@ -170,7 +170,7 @@ export default {
     dataTab: "Data",
     back: "Back to apps",
     manage: "Manage",
-    previewOnly: "This app hasn't enabled its web version yet: only the author and admins can see this preview. Turn on \"Available on the web\" in the editor so everyone who can use the app can open it.",
+    previewOnly: "Web access is disabled; only the author and admins can preview.",
     noPanel: "This app's workbench has no panel that can be shown on the web.",
     board: "AI board",
     boardNote: "The AI board only appears in DSH: open this app in DSH and the AI writes its results here.",
@@ -183,7 +183,7 @@ export default {
     open: "Open web version",
     short: "Web",
     toggle: "Available on the web",
-    toggleDesc: "People who can use this app can open its workbench in a browser (including phones) at /a/slug. There's no AI on the web: forms that submit to a data table save directly; buttons that ask the AI tell you to continue in DSH.",
+    toggleDesc: "Open the workbench in browsers; forms save directly, AI actions continue in DSH.",
   },
   appData: {
     label: "Data tables (optional)",

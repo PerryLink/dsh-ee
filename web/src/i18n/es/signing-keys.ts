@@ -5,7 +5,7 @@ import type { Messages } from "../types";
 export default {
   "signingKeys": {
     "title": "Raíces de confianza para la firma de extensiones",
-    "desc": "Los autores firman el manifiesto de la extensión con su clave privada; dsh-ee solo guarda claves públicas de confianza. Las claves retiradas siguen validando firmas antiguas; las claves revocadas bloquean todas las instalaciones y actualizaciones nuevas.",
+    "desc": "Gestiona claves públicas; retirar conserva la confianza histórica, revocar bloquea instalaciones y actualizaciones.",
     "policy": "Política de verificación",
     "policyOn": "La verificación obligatoria está activada (DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1): no se pueden instalar extensiones sin firmar o con firma no válida.",
     "policyOff": "Actualmente «avisar y permitir»: las extensiones sin firmar o con firma no válida aún se pueden instalar; solo se muestra un aviso en el plan de instalación.",
@@ -13,9 +13,9 @@ export default {
     "policyHint": "La verificación obligatoria se configura en el servidor con la variable de entorno DSH_EE_EXTENSION_REQUIRE_SIGNATURE=1; esta página solo muestra el estado actual.",
     "security": "Una firma solo demuestra quién firmó el manifiesto o el documento de API y que no se modificó; no es una auditoría de seguridad. Revisa igualmente el manifiesto, el endpoint, las credenciales y los permisos antes de instalar.",
     "addTitle": "Añadir una clave pública",
-    "addDesc": "Pega el archivo de clave pública que te dio el autor (PEM: PUBLIC KEY o CERTIFICATE). Nunca pegues una clave privada: dsh-ee no almacena claves privadas.",
+    "addDesc": "Pega PEM PUBLIC KEY o CERTIFICATE, nunca una clave privada.",
     "pem": "PEM de la clave pública",
-    "pemHint": "Solo claves públicas Ed25519 (PUBLIC KEY o CERTIFICATE). El ID de clave se calcula a partir de la clave (los primeros 16 hex de su sha256); no se puede editar: retírala o revócala.",
+    "pemHint": "Solo claves públicas Ed25519; el key id se genera y no se puede cambiar.",
     "note": "Nota (opcional)",
     "noteHint": "Por ejemplo, «Clave de publicación de Acme» o el propietario, hasta 255 caracteres.",
     "notePlaceholder": "Clave de publicación de Acme",
@@ -25,9 +25,9 @@ export default {
     "pemRequired": "Pega primero el PEM de la clave pública",
     "pemPrivate": "Eso es una clave privada: no la pegues. Usa el archivo de clave pública (PUBLIC KEY o CERTIFICATE).",
     "listTitle": "Claves públicas de confianza",
-    "listDesc": "Las claves retiradas y revocadas conservan su registro: las firmas antiguas se pueden seguir comprobando. Una clave revocada no se puede volver a añadir; usa una clave nueva para restaurar la confianza.",
+    "listDesc": "Se conserva el historial; no se pueden volver a añadir claves revocadas. Usa una nueva.",
     "empty": "Aún no hay claves de firma de extensiones de confianza",
-    "emptyHint": "El autor ejecuta dsh-ee extension keygen y extension sign, y luego entrega el PEM de la clave pública a un administrador para añadirlo aquí. DSH_EE_EXTENSION_TRUSTED_KEYS también funciona como fuente de solo lectura.",
+    "emptyHint": "Añade el PEM público del autor o configúralo mediante variables de entorno.",
     "colState": "Estado",
     "colKeyID": "ID de clave",
     "colSource": "Origen",
@@ -51,7 +51,7 @@ export default {
     "retireConfirm": "Tras retirarla, esta clave deja de usarse para firmas nuevas, pero las firmas antiguas se siguen aceptando y el estado de la clave se muestra en los planes de instalación. Una clave retirada o revocada no se puede volver a retirar.",
     "revokeConfirm": "Revocar significa que esta clave deja de ser de confianza: las instalaciones y actualizaciones nuevas se rechazan siempre y las firmas antiguas aparecen como revocadas. Esto no se puede deshacer: usa una clave nueva para restaurar la confianza.",
     "envTitle": "Claves procedentes del entorno (solo lectura)",
-    "envDesc": "Fuente de compatibilidad de solo lectura de DSH_EE_EXTENSION_TRUSTED_KEYS. Para retirar o revocar estas claves, cambia el entorno y reinicia el servidor. El entorno se lee al arrancar; los cambios hechos en la base de datos surten efecto de inmediato.",
+    "envDesc": "Las claves del entorno son de solo lectura y requieren reinicio; los cambios en base se aplican al instante.",
     "envOverride": "También en la base de datos; prevalece el estado de la base de datos",
     "reload": "Actualizar"
   }

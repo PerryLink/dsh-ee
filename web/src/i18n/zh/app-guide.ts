@@ -7,7 +7,7 @@ export default {
     intro: "描述需求，把提示词发给 DSH；确认方案后创建，仅自己可用。",
     describeTitle: "1. 说说你想做个什么应用",
     describeLabel: "想做什么",
-    describePlaceholder: "例如：下周团建报名，收集姓名、场次和忌口，按场次统计人数，我能看到所有人的报名",
+    describePlaceholder: "例如：团建报名，按场次统计人数",
     examples: "试试这些：",
     example: {
       signup: { label: "团建报名", text: "下周团建报名：收集姓名、场次和忌口，按场次统计人数；每人只看到自己的报名，我能看到全部。" },
@@ -137,7 +137,7 @@ export default {
     intro: "描述要接的系统，把提示词发给 DSH；确认配置后创建，再回网页填凭据。",
     describeTitle: "1. 说说要接的系统",
     describeLabel: "接什么、干什么用",
-    describePlaceholder: "例如：公司差旅系统，员工查自己的出差申请、提交报销单、查报销进度；有 OpenAPI 文档可以贴下面",
+    describePlaceholder: "例如：接入差旅系统，查询申请和报销进度",
     examples: "试试这些：",
     example: {
       travel: { label: "差旅系统", text: "公司差旅系统：查出差申请单、提交报销单、查报销进度，有 OpenAPI 文档。" },

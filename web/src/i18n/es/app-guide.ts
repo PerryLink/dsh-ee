@@ -10,7 +10,7 @@ export default {
     "intro": "Describe lo que necesitas y envía el mensaje a DSH; confirma el plan para crear una aplicación privada.",
     "describeTitle": "1. Describe la aplicación que quieres",
     "describeLabel": "Qué debe hacer",
-    "describePlaceholder": "p. ej. Inscripciones para la salida de equipo de la próxima semana: recoger nombre, turno y necesidades dietéticas, contar personas por turno; yo veo las inscripciones de todos",
+    "describePlaceholder": "Ejemplo: inscripción a eventos con recuento por sesión",
     "examples": "Prueba una:",
     "example": {
       "signup": {
@@ -163,7 +163,7 @@ export default {
     "intro": "Describe el sistema en DSH; confirma la configuración e introduce las credenciales en la web.",
     "describeTitle": "1. Describe el sistema",
     "describeLabel": "Qué conectar y para qué",
-    "describePlaceholder": "p. ej. nuestro sistema de viajes: los empleados consultan sus solicitudes de viaje, envían gastos y revisan su estado; puedo pegar la especificación OpenAPI abajo",
+    "describePlaceholder": "Ejemplo: conectar viajes para consultar solicitudes y reembolsos",
     "examples": "Prueba con estos:",
     "example": {
       "travel": {

@@ -10,7 +10,7 @@ export default {
     intro: "Descreva o que precisa e envie o prompt ao DSH; confirme o plano para criar um aplicativo privado.",
     describeTitle: "1. Diga que aplicativo você quer criar",
     describeLabel: "O que você quer criar",
-    describePlaceholder: "Por exemplo: inscrição para a confraternização da próxima semana, coletando nome, turno e restrições alimentares, contando pessoas por turno; eu vejo todas as inscrições",
+    describePlaceholder: "Exemplo: inscrição em eventos com contagem por sessão",
     examples: "Experimente:",
     example: {
       signup: {
@@ -163,7 +163,7 @@ export default {
     intro: "Descreva o sistema no DSH; confirme a configuração e informe as credenciais na página web.",
     describeTitle: "1. Descreva o sistema",
     describeLabel: "O que conectar e para quê",
-    describePlaceholder: "ex.: nosso sistema de viagens: funcionários consultam pedidos de viagem, enviam reembolsos e verificam o status; posso colar a especificação OpenAPI abaixo",
+    describePlaceholder: "Exemplo: conectar viagens para consultar solicitações e reembolsos",
     examples: "Experimente estes:",
     example: {
       travel: {

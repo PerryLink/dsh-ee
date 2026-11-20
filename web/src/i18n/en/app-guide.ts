@@ -9,7 +9,7 @@ export default {
     intro: "Describe your needs and send the prompt to DSH; confirm the plan to create a private app.",
     describeTitle: "1. Describe the app you want",
     describeLabel: "What should it do",
-    describePlaceholder: "e.g. Sign-ups for next week's team outing: collect name, session and dietary needs, count people per session; I can see everyone's sign-up",
+    describePlaceholder: "For example: team event signup with attendance by session",
     examples: "Try one:",
     example: {
       signup: { label: "Team outing sign-up", text: "Sign-ups for next week's team outing: collect name, session and dietary needs, count people per session; everyone sees only their own sign-up, I see all." },
@@ -139,7 +139,7 @@ export default {
     intro: "Describe the system in DSH; confirm its configuration, then enter credentials on the web page.",
     describeTitle: "1. Describe the system",
     describeLabel: "What to connect and what for",
-    describePlaceholder: "e.g. our travel system: employees look up their trip requests, submit expense claims, check claim status; I can paste the OpenAPI spec below",
+    describePlaceholder: "For example: connect the travel system to check requests and reimbursements",
     examples: "Try these:",
     example: {
       travel: { label: "Travel system", text: "Our travel system: look up trip requests, submit expense claims, check claim status — we have an OpenAPI spec." },

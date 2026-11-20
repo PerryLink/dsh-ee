@@ -5,7 +5,7 @@ export default {
     status: { ok: "可用", off: "未启用", missing: "缺权限", partial: "部分可用", gone: "不存在或已下架" },
     state: { pending: "审批中", approved: "已通过", rejected: "已驳回" },
     depsTitle: "依赖与权限",
-    depsHint: "缺权限的部分在 DSH 里用不了；申请后由对应的维护者或管理员审批，通过后 DSH 自动刷新，不用重启。",
+    depsHint: "缺权限的部分暂不可用；申请通过后自动刷新。",
     partialHint: "能用 {{tools}} / {{total}} 个工具，其余要特定角色",
     pending: "审批中",
     request: "申请",

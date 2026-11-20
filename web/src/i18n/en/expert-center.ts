@@ -62,7 +62,7 @@ export default {
     agent: {
       intro: "Describe your expert and send the prompt to DSH; confirm the plan to create a private expert.",
       describeTitle: "1. Describe the expert you want",
-      describePlaceholder: "e.g. A contract review expert that helps legal and procurement check payment terms, liability and confidentiality clauses in purchase contracts, listing risks and suggested edits",
+      describePlaceholder: "For example: review purchase contracts and suggest risk fixes",
       example: {
         contract: { label: "Contract review", text: "Contract review expert: helps procurement and legal check purchase contracts, focusing on payment terms, liability and confidentiality; lists risks as high/medium/low with suggested edits." },
         tax: { label: "Tax expert", text: "Tax expert: answers questions on VAT invoices, input tax deductions and personal income tax deductions, citing company finance policy; refers to Finance when unsure." },
@@ -88,15 +88,15 @@ export default {
     },
     admin: {
       title: "Experts & connectors policy",
-      desc: "Categorize experts, skills and connectors, pick featured items, block capabilities for people or departments, and look up what any employee can finally use. Changes reach employees' DSH within a minute.",
-      agentHint: "You can also ask the AI in DSH: with admin mode on, say “put the contract expert in Legal and feature it”, “block the ERP connector for contractors”, or “what experts can Zhang San use?”.",
+      desc: "Manage categories, featured items and blocks; inspect employee access.",
+      agentHint: "Or enable admin mode in DSH and ask the AI to configure it.",
       reload: "Refresh",
       tabs: { categories: "Categories", catalog: "Featured & categories", blocks: "Block policies", effective: "Access lookup" },
       tabHints: {
-        categories: "Categories are grouped by the three tabs of the DSH panel. A category has its own availability: people outside it don't see the capabilities in it. Categories only narrow, never widen, a capability's own availability.",
-        catalog: "Pick a category and featured flag for each capability. Featured items come first in the DSH panel and on the apps page; up to 20 per group.",
-        blocks: "People in scope can't use these capabilities even if they are within the capability's availability — for handovers, contractor accounts or temporary suspensions.",
-        effective: "Pick an employee to see the final result for each capability and which step stopped it: publish state → availability → category → block policies → enabled.",
+        categories: "Category scopes can only narrow capability access, never widen it.",
+        catalog: "Categorize and feature up to 20 per group, shown first.",
+        blocks: "Blocks override the capability’s access scope.",
+        effective: "Choose an employee to see effective access and blocking reasons.",
       },
       group: "Group",
       categoryName: "Category name",
