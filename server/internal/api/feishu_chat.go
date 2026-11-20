@@ -130,6 +130,15 @@ func (s *Server) handleFeishuChatNext(w http.ResponseWriter, r *http.Request) {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
+		rp, p, _, ok := s.tokenRequest(w, r)
+		if !ok {
+			return
+		}
+		if !s.agentOn(r.Context(), p) {
+			writeErrCode(w, http.StatusForbidden, codeAuthForbidden, nil, "这个令牌没有 Agent 权限")
+			return
+		}
+		r = rp
 		_, wake := s.chatPresence(currentUser(r).ID, true, false)
 		m, err := s.store.NextFeishuChat(r.Context(), currentUser(r).ID)
 		if err == nil {

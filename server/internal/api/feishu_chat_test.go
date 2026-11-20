@@ -200,6 +200,39 @@ func TestFeishuBotChat(t *testing.T) {
 		t.Fatalf("expiry %s %v", status, err)
 	}
 	disabled := true
+	revokedUser, revokedBearer := mk("chat-revoked")
+	revokedResult := make(chan int, 1)
+	go func() { n, _ := c.do("GET", "/api/me/feishu-chat/next?wait=5", nil, revokedBearer); revokedResult <- n }()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		n, b := c.do("GET", "/api/me/feishu-chat", nil, revokedBearer)
+		if n == 200 && strings.Contains(string(b), `"online":true`) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("revocation poll did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	token, err := st.AccessTokenByHash(ctx, secret.Hash(strings.TrimPrefix(revokedBearer["Authorization"], "Bearer ")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RevokeToken(ctx, token.ID); err != nil {
+		t.Fatal(err)
+	}
+	post(event("revoked-wake", "ou-chat-revoked", "text"), 200)
+	select {
+	case n := <-revokedResult:
+		if n != http.StatusUnauthorized {
+			t.Fatalf("revoked poll returned %d", n)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("revoked poll did not finish")
+	}
+	if err := st.DB().QueryRowContext(ctx, `SELECT status FROM feishu_chat_messages WHERE user_id=? AND message_id='revoked-wake'`, revokedUser.ID).Scan(&status); err != nil || status != "pending" {
+		t.Fatalf("revoked poll claimed message: %s %v", status, err)
+	}
 	if err := st.UpdateUser(ctx, u.ID, store.UserPatch{Disabled: &disabled}); err != nil {
 		t.Fatal(err)
 	}
