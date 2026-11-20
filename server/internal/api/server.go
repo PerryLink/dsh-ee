@@ -158,6 +158,9 @@ type Options struct {
 }
 
 type Server struct {
+	feishuChatMu       sync.Mutex
+	feishuChatPresence map[int64]*feishuChatPresence
+
 	initAdmin       initAdminState
 	store           *store.Store
 	box             *secret.Box

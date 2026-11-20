@@ -1,0 +1,202 @@
+package api_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hikariming/dsh-ee/server/internal/api"
+	"github.com/hikariming/dsh-ee/server/internal/secret"
+	"github.com/hikariming/dsh-ee/server/internal/store"
+)
+
+func TestFeishuBotChat(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	replies := make(chan string, 20)
+	idp := newFakeIdP(t)
+	base := idp.Config.Handler
+	idp.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "tenant_access_token") {
+			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"tenant"}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/reply") {
+			if r.Header.Get("Authorization") != "Bearer tenant" {
+				t.Error("missing tenant token")
+			}
+			raw, _ := io.ReadAll(r.Body)
+			replies <- r.URL.Path + " " + string(raw)
+			_, _ = w.Write([]byte(`{"code":0,"data":{"message_id":"om-reply"}}`))
+			return
+		}
+		base.ServeHTTP(w, r)
+	})
+	box, _ := secret.NewBox(make([]byte, 32))
+	srv := api.New(st, box, api.Options{DataDir: t.TempDir(), OIDCClient: idp.Client()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "login", code, 200, body)
+	cfg := map[string]any{"enabled": true, "preset": "feishu", "issuer": idp.URL, "clientId": "dsh-ee", "clientSecret": "secret", "feishuApiBase": idp.URL, "feishuBot": true}
+	code, body = admin.do("PUT", "/api/admin/auth/oidc", cfg, nil)
+	expect(t, "requires token", code, 400, body)
+	cfg["feishuVerificationToken"] = feishuTestToken
+	save := func() {
+		t.Helper()
+		c, b := admin.do("PUT", "/api/admin/auth/oidc", cfg, nil)
+		expect(t, "save bot", c, 200, b)
+	}
+	save()
+	code, body = admin.do("GET", "/api/admin/auth/oidc", nil, nil)
+	if code != 200 || !strings.Contains(string(body), `"feishuBot":true`) {
+		t.Fatalf("bot not persisted %d %s", code, body)
+	}
+	member, err := st.GetRoleByCode(ctx, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(name string) (*store.User, map[string]string) {
+		u := &store.User{Username: name, DisplayName: name, AuthSource: store.AuthOIDC, ExternalDN: "feishu:ou-" + name}
+		if err := st.CreateUser(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetUserRoles(ctx, u.ID, []int64{member.ID}); err != nil {
+			t.Fatal(err)
+		}
+		token := "ee_at_" + secret.Token()
+		if err := st.CreateAccessToken(ctx, &store.AccessToken{UserID: u.ID, Name: "DSH", Prefix: token[:12], Scopes: []string{"agent"}, CreatedBy: u.ID}, secret.Hash(token)); err != nil {
+			t.Fatal(err)
+		}
+		return u, map[string]string{"Authorization": "Bearer " + token}
+	}
+	u, bearer := mk("chat-user")
+	_, other := mk("chat-other")
+	c := newClient(t, ts.URL)
+	event := func(id, openID, kind string) map[string]any {
+		return map[string]any{"schema": "2.0", "header": map[string]any{"token": feishuTestToken, "app_id": "dsh-ee", "event_type": "im.message.receive_v1"}, "event": map[string]any{"sender": map[string]any{"sender_id": map[string]string{"open_id": openID}}, "message": map[string]string{"message_id": id, "chat_id": "oc-chat", "chat_type": "p2p", "message_type": kind, "content": `{"text":"hello"}`}}}
+	}
+	post := func(e any, want int) {
+		t.Helper()
+		n, b := c.do("POST", "/api/auth/feishu/event", e, nil)
+		expect(t, "event", n, want, b)
+	}
+	notice := func(fragment string) {
+		t.Helper()
+		select {
+		case got := <-replies:
+			if !strings.Contains(got, fragment) {
+				t.Fatalf("reply %s missing %s", got, fragment)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("no Feishu reply")
+		}
+	}
+	code, body = c.do("POST", "/api/auth/feishu/event", map[string]string{"type": "url_verification", "token": feishuTestToken, "challenge": "challenge-1"}, nil)
+	if code != 200 || !strings.Contains(string(body), "challenge-1") {
+		t.Fatalf("challenge %d %s", code, body)
+	}
+	bad := event("bad", "ou-chat-user", "text")
+	bad["header"].(map[string]any)["token"] = "bad"
+	post(bad, 403)
+	bad = event("bad-app", "ou-chat-user", "text")
+	bad["header"].(map[string]any)["app_id"] = "other"
+	post(bad, 403)
+	post(event("unknown", "ou-unknown", "text"), 200)
+	notice("请先使用飞书登录")
+	post(event("image", "ou-chat-user", "image"), 200)
+	notice("只支持文字消息")
+	post(event("first", "ou-chat-user", "text"), 200)
+	notice("当前不在线")
+	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, other)
+	expect(t, "isolation", code, 204, body)
+	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, bearer)
+	expect(t, "deliver", code, 200, body)
+	var m store.FeishuChatMessage
+	if err := json.Unmarshal(body, &m); err != nil || m.Text != "hello" || m.ID == 0 || m.CreatedAt.IsZero() {
+		t.Fatalf("message %s %v", body, err)
+	}
+	replyPath := fmt.Sprintf("/api/me/feishu-chat/%d/reply", m.ID)
+	code, body = c.do("POST", replyPath, map[string]string{"text": "answer"}, other)
+	expect(t, "reply isolation", code, 404, body)
+	code, body = c.do("POST", replyPath, map[string]string{"text": " "}, bearer)
+	expect(t, "empty reply", code, 400, body)
+	code, body = c.do("POST", replyPath, map[string]string{"text": "**answer**"}, bearer)
+	expect(t, "reply", code, 200, body)
+	notice("/messages/first/reply")
+	post(event("first", "ou-chat-user", "text"), 200)
+	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, bearer)
+	expect(t, "retry dedupe", code, 204, body)
+	code, body = c.do("GET", "/api/me/feishu-chat", nil, bearer)
+	if code != 200 || !strings.Contains(string(body), `"online":true`) || !strings.Contains(string(body), `"bound":true`) {
+		t.Fatalf("status %d %s", code, body)
+	}
+	result := make(chan int, 1)
+	go func() { n, _ := c.do("GET", "/api/me/feishu-chat/next?wait=5", nil, bearer); result <- n }()
+	time.Sleep(100 * time.Millisecond)
+	start := time.Now()
+	post(event("wake", "ou-chat-user", "text"), 200)
+	select {
+	case n := <-result:
+		if n != 200 || time.Since(start) > 2*time.Second {
+			t.Fatalf("poll did not wake: %d", n)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("poll blocked")
+	}
+	if _, err := st.DB().ExecContext(ctx, `UPDATE feishu_chat_messages SET delivered_at=? WHERE message_id='wake'`, time.Now().Add(-11*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, bearer)
+	expect(t, "redelivery", code, 200, body)
+	if _, err := st.DB().ExecContext(ctx, `UPDATE feishu_chat_messages SET created_at=? WHERE message_id='wake'`, time.Now().Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, bearer)
+	expect(t, "expiry", code, 204, body)
+	var status string
+	if err := st.DB().QueryRowContext(ctx, `SELECT status FROM feishu_chat_messages WHERE message_id='wake'`).Scan(&status); err != nil || status != "expired" {
+		t.Fatalf("expiry %s %v", status, err)
+	}
+	disabled := true
+	if err := st.UpdateUser(ctx, u.ID, store.UserPatch{Disabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	post(event("disabled", "ou-chat-user", "text"), 200)
+	notice("请先使用飞书登录")
+	code, body = c.do("GET", "/api/me/feishu-chat/next?wait=1", nil, other)
+	expect(t, "poll timeout", code, 204, body)
+	cfg["feishuEncryptKey"] = "encrypt-chat-key"
+	save()
+	post(event("plaintext", "ou-chat-other", "text"), 403)
+	encrypted, headers := feishuEncrypt(t, "encrypt-chat-key", map[string]string{"type": "url_verification", "token": feishuTestToken, "challenge": "encrypted-challenge"})
+	var encryptedBody map[string]any
+	if err := json.Unmarshal(encrypted, &encryptedBody); err != nil {
+		t.Fatal(err)
+	}
+	code, body = c.do("POST", "/api/auth/feishu/event", encryptedBody, headers)
+	if code != 200 || !strings.Contains(string(body), "encrypted-challenge") {
+		t.Fatalf("encrypted challenge %d %s", code, body)
+	}
+	headers["X-Lark-Signature"] = "bad"
+	code, body = c.do("POST", "/api/auth/feishu/event", encryptedBody, headers)
+	expect(t, "bad signature", code, 403, body)
+	cfg["feishuEncryptKey"] = ""
+	save()
+	cfg["feishuBot"] = false
+	save()
+	post(event("off", "ou-chat-user", "text"), 404)
+	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, other)
+	expect(t, "disabled poll", code, 404, body)
+}

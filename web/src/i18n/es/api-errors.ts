@@ -3,6 +3,12 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  feishu_chat: {
+    disabled: "El bot de Feishu está desactivado.",
+    empty: "La respuesta no puede estar vacía.",
+    missing: "El mensaje no existe o ha caducado.",
+    send: "No se pudo enviar la respuesta de Feishu. Inténtalo más tarde.",
+  },
   llm: {
     base_url_invalid: "La URL base debe ser una dirección http(s), p. ej. https://api.deepseek.com",
     name_key_required: "El nombre (hasta 64 caracteres) y la clave de API son obligatorios.",

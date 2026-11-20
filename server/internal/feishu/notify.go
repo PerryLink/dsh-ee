@@ -47,6 +47,29 @@ func (c *Client) SendText(ctx context.Context, openID, markdown string) (string,
 	return c.SendMessage(ctx, openID, "text", map[string]string{"text": markdown})
 }
 
+func (c *Client) ReplyText(ctx context.Context, messageID, text string) (string, error) {
+	if messageID == "" {
+		return "", errors.New("飞书回复缺少消息 id")
+	}
+	token, err := c.tenantToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	// Rich text markdown keeps agent formatting without introducing card actions.
+	content, err := json.Marshal(map[string]any{"zh_cn": map[string]any{"content": [][]any{{map[string]string{"tag": "md", "text": clip(text, 4000)}}}}})
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		MessageID string `json:"message_id"`
+	}
+	err = c.call(ctx, http.MethodPost, "/open-apis/im/v1/messages/"+url.PathEscape(messageID)+"/reply", map[string]string{"msg_type": "post", "content": string(content)}, &out, token)
+	if err == nil && out.MessageID == "" {
+		return "", errors.New("飞书没有返回回复消息 id")
+	}
+	return out.MessageID, err
+}
+
 // SendInteractive 发送带按钮的交互卡片，卡片 body 由调用方的审批状态机生成。
 func (c *Client) SendInteractive(ctx context.Context, openID string, card any) (string, error) {
 	return c.SendMessage(ctx, openID, "interactive", card)

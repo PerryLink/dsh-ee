@@ -3,6 +3,12 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  feishu_chat: {
+    disabled: "Feishu बॉट बंद है।",
+    empty: "जवाब खाली नहीं हो सकता।",
+    missing: "संदेश नहीं मिला या उसकी समय सीमा समाप्त हो गई है।",
+    send: "Feishu जवाब नहीं भेजा जा सका। बाद में फिर कोशिश करें।",
+  },
   llm: {
     base_url_invalid: "बेस URL एक http(s) पता होना चाहिए, जैसे https://api.deepseek.com",
     name_key_required: "नाम (अधिकतम 64 अक्षर) और API key ज़रूरी हैं।",

@@ -10,6 +10,12 @@
  * es / pt / hi 等语言包合并后按同一份键补译文。
  */
 export default {
+  feishu_chat: {
+    disabled: "飞书机器人未开启",
+    empty: "回复不能为空",
+    missing: "消息不存在或已过期",
+    send: "飞书回复发送失败，请稍后重试",
+  },
   llm: {
     base_url_invalid: "base_url 必须是 http(s) 地址，例如 https://api.deepseek.com",
     name_key_required: "name（不超过 64 个字符）和 api_key 不能为空",

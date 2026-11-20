@@ -3,6 +3,12 @@ import type zhNs from "../zh/api-errors";
 import type { Messages } from "../types";
 
 export default {
+  feishu_chat: {
+    disabled: "O bot do Feishu está desativado.",
+    empty: "A resposta não pode ficar vazia.",
+    missing: "A mensagem não existe ou expirou.",
+    send: "Não foi possível enviar a resposta pelo Feishu. Tente novamente mais tarde.",
+  },
   llm: {
     base_url_invalid: "A URL base deve ser um endereço http(s), por exemplo https://api.deepseek.com",
     name_key_required: "Nome (até 64 caracteres) e chave de API são obrigatórios.",

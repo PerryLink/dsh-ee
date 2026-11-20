@@ -60,6 +60,7 @@ type Config struct {
 	FeishuSyncDisable   bool   `json:"feishuSyncDisable"`
 	FeishuNotify        bool   `json:"feishuNotify"`
 	FeishuNotifyActions bool   `json:"feishuNotifyActions"`
+	FeishuBot           bool   `json:"feishuBot"`
 	// 飞书开发者后台「事件与回调 → 加密策略」里的 Verification Token。卡片回调是公开接口，
 	// 靠它确认请求确实是飞书发来的；开卡片审批必须填。
 	FeishuVerificationToken string `json:"feishuVerificationToken,omitempty"`
@@ -124,7 +125,7 @@ func (c *Config) Validate() string {
 			return "飞书通讯录 API 地址必须是完整且不带账号密码的 http(s) 地址"
 		}
 	}
-	if c.Preset == "feishu" && c.FeishuNotifyActions && c.FeishuVerificationToken == "" {
+	if c.Preset == "feishu" && (c.FeishuNotifyActions || c.FeishuBot) && c.FeishuVerificationToken == "" {
 		return "开启卡片内通过 / 驳回，要先填飞书的 Verification Token（开发者后台 → 事件与回调 → 加密策略）"
 	}
 	for i, m := range c.RoleMappings {
