@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hikariming/dsh-ee/server/internal/dingtalk"
 	"github.com/hikariming/dsh-ee/server/internal/feishu"
 	"github.com/hikariming/dsh-ee/server/internal/oidc"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
@@ -111,6 +113,18 @@ func (s *Server) oidcHTTP() *oidc.Client {
 }
 
 func (s *Server) oidcRedirect(r *http.Request) string { return s.publicBase(r) + oidcCallback }
+
+func (s *Server) dingTalkClient(cfg *oidc.Config) dingtalk.Client {
+	return dingtalk.Client{HTTP: s.oidcHTTP().HTTP, ID: cfg.ClientID, Secret: cfg.ClientSecret}
+}
+
+func dingTalkLoginTarget(cfg *oidc.Config) string {
+	if cfg.Preset != dingtalk.Preset {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(cfg.ClientID + "\x00" + cfg.DingTalkCorpID))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
 
 // ---- 管理接口 ----
 
@@ -306,6 +320,14 @@ func (s *Server) handleTestOIDC(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+	if cfg.Preset == dingtalk.Preset {
+		if _, err := s.dingTalkClient(cfg).AppToken(ctx); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "redirectUri": s.oidcRedirect(r)})
+		return
+	}
 	p, err := s.oidcHTTP().Discover(ctx, cfg.Issuer)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
@@ -319,15 +341,16 @@ func (s *Server) handleTestOIDC(w http.ResponseWriter, r *http.Request) {
 const oidcStateKind = "oidc_state"
 
 type oidcPending struct {
-	nonce, verifier, next string
+	nonce, verifier, next, dingTalkTarget string
 }
 
 // oidcStatePlain 是 OIDC 登录请求里真正要带过回调的东西；PKCE verifier 与 nonce 是敏感值，
 // 不能明文落库，所以整段密封后才放进 payload。
 type oidcStatePlain struct {
-	Nonce    string `json:"nonce"`
-	Verifier string `json:"verifier"`
-	Next     string `json:"next"`
+	Nonce          string `json:"nonce"`
+	Verifier       string `json:"verifier"`
+	Next           string `json:"next"`
+	DingTalkTarget string `json:"dingTalkTarget,omitempty"`
 }
 
 // oidcStateSealed 是落库的 payload：enc 是 oidcStatePlain 用主密钥 AES-GCM 加密后的 base64。
@@ -339,7 +362,7 @@ type oidcStateSealed struct {
 // putOIDCState 保存一次登录请求（state 只存 sha256，nonce/PKCE verifier 加密后存）。
 // 多实例：回调可能落到任意实例，所以放在共享表 ephemeral_states 里。
 func (s *Server) putOIDCState(ctx context.Context, state string, p oidcPending, ttl time.Duration) error {
-	plain, err := json.Marshal(oidcStatePlain{Nonce: p.nonce, Verifier: p.verifier, Next: p.next})
+	plain, err := json.Marshal(oidcStatePlain{Nonce: p.nonce, Verifier: p.verifier, Next: p.next, DingTalkTarget: p.dingTalkTarget})
 	if err != nil {
 		return err
 	}
@@ -382,7 +405,7 @@ func (s *Server) takeOIDCState(ctx context.Context, state string) (*oidcPending,
 	if err := json.Unmarshal(plain, &p); err != nil {
 		return nil, err
 	}
-	return &oidcPending{nonce: p.Nonce, verifier: p.Verifier, next: p.Next}, nil
+	return &oidcPending{nonce: p.Nonce, verifier: p.Verifier, next: p.Next, dingTalkTarget: p.DingTalkTarget}, nil
 }
 
 func randString(n int) string {
@@ -416,14 +439,20 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	p, err := s.oidcHTTP().Discover(ctx, cfg.Issuer)
-	if err != nil {
-		s.log.Warn("OIDC 发现配置读取失败", "err", err)
-		loginError(w, r, "企业统一登录暂时不可用，请稍后再试或联系管理员")
-		return
-	}
 	state, nonce, verifier := randString(24), randString(24), randString(48)
-	if err := s.putOIDCState(r.Context(), state, oidcPending{nonce: nonce, verifier: verifier, next: safeNext(r.URL.Query().Get("next"))}, oidcStateTTL); err != nil {
+	var authURL string
+	if cfg.Preset == dingtalk.Preset {
+		authURL = s.dingTalkClient(cfg).AuthCodeURL(s.oidcRedirect(r), state, cfg.DingTalkCorpID)
+	} else {
+		p, err := s.oidcHTTP().Discover(ctx, cfg.Issuer)
+		if err != nil {
+			s.log.Warn("OIDC 发现配置读取失败", "err", err)
+			loginError(w, r, "企业统一登录暂时不可用，请稍后再试或联系管理员")
+			return
+		}
+		authURL = oidc.AuthCodeURL(p, cfg, s.oidcRedirect(r), state, nonce, verifier)
+	}
+	if err := s.putOIDCState(r.Context(), state, oidcPending{nonce: nonce, verifier: verifier, next: safeNext(r.URL.Query().Get("next")), dingTalkTarget: dingTalkLoginTarget(cfg)}, oidcStateTTL); err != nil {
 		// 状态落不了库就无法完成登录：不回退到进程内存，按暂时不可用处理。
 		s.log.Warn("保存 OIDC 登录状态失败", "err", err)
 		loginError(w, r, "企业统一登录暂时不可用，请稍后再试或联系管理员")
@@ -431,7 +460,7 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 	}
 	// state 同时放进 cookie：回调时比对，防止别人把自己的登录结果塞进你的浏览器
 	http.SetCookie(w, &http.Cookie{Name: oidcStateCookie, Value: state, Path: "/api/auth/oidc", MaxAge: int(oidcStateTTL.Seconds()), HttpOnly: true, Secure: s.opts.CookieSecure, SameSite: http.SameSiteLaxMode})
-	http.Redirect(w, r, oidc.AuthCodeURL(p, cfg, s.oidcRedirect(r), state, nonce, verifier), http.StatusFound)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // GET /api/auth/oidc/callback?code=…&state=…
@@ -466,6 +495,32 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	if pending.dingTalkTarget != dingTalkLoginTarget(cfg) {
+		loginError(w, r, "登录请求已失效，请重新登录")
+		return
+	}
+	if cfg.Preset == dingtalk.Preset {
+		code := q.Get("code")
+		if code == "" {
+			code = q.Get("authCode")
+		}
+		employee, err := s.dingTalkClient(cfg).Exchange(ctx, code, cfg.DingTalkCorpID)
+		if err != nil {
+			s.log.Warn("钉钉登录失败", "err", err)
+			s.auditAs(r, nil, auditLoginFailed, "", map[string]any{"via": "dingtalk", "reason": err.Error()})
+			loginError(w, r, "钉钉登录失败，请确认你选择了本企业并联系管理员")
+			return
+		}
+		subject := dingtalk.ExternalSubject(cfg.DingTalkCorpID, employee.UserID)
+		username := strings.ToLower(employee.UserID)
+		if !usernameRe.MatchString(username) {
+			sum := sha256.Sum256([]byte(subject))
+			username = fmt.Sprintf("ding-%x", sum[:16])
+		}
+		cfg.RoleMappings = nil
+		s.finishOIDCLogin(w, r, cfg, oidc.Identity{Subject: subject, Username: username, DisplayName: employee.Name}, pending.next)
+		return
+	}
 	cl := s.oidcHTTP()
 	p, err := cl.Discover(ctx, cfg.Issuer)
 	if err == nil {

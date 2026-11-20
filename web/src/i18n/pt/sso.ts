@@ -14,6 +14,7 @@ export default {
       azure: "Azure AD / Entra ID",
       custom: "Outro",
       feishu: "Feishu",
+      dingtalk: "DingTalk",
     },
     presetHints: {
       keycloak: "O Issuer tem o formato https://sso.example.com/realms/<realm>; adicione ao cliente um mapeador “Group Membership” com o nome groups.",
@@ -21,7 +22,10 @@ export default {
       azure: "O Issuer tem o formato https://login.microsoftonline.com/<ID do locatário>/v2.0; a declaração de grupos contém os IDs de objeto dos grupos; use os IDs de objeto no mapeamento.",
       custom: "Qualquer provedor OIDC que ofereça o fluxo de código de autorização.",
       feishu: "Crie um aplicativo corporativo próprio no Feishu Open Platform, preencha App ID, App Secret e o endereço de contatos abaixo e conceda permissões somente leitura para informações de usuário, departamento e membros.",
+      dingtalk: "Crie e publique um aplicativo interno no DingTalk e informe o CorpId da empresa, o Client ID e o Client Secret. Os funcionários vinculam a identidade no primeiro acesso.",
     },
+    dingTalkCorpId: "CorpId da empresa no DingTalk",
+    dingTalkTestOk: "Credenciais do aplicativo DingTalk verificadas",
     name: "Nome exibido no botão de login",
     issuer: "Issuer",
     issuerHint: "Endereço do provedor de identidade; o dsh-ee lê o /.well-known/openid-configuration dele.",

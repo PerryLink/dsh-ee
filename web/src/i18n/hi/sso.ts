@@ -13,15 +13,19 @@ export default {
       "authing": "Authing",
       "azure": "Azure AD / Entra ID",
       "custom": "अन्य",
-      "feishu": "Feishu"
+      "feishu": "Feishu",
+      "dingtalk": "DingTalk",
     },
     "presetHints": {
       "keycloak": "Issuer इस प्रकार होता है: https://sso.example.com/realms/<realm>; क्लाइंट में “Group Membership” नाम का मैपर जोड़ें और उसका नाम groups रखें।",
       "authing": "Issuer इस प्रकार होता है: https://<app-domain>.authing.cn/oidc; भूमिकाएँ roles क्लेम में आती हैं; ऐप के लिए roles स्कोप सक्षम करें।",
       "azure": "Issuer इस प्रकार होता है: https://login.microsoftonline.com/<tenant-id>/v2.0; groups क्लेम में ग्रुप की ऑब्जेक्ट आईडी होती हैं; उन्हीं को मैप करें।",
       "custom": "कोई भी OIDC आइडेंटिटी प्रोवाइडर जो authorization code फ़्लो का समर्थन करता हो।",
-      "feishu": "Feishu ओपन प्लेटफ़ॉर्म में एंटरप्राइज़ का सेल्फ़-बिल्ट ऐप बनाएँ। उसका App ID, App Secret और नीचे दिया गया कॉन्टैक्ट्स बेस URL भरें, फिर उपयोगकर्ता, विभाग और सदस्य डेटा के लिए केवल-पढ़ने की अनुमति दें।"
+      "feishu": "Feishu ओपन प्लेटफ़ॉर्म में एंटरप्राइज़ का सेल्फ़-बिल्ट ऐप बनाएँ। उसका App ID, App Secret और नीचे दिया गया कॉन्टैक्ट्स बेस URL भरें, फिर उपयोगकर्ता, विभाग और सदस्य डेटा के लिए केवल-पढ़ने की अनुमति दें।",
+      "dingtalk": "DingTalk पर आंतरिक ऐप बनाएँ और प्रकाशित करें, फिर एंटरप्राइज़ CorpId, Client ID और Client Secret भरें। कर्मचारी पहली बार साइन इन करते समय अपनी पहचान जोड़ते हैं।",
     },
+    "dingTalkCorpId": "DingTalk एंटरप्राइज़ CorpId",
+    "dingTalkTestOk": "DingTalk ऐप क्रेडेंशियल सत्यापित हैं",
     "name": "साइन-इन बटन पर नाम",
     "issuer": "Issuer",
     "issuerHint": "आइडेंटिटी प्रोवाइडर का पता; dsh-ee उसका /.well-known/openid-configuration पढ़ता है।",

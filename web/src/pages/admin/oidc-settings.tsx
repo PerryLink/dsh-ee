@@ -17,6 +17,7 @@ const PRESETS: Record<OidcConfig["preset"], Partial<OidcConfig>> = {
   azure: { preset: "azure", scopes: "profile email", usernameClaim: "preferred_username", nameClaim: "name", emailClaim: "email", departmentClaim: "department", groupsClaim: "groups" },
   custom: { preset: "custom" },
   feishu: { preset: "feishu", issuer: "https://accounts.feishu.cn", feishuApiBase: "https://open.feishu.cn", scopes: "profile email", usernameClaim: "preferred_username", nameClaim: "name", emailClaim: "email", departmentClaim: "department", groupsClaim: "groups" },
+  dingtalk: { preset: "dingtalk", issuer: "https://login.dingtalk.com" },
 };
 
 function configOf(v: OidcView): OidcConfig {
@@ -68,6 +69,7 @@ export default function OidcSettings() {
   const dirty = JSON.stringify(form) !== JSON.stringify(configOf(saved)) || secret !== "";
   const input = () => ({ ...form, ...(secret ? { clientSecret: secret } : {}) });
   const off = !form.enabled;
+  const dingTalk = form.preset === "dingtalk";
   const roleOptions = (roles.data ?? []).map((r) => ({ value: String(r.id), label: L.role(r) }));
   const roleName = (id: number) => {
     const r = roles.data?.find((x) => x.id === id);
@@ -114,7 +116,7 @@ export default function OidcSettings() {
         <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-600">
           <span>{t("oidcAdmin.preset")}</span>
           {(Object.keys(PRESETS) as OidcConfig["preset"][]).map((k) => (
-            <Button key={k} size="sm" variant={form.preset === k ? "primary" : "secondary"} onClick={() => set(k === "feishu" ? { ...PRESETS[k], name: t("oidcAdmin.presets.feishu") } : PRESETS[k])}>
+            <Button key={k} size="sm" variant={form.preset === k ? "primary" : "secondary"} onClick={() => set(k === "feishu" || k === "dingtalk" ? { ...PRESETS[k], name: t(`oidcAdmin.presets.${k}`) } : PRESETS[k])}>
               {t(`oidcAdmin.presets.${k}`)}
             </Button>
           ))}
@@ -125,9 +127,13 @@ export default function OidcSettings() {
           <Field label={t("oidcAdmin.name")}>
             <input className={inputCls} value={form.name} onChange={(e) => set({ name: e.target.value })} />
           </Field>
-          <Field label={t("oidcAdmin.issuer")} hint={t("oidcAdmin.issuerHint")}>
+          {dingTalk ? (
+            <Field label={t("oidcAdmin.dingTalkCorpId")}>
+              <input className={cx(inputCls, "font-mono")} value={form.dingTalkCorpId ?? ""} onChange={(e) => set({ dingTalkCorpId: e.target.value })} />
+            </Field>
+          ) : <Field label={t("oidcAdmin.issuer")} hint={t("oidcAdmin.issuerHint")}>
             <input className={cx(inputCls, "font-mono")} value={form.issuer} onChange={(e) => set({ issuer: e.target.value })} placeholder="https://sso.acme.com/realms/acme" />
-          </Field>
+          </Field>}
           <Field label={t("oidcAdmin.clientId")}>
             <input className={cx(inputCls, "font-mono")} value={form.clientId} onChange={(e) => set({ clientId: e.target.value })} autoComplete="off" />
           </Field>
@@ -157,6 +163,7 @@ export default function OidcSettings() {
             </Button>
           </div>
         </Field>
+        {!dingTalk && <>
         <Field label={t("oidcAdmin.scopes")} hint={t("oidcAdmin.scopesHint")}>
           <input className={cx(inputCls, "font-mono")} value={form.scopes} onChange={(e) => set({ scopes: e.target.value })} />
         </Field>
@@ -215,6 +222,7 @@ export default function OidcSettings() {
           )}
         </div>
 
+        </>}
         <ToggleRow label={t("oidcAdmin.autoCreate")} desc={t("oidcAdmin.autoCreateDesc")} checked={form.autoCreate} onChange={(v) => set({ autoCreate: v })} />
         <ToggleRow label={t("oidcAdmin.requireEmailVerified")} desc={t("oidcAdmin.requireEmailVerifiedDesc")} checked={form.requireEmailVerified} onChange={(v) => set({ requireEmailVerified: v })} />
         {form.preset === "feishu" && (
@@ -290,12 +298,12 @@ export default function OidcSettings() {
         {dirty && <span className="text-sm text-amber-700">{t("oidcAdmin.unsaved")}</span>}
       </div>
       {test &&
-        (test.ok && test.provider ? (
+        (test.ok ? (
           <div className="space-y-1.5 rounded-md border border-neutral-200 p-4 text-sm">
             <div className="flex items-center gap-2 text-neutral-900">
-              <Check size={16} className="text-emerald-600" /> {t("oidcAdmin.testOk")}
+              <Check size={16} className="text-emerald-600" /> {t(test.provider ? "oidcAdmin.testOk" : "oidcAdmin.dingTalkTestOk")}
             </div>
-            <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1 font-mono text-xs break-all text-neutral-700">
+            {test.provider && <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1 font-mono text-xs break-all text-neutral-700">
               <dt className="text-neutral-500">authorization</dt>
               <dd>{test.provider.authorization_endpoint}</dd>
               <dt className="text-neutral-500">token</dt>
@@ -304,7 +312,7 @@ export default function OidcSettings() {
               <dd>{test.provider.jwks_uri}</dd>
               <dt className="text-neutral-500">userinfo</dt>
               <dd>{test.provider.userinfo_endpoint || "—"}</dd>
-            </dl>
+            </dl>}
           </div>
         ) : (
           <ErrorNote>{t("oidcAdmin.testFail", { error: test.error ?? "" })}</ErrorNote>

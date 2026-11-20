@@ -13,15 +13,19 @@ export default {
       "authing": "Authing",
       "azure": "Azure AD / Entra ID",
       "custom": "Otro",
-      "feishu": "Feishu"
+      "feishu": "Feishu",
+      "dingtalk": "DingTalk",
     },
     "presetHints": {
       "keycloak": "El Issuer tiene el formato https://sso.example.com/realms/<realm>; para el claim de grupos hay que añadir en el cliente el mapper «Group Membership» con el nombre groups.",
       "authing": "El Issuer tiene el formato https://<dominio de la aplicación>.authing.cn/oidc; los roles están en el claim roles y hay que marcar el scope roles en la aplicación.",
       "azure": "El Issuer tiene el formato https://login.microsoftonline.com/<ID de inquilino>/v2.0; el claim de grupos es el ID de objeto del grupo; al mapear, use el ID de objeto.",
       "custom": "Cualquier proveedor de identidad OIDC compatible con el flujo de código de autorización.",
-      "feishu": "Cree una aplicación corporativa propia en la plataforma abierta de Feishu, introduzca el App ID, el App Secret y la dirección de directorio de abajo, y habilite los permisos de solo lectura de información de usuario, departamentos y miembros."
+      "feishu": "Cree una aplicación corporativa propia en la plataforma abierta de Feishu, introduzca el App ID, el App Secret y la dirección de directorio de abajo, y habilite los permisos de solo lectura de información de usuario, departamentos y miembros.",
+      "dingtalk": "Cree y publique una aplicación interna en DingTalk e introduzca el CorpId de la empresa, el Client ID y el Client Secret. Los empleados vinculan su identidad en el primer inicio de sesión.",
     },
+    "dingTalkCorpId": "CorpId de la empresa en DingTalk",
+    "dingTalkTestOk": "Credenciales de la aplicación DingTalk verificadas",
     "name": "Nombre en el botón de inicio de sesión",
     "issuer": "Issuer",
     "issuerHint": "Dirección del proveedor de identidad; dsh-ee leerá su /.well-known/openid-configuration.",

@@ -577,7 +577,7 @@ export type LdapInput = LdapConfig & { bindPassword?: string };
 
 export interface OidcConfig {
   enabled: boolean;
-  preset: "keycloak" | "authing" | "azure" | "custom" | "feishu";
+  preset: "keycloak" | "authing" | "azure" | "custom" | "feishu" | "dingtalk";
   name: string;
   issuer: string;
   clientId: string;
@@ -602,6 +602,7 @@ export interface OidcConfig {
   /** 飞书 Encrypt Key：只写，不回显；不传沿用已存的，传空串清除 */
   feishuEncryptKey?: string;
   feishuEncryptKeySet?: boolean;
+  dingTalkCorpId?: string;
 }
 
 export interface OidcView extends OidcConfig {
