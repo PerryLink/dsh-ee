@@ -58,6 +58,13 @@ export default {
     submitting: "创建中…",
   },
   account: {
+    shortcuts: {
+      title: "DSH 接入与开发",
+      hint: "这些页面不在侧边栏里，从这里打开。",
+      connect: "接入",
+      develop: "开发",
+      getStarted: "开始使用",
+    },
     title: "账号",
     logout: "退出登录",
     username: "用户名",

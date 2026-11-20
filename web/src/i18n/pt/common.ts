@@ -32,6 +32,10 @@ export default {
     no: "Não",
   },
   shell: {
+    getStarted: {
+      title: "Comece com o DSH",
+      desc: "Ainda não conectado: instale o plugin da empresa e entre uma vez para usar os apps da empresa no DSH.",
+    },
     limited: {
       employee: "Você abriu esta página diretamente pelo DSH e entrou automaticamente. Recursos de segurança da conta, como «Meus tokens», exigem login com senha.",
       admin: "Você abriu esta página diretamente pelo DSH e entrou automaticamente, mas apenas com permissão de funcionário. Para usar recursos administrativos, entre com sua senha.",

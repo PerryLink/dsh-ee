@@ -99,6 +99,8 @@ type Menu struct {
 // DefaultMenus 是首次启动与「恢复默认」时写入的菜单。PageKey 对应前端页面注册表。
 // 按「用 / 造 / 管」组织：员工先看到应用；做应用的入口和原料在「造」；管理页面只有管理员看得到。
 // 已有部署的菜单由迁移 0013 升级（只改还是默认值的项）。
+// 侧栏默认只放每天用的 5 个页面（0043）：样板、原料、接入三页、开发两页有路由但不进侧栏，
+// 从「我的应用」「开始使用」和账号页进；管理员可以在「菜单与页面」里重新显示。
 var DefaultMenus = []Menu{
 	{Kind: "group", Title: "用", Children: []Menu{
 		{Kind: "page", Title: "企业应用", Path: "/apps", PageKey: "apps", Icon: "AppWindow", Permission: PortalView},
@@ -108,20 +110,20 @@ var DefaultMenus = []Menu{
 	{Kind: "group", Title: "造", Children: []Menu{
 		{Kind: "page", Title: "新建应用", Path: "/build/new", PageKey: "app-new", Icon: "SquarePlus", Permission: RegistryPublish},
 		{Kind: "page", Title: "我的应用", Path: "/build", PageKey: "build", Icon: "LayoutGrid", Permission: PortalView},
-		{Kind: "page", Title: "从样板复制", Path: "/build/templates", PageKey: "templates", Icon: "Copy", Permission: RegistryPublish},
-		{Kind: "page", Title: "原料", Path: "/build/materials", PageKey: "materials", Icon: "Layers", Permission: PortalView},
+		{Kind: "page", Title: "从样板复制", Path: "/build/templates", PageKey: "templates", Icon: "Copy", Permission: RegistryPublish, Hidden: true},
+		{Kind: "page", Title: "原料", Path: "/build/materials", PageKey: "materials", Icon: "Layers", Permission: PortalView, Hidden: true},
 		// 插件只在「原料 → 高级选项」里出现，这一页不进侧边栏
 		{Kind: "page", Title: "分享插件", Path: "/publish", PageKey: "publish", Icon: "Upload", Permission: PortalView, Hidden: true},
 	}},
 	{Kind: "group", Title: "接入", Children: []Menu{
-		{Kind: "page", Title: "下载 DSH", Path: "/dsh", PageKey: "dsh-download", Icon: "Download", Permission: PortalView},
-		{Kind: "page", Title: "接入指南", Path: "/setup", PageKey: "setup", Icon: "Terminal", Permission: PortalView},
-		{Kind: "page", Title: "我的令牌", Path: "/tokens", PageKey: "my-keys", Icon: "KeyRound", Permission: KeysSelf},
+		{Kind: "page", Title: "下载 DSH", Path: "/dsh", PageKey: "dsh-download", Icon: "Download", Permission: PortalView, Hidden: true},
+		{Kind: "page", Title: "接入指南", Path: "/setup", PageKey: "setup", Icon: "Terminal", Permission: PortalView, Hidden: true},
+		{Kind: "page", Title: "我的令牌", Path: "/tokens", PageKey: "my-keys", Icon: "KeyRound", Permission: KeysSelf, Hidden: true},
 	}},
 	// 开发文档与开发样例：页面是固定路由（/docs、/examples），菜单只负责侧栏入口与权限
 	{Kind: "group", Title: "开发", Children: []Menu{
-		{Kind: "page", Title: "开发文档", Path: "/docs", PageKey: "dev-docs", Icon: "BookMarked", Permission: PortalView},
-		{Kind: "page", Title: "开发样例", Path: "/examples", PageKey: "dev-examples", Icon: "FlaskConical", Permission: PortalView},
+		{Kind: "page", Title: "开发文档", Path: "/docs", PageKey: "dev-docs", Icon: "BookMarked", Permission: PortalView, Hidden: true},
+		{Kind: "page", Title: "开发样例", Path: "/examples", PageKey: "dev-examples", Icon: "FlaskConical", Permission: PortalView, Hidden: true},
 	}},
 	// 以下是管理后台：网页侧栏在 /admin 页面里只显示这些分组（见 web/src/components/layout.tsx）
 	{Kind: "group", Title: "运营", Children: []Menu{

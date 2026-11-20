@@ -31,6 +31,10 @@ export default {
     no: "No",
   },
   shell: {
+    getStarted: {
+      title: "Get started with DSH",
+      desc: "Not connected yet: install the company plugin and sign in once to use company apps in DSH.",
+    },
     limited: {
       employee: "You opened this page from DSH and were signed in automatically. Account-security features such as My tokens need your password.",
       admin: "You opened this page from DSH and were signed in automatically with employee access only. Sign in with your password to use admin features.",

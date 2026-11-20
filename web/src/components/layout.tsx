@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink, Outlet, Link, useLocation, useNavigate } from "react-router";
-import { ExternalLink, LogOut, Menu as MenuGlyph, Search, X } from "lucide-react";
+import { ChevronRight, ExternalLink, LogOut, Menu as MenuGlyph, Rocket, Search, X } from "lucide-react";
 import { WhaleMark } from "./whale-mark";
 import { useStore } from "../lib/store";
 import { useAuth } from "../lib/auth";
@@ -123,6 +123,28 @@ function SpaceSwitch({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
+/** 还没有 DSH 接入过时侧栏顶部的唯一接入入口；接入之后不再显示，接入相关页面从账号页进。 */
+function GetStartedEntry({ onNavigate }: { onNavigate: () => void }) {
+  const welcome = useApi(api.welcome);
+  const { t } = useTranslation();
+  if (!welcome.data || welcome.data.connected) return null;
+  return (
+    <Link
+      to="/get-started"
+      onClick={onNavigate}
+      data-get-started=""
+      className="group mx-1 mb-5 flex items-start gap-2.5 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5 transition-colors hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10"
+    >
+      <Rocket size={16} className="mt-0.5 shrink-0 text-brand-500" />
+      <span className="min-w-0 flex-1 leading-tight">
+        <span className="block text-sm font-semibold text-brand-700 dark:text-brand-200">{t("shell.getStarted.title")}</span>
+        <span className="mt-1 block text-xs text-neutral-600">{t("shell.getStarted.desc")}</span>
+      </span>
+      <ChevronRight size={14} className="mt-0.5 shrink-0 text-brand-400 transition-transform group-hover:translate-x-0.5" />
+    </Link>
+  );
+}
+
 function SearchButton({ onOpen }: { onOpen: () => void }) {
   const { t } = useTranslation();
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -159,6 +181,7 @@ function Sidebar({ onNavigate, onSearch }: { onNavigate: () => void; onSearch: (
       </Link>
       <SearchButton onOpen={onSearch} />
       <SpaceSwitch onNavigate={onNavigate} />
+      {space === "work" && <GetStartedEntry onNavigate={onNavigate} />}
       <div className="flex flex-col gap-5 pb-6">
         {loading && <div className="px-3 text-sm text-neutral-500">{t("shell.loadingMenus")}</div>}
         {error && (

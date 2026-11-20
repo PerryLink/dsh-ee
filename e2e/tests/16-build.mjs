@@ -28,9 +28,12 @@ export default async function (t) {
     const page = await newPage(t);
     await login(page, emp, "build-password-1");
     const sideText = await page.locator("aside").innerText();
-    for (const g of ["用", "造", "接入", "企业应用", "知识问答", "新建应用", "我的应用", "从样板复制", "原料"]) assert(sideText.includes(g), `侧边栏缺少「${g}」：${sideText}`);
-    for (const no of ["管理", "插件", "能力中心", "待审核"]) assert(!sideText.includes(no), `员工侧边栏不应出现「${no}」：${sideText}`);
-    step("员工侧边栏只有「用 / 造 / 接入 / 开发」，没有管理入口，也没有「插件」");
+    const sideLinks = (await page.locator("aside nav a").allInnerTexts()).map((s) => s.trim());
+    assertEq(sideLinks.join(","), "企业应用,知识问答,我的工作台,新建应用,我的应用", "员工侧边栏默认只放每天用的 5 页");
+    for (const no of ["管理", "插件", "能力中心", "待审核", "接入指南", "下载 DSH", "我的令牌", "开发文档", "原料"]) assert(!sideText.includes(no), `员工侧边栏不应出现「${no}」：${sideText}`);
+    // 还没接入 DSH：侧栏顶部是唯一的「开始使用」入口
+    await page.locator("aside [data-get-started]").getByText("开始使用 DSH").waitFor();
+    step("员工侧边栏只放每天用的 5 页；没接入 DSH 时顶部有「开始使用」，没有管理入口和「插件」");
     await shot(page, "build-nav");
     const tok = await api(page, "POST", "/api/me/tokens", { name: "dsh", scopes: ["models", "registry:read", "hub", "connections"] });
     assertEq(tok.status, 201, "接入令牌");
@@ -85,7 +88,8 @@ export default async function (t) {
     step("管理员在「分享申请」里通过，作者看到「已分享」");
 
     // ---- 原料：插件收在高级选项里 ----
-    await nav(page, { name: "原料" });
+    await nav(page, { name: "我的应用" });
+    await page.locator("main").getByRole("button", { name: "原料" }).click();
     await page.getByRole("tab", { name: "知识库" }).waitFor();
     assert(!(await page.locator("main").innerText()).includes("插件"), "原料页默认不应出现「插件」");
     await page.getByRole("button", { name: "显示高级选项" }).click();
@@ -93,7 +97,8 @@ export default async function (t) {
     step("原料页列出知识库、连接、技能、提示词；插件在高级选项里");
 
     // ---- 从样板复制 ----
-    await nav(page, { name: "从样板复制" });
+    await nav(page, { name: "我的应用" });
+    await page.locator("main").getByRole("button", { name: "从样板复制" }).click();
     const card = page.locator("div.rounded-lg", { hasText: `E2E 样板 ${tag}` }).last();
     await card.getByRole("button", { name: "复制为我的应用" }).click();
     await page.waitForURL(/\/build\/new\?from=\d+/);

@@ -29,6 +29,10 @@ export default {
     no: "否",
   },
   shell: {
+    getStarted: {
+      title: "开始使用 DSH",
+      desc: "还没接入 DSH：装好企业插件、登录一次，就能在 DSH 里用企业应用。",
+    },
     limited: {
       employee: "你是从 DSH 直接打开的网页，已自动登录。「我的令牌」等涉及账号安全的功能需要输入密码登录。",
       admin: "你是从 DSH 直接打开的网页，已自动登录，但只有员工权限。要用管理功能，请输入密码登录。",
