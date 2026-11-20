@@ -201,18 +201,18 @@ export default {
   },
   kbSources: {
     title: "Fontes de conhecimento",
-    desc: "Conecte as bases de conhecimento que a empresa já tem: a sincronização traz o conteúdo para esta base periodicamente; a pesquisa federada não copia nada e consulta em tempo real com a identidade do próprio funcionário.",
+    desc: "Sincronize conhecimento ou busque na origem com a identidade do funcionário.",
     empty: "Ainda não há fontes de conhecimento conectadas.",
     add: "Conectar uma fonte de conhecimento",
-    noExtensions: "Não há extensões para conectar: primeiro um administrador precisa instalar uma extensão de serviço que implemente a interface de fontes de conhecimento, ou configurar o aplicativo Feishu nos métodos de login.",
+    noExtensions: "Instale uma extensão de conhecimento ou configure um aplicativo Feishu.",
     extension: "Origem",
     mode: {
       sync: "Sincronização",
       federated: "Pesquisa federada",
     },
     modeDesc: {
-      sync: "Traz periodicamente o escopo marcado para esta base de conhecimento; o conteúdo não carrega as permissões do sistema de origem, e quem pode ver é decidido por esta base.",
-      federated: "Não copia nada. Na pesquisa, o funcionário consulta em tempo real com a própria identidade no sistema de origem e só vê o que já podia ver.",
+      sync: "Importação periódica; valem as permissões desta base, não as da origem.",
+      federated: "Sem cópias; busque em tempo real com as permissões do funcionário na origem.",
     },
     scope: "Escopo",
     scopeHint: "Marque os espaços, pastas ou documentos a sincronizar; sem seleção significa tudo.",
@@ -299,7 +299,7 @@ export default {
     pick: "Ou escolha arquivos",
   },
   identityOAuth: {
-    mine: "Esta conexão usa a sua própria identidade no sistema externo. Autorize uma vez; o dsh-ee guarda o token por pessoa e o renova antes do vencimento.",
+    mine: "Autorize para usar sua identidade; tokens são renovados automaticamente.",
     authorized: "Autorizado",
     notAuthorized: "Ainda não autorizado",
     authorize: "Autorizar",

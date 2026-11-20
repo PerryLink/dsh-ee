@@ -166,15 +166,15 @@ export default {
   },
   kbSources: {
     title: "Knowledge sources",
-    desc: "Connect knowledge the company already has. Sync pulls content into this knowledge base on a schedule; federated search copies nothing and searches live with each employee's own identity.",
+    desc: "Sync company knowledge or search the source system as the employee.",
     empty: "No knowledge sources yet.",
     add: "Add a knowledge source",
-    noExtensions: "Nothing to connect yet: an admin needs to install a service extension that provides knowledge sources, or set up the Feishu app under sign-in methods.",
+    noExtensions: "Install a knowledge-source extension or configure a Feishu app first.",
     extension: "Source",
     mode: { sync: "Sync", federated: "Federated search" },
     modeDesc: {
-      sync: "Pulls the selected scope into this knowledge base on a schedule. Content does not carry the source's permissions; this knowledge base decides who can see it.",
-      federated: "Copies nothing. Searches live with the employee's own identity in the source, so they only see what they already could.",
+      sync: "Import on a schedule; this base’s permissions apply, not the source system’s.",
+      federated: "No copying; search live with the employee’s source-system permissions.",
     },
     scope: "Scope",
     scopeHint: "Select the spaces, folders or documents to sync; select nothing for everything.",
@@ -259,7 +259,7 @@ export default {
     pick: "Or choose files",
   },
   identityOAuth: {
-    mine: "This connection uses your own identity in the other system. Authorize once; dsh-ee keeps your token and refreshes it before it expires.",
+    mine: "Authorize once to use your own identity; tokens refresh automatically.",
     authorized: "Authorized",
     notAuthorized: "Not authorized",
     authorize: "Authorize",

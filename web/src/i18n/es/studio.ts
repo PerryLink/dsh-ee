@@ -5,10 +5,10 @@ import type { Messages } from "../types";
 export default {
   "studio": {
     "previewTitle": "Vista previa en vivo",
-    "previewHint": "Los datos se obtienen con tu identidad y se ven igual que en la barra lateral de DSH y en la web. Aquí los botones no hablan realmente con la IA ni escriben datos.",
+    "previewHint": "Vista con tu identidad; sin llamadas a IA ni escritura de datos.",
     "refresh": "Actualizar datos",
     "untitled": "Aplicación sin título",
-    "noWorkbench": "Aún no hay banco de trabajo. Inserta el ejemplo en «Banco de trabajo» a la izquierda, o copia una plantilla.",
+    "noWorkbench": "Inserta un ejemplo de panel a la izquierda o copia una plantilla.",
     "webPane": "En DSH, este panel abre una página web:",
     "docPane": "Los documentos citados de la base de conocimiento se abren en este panel.",
     "previewSend": "En DSH, este botón envía lo siguiente a la IA:",

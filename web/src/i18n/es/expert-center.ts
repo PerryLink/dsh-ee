@@ -16,7 +16,7 @@ export default {
       "newExpert": "New expert",
       "form": "Form",
       "formAppHint": "Apps can have a workbench, data tables and a web version.",
-      "formExpertHint": "An expert is a domain role: role description, working method and task examples, plus the skills and systems it may use. No workbench, data tables or web version.",
+      "formExpertHint": "Configura rol, métodos y capacidades; sin panel, tablas ni aplicación web.",
       "role": "Role description",
       "roleHint": "Who it is, what it is good at and how it talks to employees. Goes at the top of the summon instructions.",
       "method": "Working method",
@@ -27,7 +27,7 @@ export default {
       "examples": "Task examples",
       "examplesHint": "One per line; clicking an example in DSH starts with it.",
       "members": "Team members",
-      "membersHint": "Optional, up to 5 experts. When summoned, this expert leads: it splits the task, does each part per the member's role brief, then combines the result."
+      "membersHint": "Opcional, hasta 5; este experto delega y resume."
     },
     "groups": {
       "app": "Experts & apps",
@@ -99,7 +99,7 @@ export default {
       }
     },
     "agent": {
-      "intro": "No need to fill in every field: describe the expert you want, copy the prompt below and send it to the AI in DSH. It reads the expert design guide, checks which systems and knowledge bases you can use, shows you the role, working method and task examples to confirm, then creates an expert only you can use. To change it later, just tell it in DSH.",
+      "intro": "Describe el experto y envía el mensaje a DSH; confirma el plan para crearlo solo para ti.",
       "describeTitle": "1. Describe the expert you want",
       "describePlaceholder": "e.g. A contract review expert that helps legal and procurement check payment terms, liability and confidentiality clauses in purchase contracts, listing risks and suggested edits",
       "example": {
@@ -121,10 +121,10 @@ export default {
         }
       },
       "steps": [
-        "The AI reads the skill dsh-ee-expert-design (expert design guide) and uses ee_hub to check the skills, systems and knowledge bases you can use.",
-        "It lists the slug, title, role description, working method, expertise and task examples for you to confirm — just say what to change.",
-        "Once you confirm, it creates a just-for-me expert with ee_hub create (for_me): no review, it shows up right away in the DSH right sidebar under “Experts · Skills · Connectors”.",
-        "To share it, change its availability on the web; admins can also categorize and feature it."
+        "La IA consulta las guías de expertos y las capacidades disponibles.",
+        "Confirma el rol, los métodos y las tareas de ejemplo.",
+        "Tras confirmar, crea un experto privado sin revisión.",
+        "Comparte cambiando el acceso; los administradores pueden clasificarlo y destacarlo."
       ],
       "iterate": [
         "Add a step to /<slug>'s working method: confirm the contract amount first",

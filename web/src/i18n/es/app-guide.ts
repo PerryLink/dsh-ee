@@ -7,7 +7,7 @@ export default {
     "howItWorks": "¿Cómo funciona?",
     "tabAgent": "Que la IA lo cree (recomendado)",
     "tabManual": "Configurar manualmente",
-    "intro": "No hace falta rellenar todos los campos aquí: describe lo que quieres, copia el prompt de abajo y envíalo a la IA en DSH. Lee la guía de diseño, comprueba qué sistemas puedes usar, te muestra un plan para confirmar y luego crea una aplicación que solo puedes usar tú.",
+    "intro": "Describe lo que necesitas y envía el mensaje a DSH; confirma el plan para crear una aplicación privada.",
     "describeTitle": "1. Describe la aplicación que quieres",
     "describeLabel": "Qué debe hacer",
     "describePlaceholder": "p. ej. Inscripciones para la salida de equipo de la próxima semana: recoger nombre, turno y necesidades dietéticas, contar personas por turno; yo veo las inscripciones de todos",
@@ -38,7 +38,7 @@ export default {
     "knowledgeLabel": "Bases de conocimiento a consultar (opcional)",
     "noKnowledge": "Aún no hay bases de conocimiento que puedas leer.",
     "needTables": "Almacenar sus propios datos",
-    "needTablesDesc": "Inscripciones, registros, libros: datos que produce la propia aplicación. La IA diseña tablas integradas y formularios de entrada.",
+    "needTablesDesc": "La IA diseña tablas y formularios para tu aplicación.",
     "needWeb": "Abrir también en el navegador y en el móvil",
     "needWebDesc": "Activa la versión web (/a/slug); los formularios se pueden enviar desde el navegador.",
     "promptTitle": "2. Copia el prompt y envíalo a DSH",
@@ -49,10 +49,10 @@ export default {
     "emptyDesc": "Escribe primero una línea sobre lo que quieres.",
     "stepsTitle": "Qué pasa después",
     "steps": [
-      "La IA lee el skill dsh-ee-app-design (guía de diseño de aplicaciones) y usa ee_hub para comprobar los sistemas y las API que puedes usar.",
-      "Enumera el slug, el título, la persona, las preguntas iniciales, el banco de trabajo y las tablas para que los confirmes; basta con decir qué cambiar.",
-      "Cuando confirmes, crea una aplicación solo para mí con ee_hub create (for_me): sin revisión, aparece de inmediato en tu DSH.",
-      "Encuéntrala en «Mis aplicaciones»: consulta el panorama, pruébala y cambia el ámbito para compartirla."
+      "La IA consulta las guías de diseño y los sistemas disponibles.",
+      "Confirma el plan o pide cambios.",
+      "Tras confirmar, crea una aplicación privada sin revisión.",
+      "Pruébala, edítala o compártela en Mis aplicaciones."
     ],
     "notReady": "¿Aún no has instalado o conectado DSH?",
     "goSetup": "Ir a Empezar",
@@ -86,7 +86,7 @@ export default {
   },
   "appMap": {
     "title": "Panorama de la aplicación",
-    "desc": "De dónde vienen los datos de esta aplicación, qué sistemas y API usa, qué datos puede leer y escribir y qué te aporta.",
+    "desc": "Consulta fuentes de datos, dependencias y funciones.",
     "summary": {
       "systems": "{{count}} sistemas",
       "tools": "{{count}} API",
@@ -134,7 +134,7 @@ export default {
       "gone": "Ya no existe"
     },
     "opsTitle": "Con qué datos puede trabajar",
-    "opsDesc": "Según tus permisos actuales. Cada escritura en un sistema de negocio requiere tu confirmación en una tarjeta de aprobación; las tablas integradas las edita la aplicación directamente.",
+    "opsDesc": "Cada escritura en sistemas requiere aprobación; las tablas de la aplicación se editan directamente.",
     "col": {
       "target": "Datos",
       "where": "Desde",
@@ -160,7 +160,7 @@ export default {
     "noOps": "Esta aplicación no lee ni escribe ningún dato."
   },
   "connAgent": {
-    "intro": "Olvídate del formulario campo por campo: describe el sistema que quieres conectar y cómo, copia el prompt de abajo y envíaselo a la IA en DSH. Comprueba si el sistema ya está conectado, te enumera los campos para que los confirmes y luego crea la conexión; después introduces las credenciales en la página.",
+    "intro": "Describe el sistema en DSH; confirma la configuración e introduce las credenciales en la web.",
     "describeTitle": "1. Describe el sistema",
     "describeLabel": "Qué conectar y para qué",
     "describePlaceholder": "p. ej. nuestro sistema de viajes: los empleados consultan sus solicitudes de viaje, envían gastos y revisan su estado; puedo pegar la especificación OpenAPI abajo",
@@ -212,10 +212,10 @@ export default {
     "manualHint": "¿Prefieres rellenar los campos tú mismo o ajustar los detalles? Usa la configuración manual.",
     "stepsTitle": "Qué pasa después",
     "steps": [
-      "La IA comprueba con ee_hub search si este sistema ya está conectado y te avisa si es así.",
-      "Te enumera el nombre, el tipo de conexión, el endpoint, la autenticación y la descripción para que los confirmes; di qué cambiar hasta que esté bien.",
+      "La IA comprueba primero si ya existe la conexión.",
+      "Confirma la configuración o pide cambios.",
       "Cuando confirmes, crea la conexión con ee_hub create (puede pasar por revisión según la configuración).",
-      "De vuelta en la página de la conexión, introduce las credenciales y pruébala; la lista de herramientas se sincroniza sola. Después abre el alcance a tus compañeros."
+      "Introduce credenciales y prueba en la web; después configura el acceso."
     ],
     "notReady": "¿DSH aún no está instalado o conectado?",
     "goSetup": "Ir a la guía de configuración",

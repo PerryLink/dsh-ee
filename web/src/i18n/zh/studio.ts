@@ -2,10 +2,10 @@
 export default {
   studio: {
     previewTitle: "实时预览",
-    previewHint: "以你的身份取数，和 DSH 右侧栏、网页版长得一样；按钮不会真的发给 AI，也不会写数据。",
+    previewHint: "以你的身份预览；不会调用 AI 或写入数据。",
     refresh: "刷新数据",
     untitled: "未命名应用",
-    noWorkbench: "还没有工作台。在左边「工作台」里插入示例，或者从样板复制一个。",
+    noWorkbench: "在左侧插入工作台示例，或从样板复制。",
     webPane: "这个窗格在 DSH 里打开网页：",
     docPane: "引用的知识库原文会在这个窗格里打开。",
     previewSend: "在 DSH 里，这个按钮会把下面这段话发给 AI：",

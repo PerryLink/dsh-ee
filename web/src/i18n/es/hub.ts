@@ -130,9 +130,9 @@ export default {
   "dataHub": {
     "tabConnections": "Conexiones de empresa",
     "tabData": "Plataforma de datos",
-    "desc": "La «fuente única de datos» compartida por la empresa: suba CSV / Excel para crear tablas y escriba conjuntos de datos (consultas de solo lectura con nombre) para el banco de trabajo de las aplicaciones y la IA de DSH. Los datos se guardan en una base de datos independiente ({{db}}) y las consultas se ejecutan con una cuenta de solo lectura.",
+    "desc": "Sube tablas a {{db}} y crea conjuntos de solo lectura para aplicaciones e IA.",
     "offTitle": "La plataforma de datos no está activada",
-    "offHint": "De forma predeterminada se crea una base de datos «nombre_de_la_base_principal_data» en el servidor de la base principal; si la cuenta de base de datos no puede crear bases, pida al DBA que la cree y rellene DSH_EE_DATA_DSN, además de la cuenta de solo lectura DSH_EE_DATA_READ_DSN si hace falta.",
+    "offHint": "Pide al DBA crear la base y configurar DSH_EE_DATA_DSN; opcionalmente usa DSH_EE_DATA_READ_DSN de solo lectura.",
     "tables": "Tablas",
     "noTables": "Aún no hay tablas: pruebe a subir un CSV o un Excel.",
     "file": "Archivo",
@@ -162,7 +162,7 @@ export default {
     "dropConfirm": "¿Eliminar la tabla {{name}}? Los conjuntos de datos que la usan dejarán de devolver datos.",
     "dropSetConfirm": "¿Eliminar el conjunto de datos «{{title}}»? El banco de trabajo de las aplicaciones que lo usan no podrá obtener datos.",
     "datasets": "Conjuntos de datos",
-    "datasetsDesc": "La fuente de datos del banco de trabajo se escribe como {\"dataset\": identificador}; la IA de DSH consulta con data__dataset. Los empleados solo pueden usar conjuntos de datos dentro de su alcance de disponibilidad.",
+    "datasetsDesc": "Usa dataset en paneles o data__dataset en IA; solo se accede a conjuntos autorizados.",
     "noDatasets": "Aún no hay conjuntos de datos.",
     "newDataset": "Nuevo conjunto de datos",
     "dsSlug": "Identificador",
@@ -170,7 +170,7 @@ export default {
     "dsTitle": "Título",
     "dsDescription": "Descripción",
     "dsDescriptionHint": "La IA lo usa para decidir cuándo usar este conjunto de datos",
-    "sqlHint": "Solo puede ser un SELECT (se permite WITH). Los nombres de columna pueden estar en chino; use AS para darles un alias en inglés y facilitar la referencia desde el banco de trabajo. Los parámetros se escriben :nombre; estos se rellenan automáticamente con el empleado actual: {{auto}}",
+    "sqlHint": "Un SELECT, admite WITH; parámetros :nombre. Automáticos: {{auto}}",
     "params": "Parámetros",
     "auto": "Automático",
     "paramTitle": "Descripción del parámetro",
@@ -208,7 +208,7 @@ export default {
   },
   "appData": {
     "label": "Tabla de datos (opcional)",
-    "hint": "Pequeña tabla propia de la aplicación: datos que genera la propia aplicación, como inscripciones, registros o libros de control. La fuente de datos del banco de trabajo se escribe como {\"table\": nombre_de_la_tabla} y el submit del formulario como {\"label\": …, \"table\": nombre_de_la_tabla} para guardarlos directamente. Para datos maestros como clientes o personal, haga referencia a la plataforma de datos o a los sistemas de la empresa; no guarde otra copia aquí.",
+    "hint": "Guarda aquí datos propios de la aplicación; referencia los datos maestros del centro de datos o sistemas, sin duplicarlos.",
     "insertSample": "Insertar ejemplo (inscripción a una actividad de equipo)",
     "placeholder": "[ { \"name\": \"signups\", \"title\": \"Registro de inscripciones\", \"visibility\": \"own\", \"fields\": [ … ] } ]",
     "needArray": "La tabla de datos debe escribirse como un array: [ { name, title, visibility, fields } ]",
@@ -218,7 +218,7 @@ export default {
       "author": "El autor publica"
     },
     "title": "Datos",
-    "desc": "Tablas de datos propias de esta aplicación. En las tablas de «cada uno rellena», cada persona solo ve sus propias filas, y el autor y los administradores ven todas; las filas eliminadas se conservan 30 días.",
+    "desc": "Las tablas de filas propias son visibles para el dueño, autor y administradores; las filas borradas se conservan 30 días.",
     "export": "Exportar CSV",
     "search": "Buscar en campos de texto; pulse Intro",
     "noRows": "Aún no hay datos",
@@ -237,7 +237,7 @@ export default {
   "appWorkbench": {
     "datasets": "Conjuntos de datos de la plataforma de datos que puedo usar",
     "label": "Banco de trabajo (opcional)",
-    "hint": "Panel de negocio que DSH muestra en la barra lateral derecha cuando el empleado abre esta microaplicación. Se rellena en JSON; el formato está en «Insertar ejemplo». Las fuentes de datos solo pueden ser herramientas de solo lectura de las conexiones de las que depende esta microaplicación. Si se deja vacío, no hay banco de trabajo.",
+    "hint": "Configura paneles en JSON; solo herramientas de lectura de conexiones dependientes. Vacío omite el panel.",
     "insertSample": "Insertar ejemplo",
     "preview": "Vista previa",
     "hidePreview": "Ocultar vista previa",
@@ -269,7 +269,7 @@ export default {
   },
   "editor": {
     "highlights": "Qué puede hacer por usted (una por línea, máximo 3)",
-    "highlightsHint": "Se muestra en el detalle de la aplicación y en la parte superior de la versión web para que los colegas entiendan la aplicación de un vistazo.",
+    "highlightsHint": "Se muestra en los detalles y al inicio de la aplicación web.",
     "newSkill": "Escribir una habilidad",
     "newPrompt": "Escribir un prompt",
     "newApp": "Nueva aplicación",
@@ -277,11 +277,11 @@ export default {
     "newVersion": "Enviar una nueva versión de «{{title}}»",
     "editConnection": "Editar la conexión «{{title}}»",
     "slug": "Identificador",
-    "slugHint": "Letras minúsculas, dígitos y guiones, por ejemplo expense-policy. También es el nombre del comando / en DSH; no se puede cambiar después de crearlo.",
-    "connSlugHint": "Letras minúsculas, dígitos y guiones, por ejemplo crm. Las herramientas aparecen en DSH con el prefijo mcp__<empresa>__<identificador>__; no se puede cambiar después de crearlo.",
+    "slugHint": "Minúsculas, dígitos y guiones; no cambia tras crear.",
+    "connSlugHint": "Minúsculas, dígitos y guiones; no cambia tras crear.",
     "title": "Título",
     "description": "Descripción",
-    "skillDescriptionHint": "DSH la usa para decidir cuándo usar esta habilidad: describa qué problema resuelve.",
+    "skillDescriptionHint": "Describe su propósito para que DSH sepa cuándo usarlo.",
     "descriptionHint": "Una frase que explique su finalidad; se muestra en el Centro de capacidades y en el menú / de DSH.",
     "whenToUse": "Cuándo usarla (opcional)",
     "whenToUseHint": "Por ejemplo: cuando un empleado pregunta si puede reembolsar un gasto.",
@@ -328,7 +328,7 @@ export default {
   },
   "identity": {
     "mode": "Identidad del empleado",
-    "modeHint": "Hace saber al sistema externo qué empleado está llamando; los permisos los sigue decidiendo él. Puede usarse junto con las credenciales compartidas de arriba, cada una en su cabecera.",
+    "modeHint": "Envía la identidad del empleado al sistema de origen para autorizar.",
     "none": "Sin identidad",
     "eeJwt": "Token de identidad (ee_jwt)",
     "userSecret": "Credenciales del propio empleado",
@@ -337,10 +337,10 @@ export default {
       "user_secret": "Credenciales del empleado",
       "oauth": "OAuth"
     },
-    "eeJwtDesc": "En cada llamada, dsh-ee firma un JWT válido durante 5 minutos para el empleado actual. El sistema externo valida la firma con la dirección JWKS de abajo y sabe quién es; dsh-ee no necesita guardar la contraseña del empleado en ese sistema.",
-    "userSecretDesc": "Cada empleado rellena su propio token en la página de esta conexión y se guarda cifrado por persona. Quien no lo haya rellenado recibirá un aviso para hacerlo antes de llamar. Usted solo puede ver quién lo ha rellenado, no el contenido.",
+    "eeJwtDesc": "Emite un JWT de 5 minutos; el sistema de origen lo verifica con JWKS.",
+    "userSecretDesc": "Cada empleado introduce su token; cifrado y oculto a administradores.",
     "header": "En qué cabecera se envía",
-    "headerHint": "Si se deja vacío, se usa Authorization: Bearer <valor>; si se indica un nombre, el valor se coloca tal cual en esa cabecera. No puede coincidir con la de las credenciales compartidas.",
+    "headerHint": "Vacío usa Authorization: Bearer; no repitas la cabecera de credenciales compartidas.",
     "audience": "aud (identificador del sistema externo)",
     "audienceHint": "El sistema externo lo comprueba al validar la firma para confirmar que el token se emitió para él. Si se deja vacío, se usa el identificador de la conexión.",
     "claims": "Datos adicionales en el token",
@@ -357,8 +357,8 @@ export default {
     "hintPlaceholder": "Por ejemplo: genere un token en «Configuración personal → Interfaz abierta» de OA",
     "mineTitle": "Mis credenciales",
     "asYou": "Con su propia identidad",
-    "mineEeJwt": "Al llamar a este sistema, dsh-ee presenta en su nombre un token de identidad válido solo unos minutos; el sistema externo le aplica sus propios permisos. No tiene que rellenar nada.",
-    "mineSecret": "Este sistema requiere sus propias credenciales. Una vez rellenadas, se guardan cifradas solo en dsh-ee y no se envían a su equipo; el administrador tampoco puede ver su contenido.",
+    "mineEeJwt": "Usa automáticamente un token temporal con tus permisos.",
+    "mineSecret": "Introduce tus credenciales; cifradas en el servidor y ocultas a administradores.",
     "filled": "Rellenado ({{tail}})",
     "notFilled": "Sin rellenar",
     "fillPlaceholder": "Pegue su token",
@@ -378,7 +378,7 @@ export default {
     "revokeConfirm": "¿Revocar las credenciales de {{name}} en esta conexión? Tendrá que rellenarlas de nuevo para usarla.",
     "revoked": "Credenciales de {{name}} revocadas",
     "keysTitle": "Clave de firma de ee_jwt",
-    "keysDesc": "Las conexiones que usan «token de identidad» firman con esta clave; el token es válido durante {{minutes}} minutos. Entregue las dos direcciones de abajo al desarrollador del sistema externo.",
+    "keysDesc": "Los tokens duran {{minutes}} minutos; comparte estas URL con los desarrolladores del sistema de origen.",
     "keyActive": "En uso",
     "keyPending": "Empieza a firmar el {{time}}",
     "keyRetired": "Sustituida; la clave pública seguirá publicada 24 horas más",
@@ -389,7 +389,7 @@ export default {
   },
   "connections": {
     "title": "Conexiones de empresa",
-    "desc": "Conecte los servicios MCP o las interfaces HTTP que ya tiene la empresa. Las credenciales solo se guardan en dsh-ee; el DSH del empleado llama a través de dsh-ee, con autorización por persona y registro de cada llamada.",
+    "desc": "Conecta sistemas MCP o HTTP con permisos por usuario y registro de llamadas.",
     "add": "Conectar un sistema de la empresa",
     "empty": "Aún no hay sistemas de la empresa conectados.",
     "type": "Método de conexión",
@@ -472,11 +472,11 @@ export default {
       "oauth": "OAuth (aún no compatible en esta versión)"
     },
     "identity": {
-      "ee_jwt": "En cada llamada, dsh-ee firma un JWT válido 5 minutos para el empleado actual; el sistema externo valida la firma con la clave pública de dsh-ee y sabe quién es.",
-      "user_secret": "Tras la instalación, cada empleado debe rellenar sus credenciales en «Mis credenciales» de la página de la conexión para poder usarla."
+      "ee_jwt": "Emite un JWT de empleado de 5 minutos para verificar en origen.",
+      "user_secret": "Cada empleado debe rellenar primero Mis credenciales."
     },
     "from": "De la extensión {{identity}}",
-    "fromNote": "Esta conexión la instala la extensión {{identity}}: la documentación de la API, qué herramientas son de solo lectura, quién rellena los parámetros y con qué identidad se llama los decide el manifiesto de la extensión y no se pueden cambiar aquí; para cambiarlos, instale una nueva versión de la extensión en «Conexiones de empresa»."
+    "fromNote": "Gestionado por la extensión {{identity}}; instala una nueva versión para cambiar la configuración."
   },
   "connectAdmin": {
     "title": "Plugin de integración de DSH",

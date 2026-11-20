@@ -17,7 +17,7 @@ export default {
       newExpert: "New expert",
       form: "Form",
       formAppHint: "Apps can have a workbench, data tables and a web version.",
-      formExpertHint: "An expert is a domain role: role description, working method and task examples, plus the skills and systems it may use. No workbench, data tables or web version.",
+      formExpertHint: "भूमिका, तरीके और क्षमताएँ तय करें; कार्यस्थान, टेबल या वेब ऐप नहीं।",
       role: "Role description",
       roleHint: "Who it is, what it is good at and how it talks to employees. Goes at the top of the summon instructions.",
       method: "Working method",
@@ -28,7 +28,7 @@ export default {
       examples: "Task examples",
       examplesHint: "One per line; clicking an example in DSH starts with it.",
       members: "Team members",
-      membersHint: "Optional, up to 5 experts. When summoned, this expert leads: it splits the task, does each part per the member's role brief, then combines the result.",
+      membersHint: "वैकल्पिक, अधिकतम 5; यह विशेषज्ञ काम बाँटकर सार देगा।",
     },
     groups: { app: "Experts & apps", skill: "Skills & prompts", connection: "Connectors" },
     types: { all: "All", expert: "Expert", app: "App", skill: "Skill", prompt: "Prompt", connection: "Connector" },
@@ -60,7 +60,7 @@ export default {
       },
     },
     agent: {
-      intro: "No need to fill in every field: describe the expert you want, copy the prompt below and send it to the AI in DSH. It reads the expert design guide, checks which systems and knowledge bases you can use, shows you the role, working method and task examples to confirm, then creates an expert only you can use. To change it later, just tell it in DSH.",
+      intro: "विशेषज्ञ का वर्णन DSH को भेजें; योजना की पुष्टि पर केवल आपके लिए विशेषज्ञ बनेगा।",
       describeTitle: "1. Describe the expert you want",
       describePlaceholder: "e.g. A contract review expert that helps legal and procurement check payment terms, liability and confidentiality clauses in purchase contracts, listing risks and suggested edits",
       example: {
@@ -70,10 +70,10 @@ export default {
         team: { label: "Finance team", text: "Finance expert team: a lead with an expense expert and a tax expert; complex finance questions are split between the two members, then combined into one answer." },
       },
       steps: [
-        "The AI reads the skill dsh-ee-expert-design (expert design guide) and uses ee_hub to check the skills, systems and knowledge bases you can use.",
-        "It lists the slug, title, role description, working method, expertise and task examples for you to confirm — just say what to change.",
-        "Once you confirm, it creates a just-for-me expert with ee_hub create (for_me): no review, it shows up right away in the DSH right sidebar under “Experts · Skills · Connectors”.",
-        "To share it, change its availability on the web; admins can also categorize and feature it.",
+        "AI विशेषज्ञ निर्देश और उपलब्ध क्षमताएँ देखता है।",
+        "भूमिका, तरीके और उदाहरण कार्यों की पुष्टि करें।",
+        "पुष्टि के बाद बिना समीक्षा निजी विशेषज्ञ बनाएँ।",
+        "ऐक्सेस बदलकर साझा करें; एडमिन श्रेणी और विशेष चयन तय कर सकते हैं।",
       ],
       iterate: [
         "Add a step to /<slug>'s working method: confirm the contract amount first",

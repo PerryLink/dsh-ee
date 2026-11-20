@@ -201,18 +201,18 @@ export default {
   },
   "kbSources": {
     "title": "Orígenes de conocimiento",
-    "desc": "Conecte bases de conocimiento que ya tiene la empresa: el modo de sincronización trae el contenido a esta base de forma periódica; la búsqueda federada no copia nada y consulta en tiempo real con la identidad del propio empleado.",
+    "desc": "Sincroniza conocimiento o busca en origen con la identidad del empleado.",
     "empty": "Aún no hay orígenes de conocimiento conectados.",
     "add": "Conectar un origen de conocimiento",
-    "noExtensions": "No hay extensiones que conectar: primero un administrador debe instalar una extensión de servicio que implemente la interfaz de orígenes de conocimiento, o configurar la aplicación de Feishu en el método de inicio de sesión.",
+    "noExtensions": "Instala una extensión de conocimiento o configura una aplicación de Feishu.",
     "extension": "Origen",
     "mode": {
       "sync": "Sincronización",
       "federated": "Búsqueda federada"
     },
     "modeDesc": {
-      "sync": "Trae periódicamente a esta base de conocimiento el alcance seleccionado; el contenido no conserva los permisos del sistema de origen y quién puede verlo lo decide esta base.",
-      "federated": "No copia nada. Cuando un empleado busca, se consulta en tiempo real con su propia identidad en el sistema de origen, así que solo ve lo que ya podía ver."
+      "sync": "Importación periódica; rigen los permisos de esta base, no los de origen.",
+      "federated": "Sin copias; busca en tiempo real con los permisos del empleado en origen."
     },
     "scope": "Alcance",
     "scopeHint": "Marque los espacios, carpetas o documentos que se van a sincronizar; si no marca nada, se sincroniza todo.",
@@ -299,7 +299,7 @@ export default {
     "pick": "O elija un archivo"
   },
   "identityOAuth": {
-    "mine": "Esta conexión usa su propia identidad en el sistema externo. Autorice una vez; dsh-ee guarda los tokens por persona y los renueva automáticamente antes de que caduquen.",
+    "mine": "Autoriza para usar tu identidad; los tokens se renuevan automáticamente.",
     "authorized": "Autorizado",
     "notAuthorized": "Aún no autorizado",
     "authorize": "Autorizar",

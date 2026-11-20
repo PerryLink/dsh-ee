@@ -5,10 +5,10 @@ import type { Messages } from "../types";
 export default {
   studio: {
     previewTitle: "Pré-visualização em tempo real",
-    previewHint: "Busca dados como você; o visual é o mesmo da barra lateral do DSH e da versão web. Os botões não enviam nada de verdade para a IA nem gravam dados.",
+    previewHint: "Prévia com sua identidade; sem chamadas à IA nem gravação de dados.",
     refresh: "Atualizar dados",
     untitled: "Aplicativo sem título",
-    noWorkbench: "Ainda não há área de trabalho. Insira um exemplo em «Área de trabalho» à esquerda ou copie um modelo.",
+    noWorkbench: "Insira um exemplo de painel à esquerda ou copie um modelo.",
     webPane: "Este painel abre a página web no DSH:",
     docPane: "O texto original da base de conhecimento referenciada será aberto neste painel.",
     previewSend: "No DSH, este botão envia o texto abaixo para a IA:",
