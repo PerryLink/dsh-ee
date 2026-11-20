@@ -16,6 +16,14 @@
 | HTTPS | dsh-ee 只提供 HTTP；TLS 在反向代理/负载均衡终止 | `deploy/README.md`「HTTPS 与访问地址」 |
 | 外网 | 不必须。上游模型、npm 回源、DSH 分发、dshfind 目录都可能需要外网；隔离网用离线包导入 | `server/README.md`「npm 源」 |
 
+### 员工 DSH 依赖镜像（Python / Java）
+
+在管理后台「npm 源」底部配置 PyPI / Maven 镜像地址，例如 `https://nexus.corp/repository/pypi-group/simple`、`https://nexus.corp/repository/maven-public/`，按需填写用户名和密码 / 令牌，再显式保存。密码加密存库，设置接口不回显；留空保持原密码，清空地址并保存会移除该项和凭据。
+
+dsh-ee 只通过已认证的 `/api/dsh/catalog` 下发地址和凭据，不代理或存储 Python / Java 包，也不把凭据写进可下载的接入组合包。**请使用只读账号，并通过 HTTPS 部署：员工机器会收到明文凭据。** 镜像变化会更新目录 revision / ETag，供接入插件轮询同步。
+
+接入插件把 `pip.conf` 和 `settings.xml` 写入 DSH profile 的 `dsh-ee/` 目录（没有 profile 信息时退回 `$DSH_HOME/dsh-ee/`）；目录权限 0700、文件 0600。通过 DSH 进程环境中的 `PIP_CONFIG_FILE`、`MAVEN_ARGS` 供 shell 子进程使用，不修改员工自己的 `~/.pip` 或 `~/.m2`；Maven 需要 3.9+。启用 PyPI 时暂存并移除原有 `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL`，移除镜像或卸载插件时恢复原环境；原 Maven 参数保留在镜像参数之后。旧服务端没有 `mirrors` 字段时不改变当前配置，返回空对象时清除镜像文件并恢复环境。该配置是便利设置，不是强制访问控制。
+
 ## 2. 部署
 
 ### 2.1 离线安装包（推荐给试点）

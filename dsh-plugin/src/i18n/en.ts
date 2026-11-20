@@ -95,6 +95,8 @@ const en = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "PyPI dependency mirror active · {{host}}",
+    mirror_maven: "Maven dependency mirror active · {{host}}",
     appBindingsFix: "Reopening the micro-app creates a new binding; the corrupt file does not need manual cleanup.",
     noCredential: "No enterprise sign-in credential on this machine",
     loginFix: "Type /ee-login in the chat to sign in",

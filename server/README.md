@@ -70,6 +70,12 @@ Go 写的 dsh-ee 服务端。目前实现：
 - **DeepSeek 工具代理**：`/v1/files`、`/v1/tools/asr|tts|search|fetch|ocr` 与 Anthropic 兼容 `/anthropic/v1/files` 复用同一套 Bearer 鉴权（`models` scope + `llm.use`），按 `DSH_EE_DEEPSEEK_PROVIDER` 选一个上游（默认第一个启用且 `vendor=deepseek` 的线路），把 multipart / 查询串 / JSON 原样转发，不解析、不落盘、不缓存。Files/OCR/ASR/TTS/Search/Fetch 与 Anthropic 兼容 Files 都按上游工具计费，**不写 token 用量统计**、不占月度 token 额度；`file_id` 与所选上游绑定，Anthropic 兼容 Files 需带 `anthropic-beta: files-api-2025-04-14`。这些接口默认只允许管理员与机器人/服务账号（普通员工 403），普通员工在聊天里引用 `file_id` 也会被拦下；上传/删除/列文件写 `files.*` 审计（只记 `file_id`，不记文件名/内容）。详见 [../docs/dev/deepseek-tools.md](../docs/dev/deepseek-tools.md)。
 - 用量细项：网关从上游响应的 `usage` 里解析 `prompt_tokens` / `completion_tokens` / `total_tokens`，并在上游提供时另存两项细项——OpenAI 兼容格式的 `completion_tokens_details.reasoning_tokens` 与 `prompt_tokens_details.cached_tokens`，以及 DeepSeek 顶层的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`（命中数优先取嵌套 `cached_tokens`，其次 `prompt_cache_hit_tokens`，只给未命中数时按 `prompt_tokens - miss` 推回）。流式请求看最后一块的 `usage`；上游没给细项、旧响应或客户端中途停止时两项细项按 0 记，估算兜底仍只估 prompt / completion。细项不改变 `total_tokens` 与额度口径，月报、运营统计、个人用量接口在原有字段之外多返回 `reasoning_tokens` / `cached_tokens`。
 
+## 员工 DSH 依赖镜像（Python / Java）
+
+管理后台「npm 源」底部可设置 `mirrors.pypi`、`mirrors.maven`，每项含 `url`、可选 `username` 与只写 `secret`。例如 PyPI `https://nexus.corp/repository/pypi-group/simple`，Maven `https://nexus.corp/repository/maven-public/`。密码加密存库；设置响应只有 `hasSecret`，空密码保留旧值，清空 URL 则移除该项和凭据；URL 不允许内嵌账号密码。
+
+服务端仅在已认证的 `/api/dsh/catalog` 下发配置及明文凭据，不代理或存储这些制品，不写入可下载的接入组合包。请使用只读仓库账号并部署 HTTPS。接入插件在 DSH profile 内写入私有配置，通过进程环境供 DSH 内的 pip / Maven 使用；移除镜像时删除文件并恢复原环境，插件卸载时也恢复环境，不覆盖员工自己的配置。Maven 需要 3.9+。详见 [运维手册](../docs/operations.md)。
+
 ## npm 源
 
 ### 企业制品仓库上游

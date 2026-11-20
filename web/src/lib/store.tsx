@@ -7,6 +7,7 @@ import i18n from "../i18n";
 
 /** 与服务端 store.DefaultSettings 一致；登录前、或接口还没返回时用它。 */
 export const defaultSettings: Settings = {
+  mirrors: { pypi: { url: "", username: "", hasSecret: false }, maven: { url: "", username: "", hasSecret: false } },
   orgName: "",
   baseUrl: "",
   defaultLanguage: "zh",
@@ -69,6 +70,7 @@ interface Store {
   updateSettings: (patch: (s: Settings) => Settings) => void;
   saveUpstream: (upstream: Settings["upstream"]) => Promise<void>;
   resetSettings: () => void;
+  saveMirrors: (mirrors: Settings["mirrors"]) => Promise<void>;
   /** 员工可见的已上架能力（/api/catalog）。 */
   plugins: Plugin[];
   pluginsLoading: boolean;
@@ -162,6 +164,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       save(defaultSettings);
     },
     plugins,
+    saveMirrors: async (mirrors) => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      const saved = await api.saveSettings({ mirrors });
+      setSettings((current) => ({ ...current, mirrors: saved.mirrors }));
+    },
     pluginsLoading,
     reloadPlugins,
     pendingCount,

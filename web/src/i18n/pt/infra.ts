@@ -3,6 +3,22 @@ import type zhNs from "../zh/infra";
 import type { Messages } from "../types";
 
 export default {
+  dependencyMirrors: {
+    title: "Espelhos de dependências do DSH dos funcionários (Python / Java)",
+    description: "O dsh-ee apenas entrega URLs e credenciais ao DSH dos funcionários para pip / Maven dentro do DSH. Não faz proxy nem armazena pacotes Python / Java.",
+    warning: "Use uma conta somente leitura: as credenciais são entregues às máquinas dos funcionários. Maven requer 3.9+. Requer uma versão do plugin de conexão compatível com espelhos de dependências.",
+    pypi: "PyPI (Python)",
+    maven: "Maven (Java)",
+    url: "URL do espelho",
+    username: "Usuário (opcional)",
+    secret: "Senha / token de acesso (opcional)",
+    secretSaved: "Salvo; deixe em branco para manter",
+    optional: "Opcional",
+    clearHint: "Limpe a URL e salve para remover este espelho e suas credenciais.",
+    save: "Salvar espelhos de dependências",
+    saving: "Salvando…",
+    saved: "Espelhos de dependências salvos",
+  },
   registryAdmin: {
     repoKind: "Tipo de repositório",
     repoKinds: {

@@ -3,6 +3,22 @@ import type zhNs from "../zh/infra";
 import type { Messages } from "../types";
 
 export default {
+  dependencyMirrors: {
+    title: "Repositorios de dependencias de DSH para empleados (Python / Java)",
+    description: "dsh-ee solo entrega las URL y credenciales a DSH de los empleados para pip / Maven dentro de DSH. No actúa como proxy ni almacena paquetes Python / Java.",
+    warning: "Usa una cuenta de solo lectura: las credenciales se entregan a los equipos de los empleados. Maven requiere 3.9+. Requiere una versión del plugin de conexión compatible con estos repositorios.",
+    pypi: "PyPI (Python)",
+    maven: "Maven (Java)",
+    url: "URL del repositorio",
+    username: "Usuario (opcional)",
+    secret: "Contraseña / token de acceso (opcional)",
+    secretSaved: "Guardado; deja en blanco para conservarlo",
+    optional: "Opcional",
+    clearHint: "Borra la URL y guarda para eliminar este repositorio y sus credenciales.",
+    save: "Guardar repositorios de dependencias",
+    saving: "Guardando…",
+    saved: "Repositorios de dependencias guardados",
+  },
   "registryAdmin": {
     "repoKind": "Tipo de repositorio",
     "repoKinds": {

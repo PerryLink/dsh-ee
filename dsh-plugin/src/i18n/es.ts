@@ -100,6 +100,8 @@ const es: DeepPartial<Messages<typeof zh>> = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "Repositorio PyPI activo · {{host}}",
+    mirror_maven: "Repositorio Maven activo · {{host}}",
     appBindingsFix: "Volver a abrir la microaplicación crea una nueva vinculación; el archivo dañado no hay que eliminarlo manualmente.",
     noCredential: "No hay credenciales de inicio de sesión de empresa en este equipo",
     loginFix: "Escribe /ee-login en el chat para iniciar sesión",

@@ -3,6 +3,22 @@ import type zhNs from "../zh/infra";
 import type { Messages } from "../types";
 
 export default {
+  dependencyMirrors: {
+    title: "कर्मचारियों के DSH निर्भरता मिरर (Python / Java)",
+    description: "dsh-ee केवल DSH के अंदर pip / Maven के लिए कर्मचारियों के DSH को मिरर URL और क्रेडेंशियल देता है। यह Python / Java पैकेजों को प्रॉक्सी या संग्रहीत नहीं करता।",
+    warning: "केवल पढ़ने वाले खाते का उपयोग करें: क्रेडेंशियल कर्मचारियों की मशीनों पर भेजे जाते हैं। Maven 3.9+ आवश्यक है। निर्भरता मिरर समर्थित कनेक्ट प्लगइन संस्करण आवश्यक है।",
+    pypi: "PyPI (Python)",
+    maven: "Maven (Java)",
+    url: "मिरर URL",
+    username: "उपयोगकर्ता नाम (वैकल्पिक)",
+    secret: "पासवर्ड / एक्सेस टोकन (वैकल्पिक)",
+    secretSaved: "सहेजा गया; अपरिवर्तित रखने के लिए खाली छोड़ें",
+    optional: "वैकल्पिक",
+    clearHint: "इस मिरर और उसके क्रेडेंशियल हटाने के लिए URL खाली करके सहेजें।",
+    save: "निर्भरता मिरर सहेजें",
+    saving: "सहेजा जा रहा है…",
+    saved: "निर्भरता मिरर सहेजे गए",
+  },
   "registryAdmin": {
     "repoKind": "रिपॉज़िटरी प्रकार",
     "repoKinds": {

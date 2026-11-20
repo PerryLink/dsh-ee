@@ -2235,7 +2235,7 @@ export const api = {
 
   /** 系统设置：未登录时返回 401（静默），调用方保留默认值。 */
   settings: () => request<Settings>("GET", "/api/settings", undefined, { silent401: true }),
-  saveSettings: (s: Settings) => request<Settings>("PUT", "/api/admin/settings", s),
+  saveSettings: (s: Partial<Settings>) => request<Settings>("PUT", "/api/admin/settings", s),
   adminEmbedSettings: () => request<AdminEmbedSettings>("GET", "/api/admin/embed-settings"),
   /** 嵌入运行概览：按浏览器本地时区算「今天」，只返回聚合数量。 */
   adminEmbedStats: () => request<AdminEmbedStats>("GET", `/api/admin/embed/stats?tz=${-new Date().getTimezoneOffset()}`),

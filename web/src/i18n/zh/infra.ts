@@ -1,5 +1,21 @@
 /** npm 源与 DSH 桌面版分发（管理端）。 */
 export default {
+  dependencyMirrors: {
+    title: "员工 DSH 依赖镜像（Python / Java）",
+    description: "dsh-ee 仅把镜像地址和凭据下发给员工的 DSH，供 DSH 内的 pip / Maven 使用，不代理或存储 Python / Java 包。",
+    warning: "请使用只读账号：凭据会下发到员工机器。Maven 需要 3.9+。需配合支持依赖镜像的接入插件使用。",
+    pypi: "PyPI（Python）",
+    maven: "Maven（Java）",
+    url: "镜像地址",
+    username: "用户名（可选）",
+    secret: "密码 / 访问令牌（可选）",
+    secretSaved: "已保存，留空保持不变",
+    optional: "可选",
+    clearHint: "清空地址并保存可移除该镜像及凭据。",
+    save: "保存依赖镜像",
+    saving: "正在保存…",
+    saved: "依赖镜像已保存",
+  },
   registryAdmin: {
     repoKind: "仓库类型",
     repoKinds: {

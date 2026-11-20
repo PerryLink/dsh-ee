@@ -21,6 +21,7 @@ import { WriteLog } from "./write-log.js";
 import { createLocalMcp, registerLocalMcpCommand } from "./local-mcp.js";
 import type { DshContext, PluginConfig } from "./dsh.js";
 import { initI18n, t } from "./i18n/index.js";
+import { DependencyMirrors } from "./mirrors.js";
 
 export const name = "dsh-ee-connect";
 export const inject = {
@@ -37,6 +38,8 @@ export const inject = {
 export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
   initI18n(ctx);
   const config = normalizeConfig(input);
+  const mirrors = new DependencyMirrors(ctx);
+  ctx.effect(() => () => mirrors.dispose());
   const tokens = new TokenManager(ctx, config);
   const http = new HttpClient(tokens);
   const bridge = new McpBridge(ctx, config, http);
@@ -73,8 +76,8 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
     const appBindings = new AppBindings();
     const boards = new BoardStore();
     const checklists = new ChecklistStore();
-    registerDoctor(ctx, config, tokens, http, bridge, appBindings);
-    const skillsReady = registerSkills(ctx, config, http).then((loaded) => {
+    registerDoctor(ctx, config, tokens, http, bridge, appBindings, mirrors);
+    const skillsReady = registerSkills(ctx, config, http, mirrors).then((loaded) => {
       refreshSkills = loaded.refreshNow;
       return (skills = loaded);
     });
@@ -137,7 +140,7 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
       }),
       readOverview: () => readEnterpriseOverview(config, http, bridge).catch((error) => ({ failure: overviewFailure(config, error) })),
       login: () => commands.login(),
-      doctor: () => runLocalDoctor(ctx, config, tokens, http, bridge, appBindings),
+      doctor: () => runLocalDoctor(ctx, config, tokens, http, bridge, appBindings, mirrors),
       serverSettings: async () => server.read(),
       testServer: (request) => server.test(request?.base),
       saveServer: (request) => server.save(request?.base),

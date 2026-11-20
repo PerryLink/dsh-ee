@@ -2,6 +2,22 @@ import type zh from "../zh/infra";
 import type { Messages } from "../types";
 
 export default {
+  dependencyMirrors: {
+    title: "Employee DSH dependency mirrors (Python / Java)",
+    description: "dsh-ee only delivers mirror URLs and credentials to employees’ DSH for pip / Maven inside DSH. It does not proxy or store Python / Java packages.",
+    warning: "Use a read-only account: credentials are delivered to employee machines. Maven requires 3.9+. Requires a connect plugin version that supports dependency mirrors.",
+    pypi: "PyPI (Python)",
+    maven: "Maven (Java)",
+    url: "Mirror URL",
+    username: "Username (optional)",
+    secret: "Password / access token (optional)",
+    secretSaved: "Saved; leave blank to keep unchanged",
+    optional: "Optional",
+    clearHint: "Clear the URL and save to remove this mirror and its credentials.",
+    save: "Save dependency mirrors",
+    saving: "Saving…",
+    saved: "Dependency mirrors saved",
+  },
   registryAdmin: {
     repoKind: "Repository type",
     repoKinds: {

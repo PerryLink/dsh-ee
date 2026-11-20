@@ -120,6 +120,8 @@ var zh = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "PyPI 依赖镜像已启用 · {{host}}",
+    mirror_maven: "Maven 依赖镜像已启用 · {{host}}",
     appBindingsFix: "重新打开微应用会建立新绑定；原损坏文件无需手动删除",
     noCredential: "本机没有企业登录凭据",
     loginFix: "在对话框输入 /ee-login 登录",
@@ -684,6 +686,8 @@ var en = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "PyPI dependency mirror active · {{host}}",
+    mirror_maven: "Maven dependency mirror active · {{host}}",
     appBindingsFix: "Reopening the micro-app creates a new binding; the corrupt file does not need manual cleanup.",
     noCredential: "No enterprise sign-in credential on this machine",
     loginFix: "Type /ee-login in the chat to sign in",
@@ -1248,6 +1252,8 @@ var es = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "Repositorio PyPI activo · {{host}}",
+    mirror_maven: "Repositorio Maven activo · {{host}}",
     appBindingsFix: "Volver a abrir la microaplicación crea una nueva vinculación; el archivo dañado no hay que eliminarlo manualmente.",
     noCredential: "No hay credenciales de inicio de sesión de empresa en este equipo",
     loginFix: "Escribe /ee-login en el chat para iniciar sesión",
@@ -1812,6 +1818,8 @@ var pt = {
   },
   // doctor.ts: itens de diagnóstico do ee_local_doctor e sugestões de correção
   doctor: {
+    mirror_pypi: "Espelho PyPI ativo · {{host}}",
+    mirror_maven: "Espelho Maven ativo · {{host}}",
     appBindingsFix: "Reabrir o microapp cria um novo vínculo; o arquivo corrompido não precisa ser removido manualmente.",
     noCredential: "Não há credencial de login da empresa nesta máquina",
     loginFix: "Digite /ee-login na conversa para entrar",
@@ -2376,6 +2384,8 @@ var hi = {
   },
   // doctor.ts: ee_local_doctor checks and suggested fixes
   doctor: {
+    mirror_pypi: "PyPI निर्भरता मिरर सक्रिय · {{host}}",
+    mirror_maven: "Maven निर्भरता मिरर सक्रिय · {{host}}",
     appBindingsFix: "माइक्रो-ऐप फिर से खोलने पर नई बाइंडिंग बन जाएगी; क्षतिग्रस्त फ़ाइल को मैन्युअल रूप से हटाने की आवश्यकता नहीं है",
     noCredential: "इस मशीन पर एंटरप्राइज़ साइन इन क्रेडेंशियल नहीं है",
     loginFix: "साइन इन करने के लिए चैट में /ee-login टाइप करें",

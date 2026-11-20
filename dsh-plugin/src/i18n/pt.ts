@@ -101,6 +101,8 @@ const pt: DeepPartial<Messages<typeof zh>> = {
   },
   // doctor.ts: itens de diagnóstico do ee_local_doctor e sugestões de correção
   doctor: {
+    mirror_pypi: "Espelho PyPI ativo · {{host}}",
+    mirror_maven: "Espelho Maven ativo · {{host}}",
     appBindingsFix: "Reabrir o microapp cria um novo vínculo; o arquivo corrompido não precisa ser removido manualmente.",
     noCredential: "Não há credencial de login da empresa nesta máquina",
     loginFix: "Digite /ee-login na conversa para entrar",

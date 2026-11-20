@@ -101,6 +101,8 @@ const hi: DeepPartial<Messages<typeof zh>> = {
   },
   // doctor.ts: ee_local_doctor checks and suggested fixes
   doctor: {
+    mirror_pypi: "PyPI निर्भरता मिरर सक्रिय · {{host}}",
+    mirror_maven: "Maven निर्भरता मिरर सक्रिय · {{host}}",
     appBindingsFix: "माइक्रो-ऐप फिर से खोलने पर नई बाइंडिंग बन जाएगी; क्षतिग्रस्त फ़ाइल को मैन्युअल रूप से हटाने की आवश्यकता नहीं है",
     noCredential: "इस मशीन पर एंटरप्राइज़ साइन इन क्रेडेंशियल नहीं है",
     loginFix: "साइन इन करने के लिए चैट में /ee-login टाइप करें",

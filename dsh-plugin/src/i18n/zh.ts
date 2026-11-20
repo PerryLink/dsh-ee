@@ -92,6 +92,8 @@ const zh = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "PyPI 依赖镜像已启用 · {{host}}",
+    mirror_maven: "Maven 依赖镜像已启用 · {{host}}",
     appBindingsFix: "重新打开微应用会建立新绑定；原损坏文件无需手动删除",
     noCredential: "本机没有企业登录凭据",
     loginFix: "在对话框输入 /ee-login 登录",

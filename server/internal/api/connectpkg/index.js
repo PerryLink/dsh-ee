@@ -142,6 +142,8 @@ var zh = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "PyPI 依赖镜像已启用 · {{host}}",
+    mirror_maven: "Maven 依赖镜像已启用 · {{host}}",
     appBindingsFix: "重新打开微应用会建立新绑定；原损坏文件无需手动删除",
     noCredential: "本机没有企业登录凭据",
     loginFix: "在对话框输入 /ee-login 登录",
@@ -706,6 +708,8 @@ var en = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "PyPI dependency mirror active · {{host}}",
+    mirror_maven: "Maven dependency mirror active · {{host}}",
     appBindingsFix: "Reopening the micro-app creates a new binding; the corrupt file does not need manual cleanup.",
     noCredential: "No enterprise sign-in credential on this machine",
     loginFix: "Type /ee-login in the chat to sign in",
@@ -1270,6 +1274,8 @@ var es = {
   },
   // doctor.ts：ee_local_doctor 诊断项与修复建议
   doctor: {
+    mirror_pypi: "Repositorio PyPI activo · {{host}}",
+    mirror_maven: "Repositorio Maven activo · {{host}}",
     appBindingsFix: "Volver a abrir la microaplicación crea una nueva vinculación; el archivo dañado no hay que eliminarlo manualmente.",
     noCredential: "No hay credenciales de inicio de sesión de empresa en este equipo",
     loginFix: "Escribe /ee-login en el chat para iniciar sesión",
@@ -1834,6 +1840,8 @@ var pt = {
   },
   // doctor.ts: itens de diagnóstico do ee_local_doctor e sugestões de correção
   doctor: {
+    mirror_pypi: "Espelho PyPI ativo · {{host}}",
+    mirror_maven: "Espelho Maven ativo · {{host}}",
     appBindingsFix: "Reabrir o microapp cria um novo vínculo; o arquivo corrompido não precisa ser removido manualmente.",
     noCredential: "Não há credencial de login da empresa nesta máquina",
     loginFix: "Digite /ee-login na conversa para entrar",
@@ -2398,6 +2406,8 @@ var hi = {
   },
   // doctor.ts: ee_local_doctor checks and suggested fixes
   doctor: {
+    mirror_pypi: "PyPI निर्भरता मिरर सक्रिय · {{host}}",
+    mirror_maven: "Maven निर्भरता मिरर सक्रिय · {{host}}",
     appBindingsFix: "माइक्रो-ऐप फिर से खोलने पर नई बाइंडिंग बन जाएगी; क्षतिग्रस्त फ़ाइल को मैन्युअल रूप से हटाने की आवश्यकता नहीं है",
     noCredential: "इस मशीन पर एंटरप्राइज़ साइन इन क्रेडेंशियल नहीं है",
     loginFix: "साइन इन करने के लिए चैट में /ee-login टाइप करें",
@@ -3163,7 +3173,7 @@ var HttpClient = class {
   constructor(tokens) {
     this.tokens = tokens;
   }
-  async fetch(path10, init = {}, timeoutMs = 3e4) {
+  async fetch(path11, init = {}, timeoutMs = 3e4) {
     const current = await this.tokens.resolve();
     const headers = new Headers(init.headers);
     if (current?.value) headers.set("Authorization", `Bearer ${current.value}`);
@@ -3172,15 +3182,15 @@ var HttpClient = class {
     if (!headers.has("X-DshEE-Host")) headers.set("X-DshEE-Host", dshHost());
     const timeout = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : void 0;
     const signal = init.signal && timeout ? AbortSignal.any([init.signal, timeout]) : timeout ?? init.signal ?? void 0;
-    const response = await fetch(`${config.base}${path10}`, { ...init, headers, signal });
+    const response = await fetch(`${config.base}${path11}`, { ...init, headers, signal });
     if (response.status === 401 && current?.value) {
       const body = await response.clone().json().catch(() => null);
       if (body?.code?.startsWith("token_")) await this.tokens.invalidate(current.value);
     }
     return response;
   }
-  async json(path10, init) {
-    const response = await this.fetch(path10, init);
+  async json(path11, init) {
+    const response = await this.fetch(path11, init);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   }
@@ -3697,7 +3707,7 @@ function centerData(catalog, base) {
     legacy: !Array.isArray(catalog?.connections)
   };
 }
-async function registerSkills(ctx, config, http) {
+async function registerSkills(ctx, config, http, mirrors) {
   let catalog = { skills: [], required_plugins: [] };
   let etag = "";
   const refresh = async () => {
@@ -3705,7 +3715,9 @@ async function registerSkills(ctx, config, http) {
       const response = await http.fetch("/api/dsh/catalog", { headers: etag ? { "If-None-Match": etag } : {} });
       if (response.status === 304) return false;
       if (!response.ok) return false;
-      catalog = await response.json();
+      const next = await response.json();
+      mirrors?.apply(next.mirrors);
+      catalog = next;
       etag = response.headers.get("etag") ?? "loaded";
       return true;
     } catch {
@@ -4169,9 +4181,10 @@ function compareVersions(a, b) {
   if (!y.pre) return -1;
   return x.pre < y.pre ? -1 : 1;
 }
-async function runLocalDoctor(ctx, config, tokens, http, bridge, bindings) {
+async function runLocalDoctor(ctx, config, tokens, http, bridge, bindings, mirrors) {
   const checks = [];
   const add = (check) => checks.push(check);
+  for (const { kind, host } of mirrors?.hosts() ?? []) add({ id: `mirror.${kind}`, status: "ok", title: t(`doctor.mirror_${kind}`, { host }), detail: host });
   if (bindings?.warning()) add({ id: "app_bindings", status: "warn", title: bindings.warning(), fix: t("doctor.appBindingsFix") });
   const current = await tokens.resolve();
   if (!current?.value) {
@@ -4247,13 +4260,13 @@ function summarize(checks) {
   const warns = checks.filter((c) => c.status === "warn").length;
   return fails ? t("doctor.summaryFail", { fails, warns }) : warns ? t("doctor.summaryWarn", { warns }) : t("doctor.summaryOk");
 }
-function registerDoctor(ctx, config, tokens, http, bridge, bindings) {
+function registerDoctor(ctx, config, tokens, http, bridge, bindings, mirrors) {
   const dispose = ctx.tools.register({
     name: "ee_local_doctor",
     description: t("doctor.description"),
     parameters: { type: "object", properties: {} },
     output: { schema: {}, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
-    execute: async () => runLocalDoctor(ctx, config, tokens, http, bridge, bindings)
+    execute: async () => runLocalDoctor(ctx, config, tokens, http, bridge, bindings, mirrors)
   });
   ctx.effect(() => dispose);
 }
@@ -7414,6 +7427,91 @@ function registerLocalMcpCommand(ctx, local) {
   }
 }
 
+// src/mirrors.ts
+import fs9 from "node:fs";
+import path10 from "node:path";
+var xml = (value) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]);
+var DependencyMirrors = class {
+  dir;
+  active = /* @__PURE__ */ new Map();
+  disposed = false;
+  constructor(ctx) {
+    const profile = ctx.get("profileContext")?.dir;
+    this.dir = path10.join(typeof profile === "string" && profile ? profile : dshHome(), "dsh-ee");
+  }
+  hosts() {
+    return [...this.active].map(([kind, value]) => ({ kind, host: value.host }));
+  }
+  apply(mirrors) {
+    if (mirrors === void 0 || this.disposed) return;
+    for (const kind of ["pypi", "maven"]) {
+      const mirror = mirrors[kind];
+      const file = path10.join(this.dir, kind === "pypi" ? "pip.conf" : "settings.xml");
+      if (!mirror?.url) {
+        fs9.rmSync(file, { force: true });
+        this.restore(kind);
+        continue;
+      }
+      const url = new URL(mirror.url);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || /[\r\n\0]/.test(mirror.url + (mirror.username ?? "") + (mirror.secret ?? ""))) throw new Error("Invalid dependency mirror");
+      let content;
+      if (kind === "pypi") {
+        if (mirror.username) {
+          url.username = encodeURIComponent(mirror.username);
+          url.password = encodeURIComponent(mirror.secret ?? "");
+        }
+        content = `[global]
+index-url = ${url.href}
+`;
+        if (url.protocol === "http:") content += `trusted-host = ${url.hostname}
+`;
+      } else {
+        content = `<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0">
+  <mirrors><mirror><id>dsh-ee-mirror</id><mirrorOf>*</mirrorOf><url>${xml(mirror.url)}</url></mirror></mirrors>
+${mirror.username ? `  <servers><server><id>dsh-ee-mirror</id><username>${xml(mirror.username)}</username><password>${xml(mirror.secret ?? "")}</password></server></servers>
+` : ""}</settings>
+`;
+      }
+      fs9.mkdirSync(this.dir, { recursive: true, mode: 448 });
+      fs9.chmodSync(this.dir, 448);
+      const existing = fs9.lstatSync(file, { throwIfNoEntry: false });
+      if (existing?.isSymbolicLink()) throw new Error("Invalid dependency mirror file");
+      if (existing) fs9.chmodSync(file, 384);
+      if (!existing || fs9.readFileSync(file, "utf8") !== content) fs9.writeFileSync(file, content, { mode: 384 });
+      fs9.chmodSync(file, 384);
+      if (!this.active.has(kind)) {
+        const keys = kind === "pypi" ? ["PIP_CONFIG_FILE", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"] : ["MAVEN_ARGS"];
+        this.active.set(kind, { host: url.host, previous: Object.fromEntries(keys.map((key) => [key, process.env[key]])) });
+      }
+      this.active.get(kind).host = url.host;
+      if (kind === "pypi") {
+        process.env.PIP_CONFIG_FILE = file;
+        delete process.env.PIP_INDEX_URL;
+        delete process.env.PIP_EXTRA_INDEX_URL;
+      } else {
+        const quoted = `"${file.replace(/([\\"])/g, "\\$1")}"`;
+        const original = this.active.get(kind).previous.MAVEN_ARGS;
+        process.env.MAVEN_ARGS = `-s ${quoted}${original ? ` ${original}` : ""}`;
+      }
+    }
+  }
+  restore(kind) {
+    const state = this.active.get(kind);
+    if (!state) return;
+    for (const [key, value] of Object.entries(state.previous)) {
+      if (value === void 0) delete process.env[key];
+      else process.env[key] = value;
+    }
+    this.active.delete(kind);
+  }
+  dispose() {
+    this.disposed = true;
+    this.restore("pypi");
+    this.restore("maven");
+  }
+};
+
 // src/index.ts
 var name = "dsh-ee-connect";
 var inject = {
@@ -7429,6 +7527,8 @@ var inject = {
 function apply(ctx, input) {
   initI18n(ctx);
   const config = normalizeConfig(input);
+  const mirrors = new DependencyMirrors(ctx);
+  ctx.effect(() => () => mirrors.dispose());
   const tokens = new TokenManager(ctx, config);
   const http = new HttpClient(tokens);
   const bridge = new McpBridge(ctx, config, http);
@@ -7460,8 +7560,8 @@ function apply(ctx, input) {
     const appBindings = new AppBindings();
     const boards = new BoardStore();
     const checklists = new ChecklistStore();
-    registerDoctor(ctx, config, tokens, http, bridge, appBindings);
-    const skillsReady = registerSkills(ctx, config, http).then((loaded) => {
+    registerDoctor(ctx, config, tokens, http, bridge, appBindings, mirrors);
+    const skillsReady = registerSkills(ctx, config, http, mirrors).then((loaded) => {
       refreshSkills = loaded.refreshNow;
       return skills = loaded;
     });
@@ -7523,7 +7623,7 @@ function apply(ctx, input) {
       }),
       readOverview: () => readEnterpriseOverview(config, http, bridge).catch((error) => ({ failure: overviewFailure(config, error) })),
       login: () => commands.login(),
-      doctor: () => runLocalDoctor(ctx, config, tokens, http, bridge, appBindings),
+      doctor: () => runLocalDoctor(ctx, config, tokens, http, bridge, appBindings, mirrors),
       serverSettings: async () => server.read(),
       testServer: (request) => server.test(request?.base),
       saveServer: (request) => server.save(request?.base),

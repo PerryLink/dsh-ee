@@ -108,7 +108,7 @@ func ValidateStoredSettings(ctx context.Context, st *store.Store) error {
 // 每一段设置由哪个权限点管：npm 源页面能改路由与上游，系统设置页能改全部。
 func sectionPerms(field string) []string {
 	switch field {
-	case "Scope", "Registry":
+	case "Scope", "Registry", "Mirrors":
 		return []string{rbac.SettingsManage, rbac.RegistryManage}
 	case "Upstream":
 		return []string{rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage}
@@ -158,6 +158,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		writeErrCode(w, http.StatusBadRequest, codeSettingsInvalidValue, nil, msg)
 		return
 	}
+	if err := s.sealDependencyMirrors(&next.Mirrors); err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
 	// 认证方式由 LDAP 配置的开关决定；LogoRev 只能由 logo 上传接口更新。
 	next.Auth = cur.Auth
 	next.Brand.LogoRev = cur.Brand.LogoRev
@@ -198,6 +202,9 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 const maxFeedSources = 10
 
 func validateSettings(v *store.AppSettings) string {
+	if msg := validateDependencyMirrors(&v.Mirrors); msg != "" {
+		return msg
+	}
 	if !slices.Contains([]string{"", "npm", "nexus", "artifactory", "gitlab", "github", "verdaccio", "other"}, v.Upstream.RepoKind) {
 		return "不支持的上游仓库类型"
 	}

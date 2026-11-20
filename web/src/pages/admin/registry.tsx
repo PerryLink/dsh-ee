@@ -10,6 +10,7 @@ import { LoadState } from "../../components/api-ui";
 import { Badge, Button, Card, CardHeader, CopyBox, cx, Field, inputBase, inputCls, PageHeader, Segmented, Stat, StatStrip, Toggle, Empty } from "../../components/ui";
 import { Trans, useTranslation } from "react-i18next";
 import { PageLink } from "../../lib/menus";
+import DependencyMirrorsCard from "./dependency-mirrors";
 
 const upstreamLabel: Record<Settings["upstream"]["registry"], string> = {
   npmmirror: "registry.npmmirror.com",
@@ -184,6 +185,7 @@ export default function AdminRegistry() {
       </div>
 
       <TokensCard requireToken={s.registry.requireToken} onRequireToken={(v) => setReg({ requireToken: v })} />
+      <DependencyMirrorsCard />
     </div>
   );
 }

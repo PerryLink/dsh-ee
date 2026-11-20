@@ -79,6 +79,7 @@ export interface DshClient {
 }
 
 export interface Settings {
+  mirrors: Record<"pypi" | "maven", { url: string; username: string; secret?: string; hasSecret: boolean }>;
   orgName: string;
   baseUrl: string;
   /** 组织默认语言（规范短码 zh/en/es/pt/hi）；员工没设置语言偏好时用它。 */

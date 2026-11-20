@@ -183,6 +183,8 @@ type dshConn struct {
 }
 
 type dshCatalog struct {
+	mirrorSettings store.DependencyMirrors
+
 	Skills []dshSkill `json:"skills"`
 	// 员工可用的微应用，给接入插件画「企业应用」入口；旧插件忽略这个字段
 	Apps []dshApp `json:"apps"`
@@ -405,6 +407,9 @@ func (s *Server) userCatalog(ctx context.Context, v viewer) (*dshCatalog, error)
 	c.Brand = brand
 	// 修订号：目录里任何会影响 DSH 的东西变了，它就变
 	h := sha256.New()
+	c.mirrorSettings = set.Mirrors
+	_ = json.NewEncoder(h).Encode(set.Mirrors)
+	_ = json.NewEncoder(h).Encode([]string{set.Mirrors.PyPI.SecretEnc, set.Mirrors.Maven.SecretEnc})
 	_ = json.NewEncoder(h).Encode(c.Skills)
 	_ = json.NewEncoder(h).Encode(c.Apps)
 	_ = json.NewEncoder(h).Encode(c.AvailableApps)
@@ -463,14 +468,22 @@ func (s *Server) handleDshCatalog(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
+	mirrors, err := s.dependencyMirrors(c.mirrorSettings)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
 	etag := `"` + c.Revision + `"`
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "private, no-store")
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	writeJSON(w, http.StatusOK, struct {
+		*dshCatalog
+		Mirrors map[string]deliveredDependencyMirror `json:"mirrors"`
+	}{c, mirrors})
 }
 
 // GET /api/dsh/skills/{name}：技能、提示词或微应用的正文。

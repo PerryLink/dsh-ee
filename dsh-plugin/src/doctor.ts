@@ -6,6 +6,7 @@ import type { DshContext, PluginConfig } from "./dsh.js";
 import type { HttpClient } from "./http.js";
 import type { TokenManager } from "./token.js";
 import type { AppBindings } from "./app-bindings.js";
+import type { DependencyMirrors } from "./mirrors.js";
 
 export interface Check {
   id: string;
@@ -33,9 +34,10 @@ export function compareVersions(a: string, b: string): number {
   return x.pre < y.pre ? -1 : 1;
 }
 
-export async function runLocalDoctor(ctx: DshContext, config: PluginConfig, tokens: TokenManager, http: HttpClient, bridge: McpBridge, bindings?: AppBindings): Promise<{ summary: string; checks: Check[] }> {
+export async function runLocalDoctor(ctx: DshContext, config: PluginConfig, tokens: TokenManager, http: HttpClient, bridge: McpBridge, bindings?: AppBindings, mirrors?: DependencyMirrors): Promise<{ summary: string; checks: Check[] }> {
   const checks: Check[] = [];
   const add = (check: Check) => checks.push(check);
+  for (const { kind, host } of mirrors?.hosts() ?? []) add({ id: `mirror.${kind}`, status: "ok", title: t(`doctor.mirror_${kind}`, { host }), detail: host });
   if (bindings?.warning()) add({ id: "app_bindings", status: "warn", title: bindings.warning(), fix: t("doctor.appBindingsFix") });
 
   const current = await tokens.resolve();
@@ -141,13 +143,13 @@ function summarize(checks: Check[]): string {
 }
 
 /** 注册本机只读工具 ee_local_doctor。修复交给模型用 DSH 自带的文件 / shell 工具做（有 DSH 自己的审批），这里不改任何文件。 */
-export function registerDoctor(ctx: DshContext, config: PluginConfig, tokens: TokenManager, http: HttpClient, bridge: McpBridge, bindings?: AppBindings): void {
+export function registerDoctor(ctx: DshContext, config: PluginConfig, tokens: TokenManager, http: HttpClient, bridge: McpBridge, bindings?: AppBindings, mirrors?: DependencyMirrors): void {
   const dispose = ctx.tools.register({
     name: "ee_local_doctor",
     description: t("doctor.description"),
     parameters: { type: "object", properties: {} },
     output: { schema: {}, render: (_args: unknown, value: unknown) => [{ type: "text", text: JSON.stringify(value) }] },
-    execute: async () => runLocalDoctor(ctx, config, tokens, http, bridge, bindings),
+    execute: async () => runLocalDoctor(ctx, config, tokens, http, bridge, bindings, mirrors),
   });
   ctx.effect(() => dispose);
 }
