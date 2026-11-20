@@ -365,6 +365,20 @@ func TestDingTalkLoginAndBotChat(t *testing.T) {
 	streamSend("msg-1", "staff-42", "", "1", "text", "redelivery")
 	code, body = dsh.do("GET", next, nil, bearer(token))
 	expect(t, "Stream retries are deduplicated", code, 204, body)
+	streamSend("msg-retry", "staff-42", "", "1", "text", "Retry if not answered")
+	code, body = dsh.do("GET", next, nil, bearer(token))
+	expect(t, "deliver retry candidate", code, 200, body)
+	retry := decodeAs[store.DingTalkChat](t, body)
+	code, body = dsh.do("GET", next, nil, bearer(token))
+	expect(t, "do not redeliver immediately", code, 204, body)
+	if _, err := st.DB().ExecContext(ctx, "UPDATE dingtalk_chat_messages SET delivered_at=? WHERE id=?", time.Now().UTC().Add(-11*time.Minute), retry.ID); err != nil {
+		t.Fatal(err)
+	}
+	code, body = dsh.do("GET", next, nil, bearer(token))
+	expect(t, "redeliver unanswered message", code, 200, body)
+	if m := decodeAs[store.DingTalkChat](t, body); m.ID != retry.ID || m.Text != "Retry if not answered" {
+		t.Fatalf("unexpected redelivery: %+v", m)
+	}
 	code, body = employee.do("GET", "/api/me/dingtalk-chat", nil, nil)
 	expect(t, "employee connection status", code, 200, body)
 	for _, flag := range []string{`"available":true`, `"enabled":true`, `"bound":true`, `"online":true`} {
