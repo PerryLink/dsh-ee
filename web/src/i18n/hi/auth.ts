@@ -21,8 +21,8 @@ export default {
       "account": "उपयोगकर्ता नाम {{username}} · पासवर्ड {{password}}",
       "reset": "डेटा {{reset}} रीसेट होता है, बेझिझक आज़माएँ।",
       "fill": "डेमो खाता भरें",
-      "heroTitle": "“Xinghe Tech” के कर्मचारी के रूप में dsh-ee आज़माएँ",
-      "heroSubtitle": "Xinghe Tech 200 कर्मचारियों की एक नमूना सॉफ़्टवेयर कंपनी है, जिसमें CRM, यात्रा व्यय, IT टिकट और 6 विभागों के ज्ञान आधार जुड़े हैं। कोई व्यक्ति चुनें और देखें वे रोज़ कौन से AI ऐप्स उपयोग करते हैं।",
+      "heroTitle": "Xinghe Tech के कर्मचारी ऐप आज़माएँ",
+      "heroSubtitle": "CRM, खर्च, टिकट और ज्ञान आज़माने के लिए कर्मचारी चुनें।",
       "uses": "सामान्य: {{app}}",
       "enterAs": "{{name}} के रूप में प्रवेश करें",
       "scenarios": {
@@ -32,20 +32,20 @@ export default {
         },
         "novel": {
           "tab": "Small team · Shanhai Studio",
-          "heroTitle": "Try dsh-ee as a member of Shanhai Studio",
-          "heroSubtitle": "Shanhai Studio is a 4-person team serialising a novel, with no business systems to connect: the story bible and writing guide are knowledge bases, the chapter tracker is a table everyone can edit, and manuscript review goes to two experts. Pick a person to see the app they use every day."
+          "heroTitle": "Shanhai Studio के लेखन ऐप आज़माएँ",
+          "heroSubtitle": "संदर्भ, अध्याय सहयोग और विशेषज्ञ समीक्षा आज़माने के लिए सदस्य चुनें।"
         }
       },
-      "adminDivider": "या व्यवस्थापक खाते से साइन इन करके देखें कि ऐप्स कैसे जुड़ते, समीक्षित होते, अधिकृत होते और ऑडिट होते हैं",
+      "adminDivider": "या सेटअप और समीक्षा देखने के लिए एडमिन के रूप में लॉगिन करें।",
       "dsh": {
-        "title": "DSH पहले से इंस्टॉल है? डेमो साइट से जोड़कर असली में पूछें",
-        "intro": "अपने DSH के मॉडल से डेमो साइट के ऐप्स, ज्ञान आधार और नमूना व्यावसायिक सिस्टम कॉल करें।",
+        "title": "DSH को डेमो से जोड़ें",
+        "intro": "अपने स्थानीय मॉडल से डेमो ऐप और ज्ञान आज़माएँ।",
         "step1": "टर्मिनल में चलाएँ:",
         "unix": "macOS / Linux",
         "win": "Windows",
         "step2": "ब्राउज़र में पुष्टि पेज खुलने पर इस पेज पर कोई कर्मचारी पहचान चुनकर साइन इन करें, फिर “पुष्टि करें” पर क्लिक करें।",
         "step3": "DSH में लौटकर /customer-brief जैसा ऐप नाम टाइप करें और ऊपर के कार्ड में दिया प्रश्न पूछें।",
-        "note": "डेमो साइट मॉडल प्रदान नहीं करती; अनुमान आपके DSH में पहले से कॉन्फ़िगर मॉडल से होता है। डेटा नियमित रूप से रीसेट होता है, रीसेट के बाद कनेक्शन कमांड दोबारा चलाएँ।"
+        "note": "अपना मॉडल इस्तेमाल करें; डेमो डेटा रीसेट होने पर फिर जुड़ें।"
       }
     }
   },

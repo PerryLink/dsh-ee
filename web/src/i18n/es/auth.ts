@@ -21,8 +21,8 @@ export default {
       "account": "Usuario {{username}} · Contraseña {{password}}",
       "reset": "Los datos se restablecen {{reset}}, así que prueba lo que quieras.",
       "fill": "Usar cuenta de demo",
-      "heroTitle": "Prueba dsh-ee como empleado de Xinghe Tech",
-      "heroSubtitle": "Xinghe Tech es una empresa de software de ejemplo de 200 empleados, con CRM, gastos de viaje, tickets de TI y bases de conocimiento de 6 departamentos conectados. Elige a una persona para ver las aplicaciones de IA que usa a diario.",
+      "heroTitle": "Prueba las aplicaciones de Xinghe Tech",
+      "heroSubtitle": "Elige un empleado para probar CRM, gastos, incidencias y conocimiento.",
       "uses": "Usa: {{app}}",
       "enterAs": "Continuar como {{name}}",
       "scenarios": {
@@ -32,20 +32,20 @@ export default {
         },
         "novel": {
           "tab": "Small team · Shanhai Studio",
-          "heroTitle": "Try dsh-ee as a member of Shanhai Studio",
-          "heroSubtitle": "Shanhai Studio is a 4-person team serialising a novel, with no business systems to connect: the story bible and writing guide are knowledge bases, the chapter tracker is a table everyone can edit, and manuscript review goes to two experts. Pick a person to see the app they use every day."
+          "heroTitle": "Prueba las aplicaciones de escritura de Shanhai Studio",
+          "heroSubtitle": "Elige un miembro para probar referencias, colaboración y revisión experta."
         }
       },
-      "adminDivider": "O inicia sesión como administrador para ver cómo se conectan, revisan, autorizan y auditan las aplicaciones",
+      "adminDivider": "O entra como administrador para ver la configuración y revisión.",
       "dsh": {
-        "title": "¿Ya tienes DSH? Conéctalo a la demo y pregunta de verdad",
-        "intro": "Usa el modelo de tu propio DSH para llamar a las aplicaciones, las bases de conocimiento y los sistemas de negocio de ejemplo de la demo.",
+        "title": "Conecta DSH a la demo",
+        "intro": "Prueba aplicaciones y conocimiento con tu modelo local.",
         "step1": "Ejecuta en una terminal:",
         "unix": "macOS / Linux",
         "win": "Windows",
         "step2": "Cuando se abra la página de confirmación en tu navegador, elige un empleado en esta página para iniciar sesión y haz clic en Aprobar.",
         "step3": "De vuelta en DSH, escribe el nombre de una aplicación como /customer-brief y haz la pregunta de las tarjetas de arriba.",
-        "note": "La demo no proporciona un modelo: DSH usa el modelo que ya tienes configurado. Los datos se restablecen con regularidad; vuelve a ejecutar el comando de conexión después de cada restablecimiento."
+        "note": "Usa tu propio modelo; vuelve a conectar tras cada reinicio de datos."
       }
     }
   },

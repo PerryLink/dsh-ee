@@ -30,7 +30,7 @@ export default {
     "apiKeyKeep": "वर्तमान में {{hint}}, खाली छोड़ने पर नहीं बदलेगी",
     "apiKeyNew": "एन्क्रिप्ट करके सहेजी जाती है, बाद में नहीं दिखेगी",
     "priority": "प्राथमिकता",
-    "priorityHint": "जब एक ही बाहरी मॉडल कई अपस्ट्रीम पर हो, तो छोटी संख्या पहले आती है और विफल होने पर अगली आज़माई जाती है",
+    "priorityHint": "एक ही मॉडल में कम मान पहले; विफलता पर अगला अपस्ट्रीम।",
     "addModels": "साथ में मॉडल जोड़ें",
     "addProvider": "अपस्ट्रीम जोड़ें",
     "unchecked": "जाँचा नहीं गया",
@@ -72,10 +72,10 @@ export default {
     "reasoning": "Reasoning",
     "reasoningOn": "Supported",
     "reasoningEfforts": "Reasoning efforts",
-    "reasoningEffortsHint": "Comma-separated reasoning_effort values, e.g. low,high,max; leave empty for the upstream default. Used only for the /v1/models capability declaration; the gateway always forwards requests unchanged",
+    "reasoningEffortsHint": "कॉमा से अलग; खाली होने पर अपस्ट्रीम डिफ़ॉल्ट। केवल क्षमता घोषणा।",
     "reasoningEffortsPlaceholder": "e.g. low,high,max",
     "colInput": "Inputs",
-    "inputModalitiesHint": "Declare what the model accepts (text is always included). Used only for capability discovery and the dsh-connect config; the gateway does not validate or convert requests against it",
+    "inputModalitiesHint": "text हमेशा शामिल; केवल घोषणा, अनुरोध जाँच या रूपांतरण नहीं।",
     "modalities": {
       "text": "Text",
       "image": "Image",
@@ -89,8 +89,8 @@ export default {
     "colModel": "मॉडल",
     "colRoutes": "लाइनें (क्रम से प्रयास)",
     "title": "मॉडल कनेक्शन",
-    "desc": "कंपनी द्वारा अपस्ट्रीम विक्रेताओं से लिए गए मॉडल सेवाओं को कॉन्फ़िगर करें। कर्मचारी अपनी कुंजी से dsh-ee को कॉल करते हैं; dsh-ee उसे यहाँ की एंटरप्राइज़ कुंजी में बदलकर फ़ॉरवर्ड करता है, कर्मचारी एंटरप्राइज़ कुंजी नहीं देख पाते।",
-    "empty": "अभी कोई अपस्ट्रीम नहीं है। कंपनी का DeepSeek, Qwen जैसी OpenAI-संगत सेवा जोड़ने के बाद ही कर्मचारी मॉडल कॉल कर पाएँगे।"
+    "desc": "कर्मचारियों से कंपनी कुंजियाँ छिपाकर अपस्ट्रीम मॉडल सेवाएँ तय करें।",
+    "empty": "कर्मचारियों के मॉडल उपयोग के लिए OpenAI-संगत अपस्ट्रीम जोड़ें।"
   },
   "quotas": {
     "invalid": "कोटा 0 या धनात्मक संख्या होना चाहिए; खाली छोड़ने पर असीमित",

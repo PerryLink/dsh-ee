@@ -24,7 +24,7 @@ export default {
       "rejected": "Rechazada"
     },
     "depsTitle": "Dependencias y acceso",
-    "depsHint": "Las partes a las que no tienes acceso no funcionarán en DSH. Las solicitudes van al propietario o a un administrador; una vez aprobadas, DSH se actualiza solo, sin reiniciar.",
+    "depsHint": "Sin permisos no se puede usar; el acceso se actualiza al aprobarse.",
     "partialHint": "{{tools}} de {{total}} herramientas disponibles; el resto requiere roles específicos",
     "pending": "Pendiente",
     "request": "Solicitar",

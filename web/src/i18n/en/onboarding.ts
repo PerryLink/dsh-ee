@@ -7,7 +7,7 @@ export default {
     steps: {
       base_url: {
         title: "Access URL",
-        hint: "The address employee computers use to reach dsh-ee; their DSH and npm connect back through it.",
+        hint: "Enter an address employees can reach.",
         detail: {
           from_settings: "{{url}} (from system settings)",
           from_flag: "{{url}} (from the DSH_EE_PUBLIC_URL startup setting)",
@@ -60,7 +60,7 @@ export default {
       },
       connections: {
         title: "Company connections",
-        hint: "Optional. Connect company systems (needs upstream credentials) so employees can use them in DSH.",
+        hint: "Optional: connect company systems with upstream credentials.",
         detail: {
           count: "{{count}} connection(s)",
         },
@@ -68,12 +68,12 @@ export default {
       demo: {
         title: "Demo company",
         detail: {
-          imported: "Demo scenario imported (demo company or small team): knowledge base, apps, experts, demo accounts and 30 days of usage data. You can clear it in one click before going live.",
+          imported: "Demo scenarios imported; remove them before production use if needed.",
         },
       },
       connect: {
         title: "DSH connect plugin",
-        hint: "Publish the DSH connect plugin for employees. Republish after changing the access URL or default model.",
+        hint: "Publish the plugin again after changing the address or default model.",
         hints: {
           disabled: "Turn DSH connect back on in settings, then publish.",
         },
@@ -86,8 +86,8 @@ export default {
     title: "First-time setup guide",
     desc: "Complete the required configuration in order. Finished steps are skipped automatically.",
     kicker: "WELCOME TO DSH-EE",
-    heroTitle: "Get your company AI workspace ready",
-    heroDesc: "Follow the guided steps to finish your first deployment. Each step has a clear next action, and you will enter the workbench automatically when done.",
+    heroTitle: "Set up your deployment",
+    heroDesc: "Follow the checklist to set up your deployment.",
     progress: "Setup progress {{done}}/{{total}}",
     requiredLabel: "Required steps",
     dialogDesc: "Configure this step here and the setup progress will refresh automatically.",
@@ -119,11 +119,11 @@ export default {
     publish: "Publish connect plugin",
     publishing: "Publishing…",
     agentTitle: "Let the agent in DSH finish the setup",
-    agentDesc: "Once the steps that need secrets are done here, paste a prompt into DSH. It installs the connect plugin, asks you to sign in and turn on admin mode, then walks you through quota, LDAP, roles and connections, asking you to confirm every change. The checklist below refreshes automatically.",
-    agentNeed: "Finish these below first: {{steps}} (they need upstream secrets, so they can only be done here)",
+    agentDesc: "Enter keys here, sign in to DSH, enable admin mode and send the prompt; confirm every change.",
+    agentNeed: "Enter keys here first: {{steps}}",
     agentStart: "Create prompt",
     published: "Connect plugin {{version}} published",
     inviteTitle: "Invite employees to connect",
-    inviteDesc: "After the required steps, share this command with employees. They can also install Desktop from the download page.",
+    inviteDesc: "Finish required steps, then share the setup command with employees.",
   },
 } satisfies Messages<typeof zh>;

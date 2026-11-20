@@ -4,10 +4,10 @@ import type { Messages } from "../types";
 export default {
   studio: {
     previewTitle: "Live preview",
-    previewHint: "Data is fetched as you and looks the same as in the DSH sidebar and on the web. Buttons don't really talk to the AI or write data here.",
+    previewHint: "Preview as yourself; no AI calls or data writes.",
     refresh: "Refresh data",
     untitled: "Untitled app",
-    noWorkbench: "No workbench yet. Insert the sample under “Workbench” on the left, or copy a template.",
+    noWorkbench: "Insert a workbench example on the left or copy a template.",
     webPane: "In DSH this pane opens a web page:",
     docPane: "Cited knowledge base documents open in this pane.",
     previewSend: "In DSH, this button sends the following to the AI:",

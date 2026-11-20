@@ -8,7 +8,7 @@ export default {
     "steps": {
       "base_url": {
         "title": "URL de acceso",
-        "hint": "La dirección con la que los equipos de los empleados llegan a dsh-ee; su DSH y npm se conectan a través de ella.",
+        "hint": "Indica una dirección accesible al personal.",
         "detail": {
           "from_settings": "{{url}} (de la configuración del sistema)",
           "from_flag": "{{url}} (del parámetro de arranque DSH_EE_PUBLIC_URL)",
@@ -61,7 +61,7 @@ export default {
       },
       "connections": {
         "title": "Conexiones de empresa",
-        "hint": "Opcional. Conecta sistemas de la empresa (requiere credenciales) para usarlos desde DSH.",
+        "hint": "Opcional: conecta sistemas con credenciales del servicio.",
         "detail": {
           "count": "{{count}} conexión(es)",
         },
@@ -69,12 +69,12 @@ export default {
       "demo": {
         "title": "Empresa de demostración",
         "detail": {
-          "imported": "Escenario de demostración importado (empresa de demostración o equipo pequeño): base de conocimiento, apps, expertos, cuentas de demostración y 30 días de datos de uso. Puedes borrarlo con un clic antes del uso real.",
+          "imported": "Ejemplos importados; puedes eliminarlos antes del uso real.",
         },
       },
       "connect": {
         "title": "Plugin de conexión DSH",
-        "hint": "Publica el plugin de conexión DSH para los empleados. Vuelve a publicarlo tras cambiar la URL de acceso o el modelo predeterminado.",
+        "hint": "Vuelve a publicar el plugin si cambias la dirección o el modelo predeterminado.",
         "hints": {
           "disabled": "Vuelve a activar la conexión DSH en la configuración y luego publica.",
         },
@@ -87,8 +87,8 @@ export default {
     "title": "Guía de configuración inicial",
     "desc": "Completa la configuración obligatoria en orden. Los pasos terminados se omiten automáticamente.",
     "kicker": "BIENVENIDO A DSH-EE",
-    "heroTitle": "Prepara el espacio de trabajo de IA de tu empresa",
-    "heroDesc": "Sigue los pasos guiados para completar tu primer despliegue. Cada paso tiene una acción siguiente clara y, al terminar, entrarás automáticamente en el banco de trabajo.",
+    "heroTitle": "Configura tu instalación",
+    "heroDesc": "Completa la instalación siguiendo la lista.",
     "progress": "Progreso de la configuración {{done}}/{{total}}",
     "requiredLabel": "Pasos obligatorios",
     "dialogDesc": "Configura este paso aquí y el progreso de la configuración se actualizará automáticamente.",
@@ -120,11 +120,11 @@ export default {
     "publish": "Publicar plugin de conexión",
     "publishing": "Publicando…",
     "agentTitle": "Deja que el agente de DSH termine la configuración",
-    "agentDesc": "Cuando los pasos que necesitan secretos estén hechos aquí, pega un prompt en DSH. Instalará el plugin de conexión, te pedirá iniciar sesión y activar el modo de administración, y luego te guiará por las cuotas, LDAP, roles y conexiones pidiéndote que confirmes cada cambio. La lista de comprobación de abajo se actualiza automáticamente.",
-    "agentNeed": "Primero termina estos pasos: {{steps}} (necesitan secretos upstream, así que solo se pueden hacer aquí)",
+    "agentDesc": "Introduce las claves aquí, entra en DSH, activa el modo administrador y envía el mensaje; confirma cada cambio.",
+    "agentNeed": "Introduce primero las claves aquí: {{steps}}",
     "agentStart": "Crear prompt",
     "published": "Plugin de conexión {{version}} publicado",
     "inviteTitle": "Invita a los empleados a conectarse",
-    "inviteDesc": "Después de los pasos obligatorios, comparte este comando con los empleados. También pueden instalar Desktop desde la página de descargas."
+    "inviteDesc": "Completa los pasos obligatorios y comparte el comando de conexión."
   }
 } satisfies Messages<typeof zhNs>;

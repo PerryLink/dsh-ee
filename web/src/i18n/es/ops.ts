@@ -122,7 +122,7 @@ export default {
     "approvedMsg": "Aprobado: {{name}} está publicado",
     "rejectedMsg": "Rechazado: {{name}}",
     "title": "Cola de revisión",
-    "desc": "Aquí llegan los plugins internos enviados por los empleados y las nuevas versiones de origen. Todo lo que tenga advertencias de las comprobaciones automáticas requiere confirmación humana.",
+    "desc": "Revisa plugins y versiones; las advertencias requieren confirmación manual.",
     "empty": "La cola está vacía",
     "internalSubmission": "Interno",
     "upstreamVersion": "Actualización de origen",
@@ -135,9 +135,9 @@ export default {
   },
   "demo": {
     "title": "Empresa de demostración",
-    "desc": "Importe la empresa de ejemplo «Xinghe Tech» con un clic: bases de conocimiento de seis departamentos (I+D, ventas, finanzas, RR. HH., TI, legal), tres sistemas de demostración (viajes, CRM, tickets de TI), aplicaciones con banco de trabajo, 10 empleados de demostración y 30 días de datos de uso (el resumen y las estadísticas muestran curvas desde el principio). Todo está integrado en el programa y funciona sin conexión; volver a importar no sobrescribe el contenido existente.",
+    "desc": "Importa conocimiento, aplicaciones, cuentas y uso de ejemplo sin sobrescribir contenido.",
     "heroTitle": "Importe la empresa de demostración y pruébela ahora",
-    "heroDesc": "No data to prepare: pick the scenario closest to yours (a company, or a team of a few people) and in a minute you get its knowledge bases, apps, experts and people. Sign in with a demo account and try it in DSH. Clear it with one click afterwards; your own content stays.",
+    "heroDesc": "Elige un escenario e inicia sesión con una cuenta de demo tras importarlo; puedes eliminarlo después.",
     "import": "Importar empresa de demostración",
     "importTeam": "Import demo team",
     "importing": "Importando… (unos 30 segundos)",
@@ -154,11 +154,11 @@ export default {
       "names": {
         "xinghe": {
           "title": "Xinghe Tech",
-          "summary": "A software company of about 200: knowledge bases for 6 departments, 3 business systems (travel, CRM, IT tickets), apps with workbenches, experts and admin policies."
+          "summary": "Empresa de software: conocimiento, sistemas y aplicaciones para empleados."
         },
         "novel": {
           "title": "Shanhai Studio",
-          "summary": "A 4-person team serialising a novel: a story bible and a writing guide as knowledge bases, a lore Q&A app and a chapter tracker, and two review experts. No business systems to connect."
+          "summary": "Equipo de escritura: referencias, colaboración y revisión experta."
         }
       }
     },
@@ -166,9 +166,9 @@ export default {
     "failed": "No se pudo crear",
     "superOnly": "Solo un superadministrador puede importar la empresa de demostración.",
     "tryIt": "A continuación:",
-    "next1": "Inicie sesión en dsh-ee con cualquiera de los empleados de demostración de abajo en otro navegador (o en una ventana de incógnito) y conecte DSH siguiendo la página «Primeros pasos».",
-    "next2": "En la pantalla de inicio de DSH, abra la aplicación sugerida en «Aplicaciones de la empresa» y haga una pregunta para probar:",
-    "next3": "Vuelva al resumen, a las estadísticas y al informe mensual para ver las curvas de uso de 30 días.",
+    "next1": "Entra con una cuenta de demo en otro navegador y conecta DSH desde Primeros pasos.",
+    "next2": "Abre una aplicación recomendada en DSH y pregunta:",
+    "next3": "Consulta el resumen, las estadísticas y el informe mensual.",
     "guideLine": "{{name}} ({{department}} · {{title}}) → «{{app}}»: {{try}}",
     "clear": "Borrar datos de demostración",
     "clearing": "Borrando…",

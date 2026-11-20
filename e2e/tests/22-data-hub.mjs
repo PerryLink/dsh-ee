@@ -13,7 +13,7 @@ export default async function (t) {
   const owner = `小周${tag.slice(-3)}`;
 
   await admin.goto(`${BASE}/admin/connections?tab=data`);
-  await admin.getByText("企业共用的「唯一数据源」").waitFor();
+  await admin.getByRole("heading", { name: "数据集", exact: true }).waitFor();
   step("「企业连接」页有「数据中台」页签");
 
   // ---- 上传 CSV ----

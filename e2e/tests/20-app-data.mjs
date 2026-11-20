@@ -37,7 +37,7 @@ export default async function (t) {
   const emp = await newPage(t);
   await login(emp, user, "employee-password-1");
   await emp.goto(`${BASE}/assets/${id}`);
-  const card = emp.locator("section", { hasText: "这个应用自带的数据表" });
+  const card = emp.locator("section").filter({ has: emp.getByRole("heading", { name: "数据", exact: true }) });
   await card.getByText("还没有数据").waitFor();
   await card.locator("select").first().selectOption("周六下午");
   await card.getByRole("button", { name: "新增一行" }).click();
@@ -56,7 +56,7 @@ export default async function (t) {
 
   // ---- 作者看全部、导出 CSV ----
   await admin.goto(`${BASE}/assets/${id}`);
-  const adminCard = admin.locator("section", { hasText: "这个应用自带的数据表" });
+  const adminCard = admin.locator("section").filter({ has: admin.getByRole("heading", { name: "数据", exact: true }) });
   await adminCard.getByRole("cell", { name: "周六上午" }).waitFor();
   await adminCard.getByRole("cell", { name: "周六下午" }).waitFor();
   const [download] = await Promise.all([admin.waitForEvent("download"), adminCard.getByRole("link", { name: "导出 CSV" }).click()]);

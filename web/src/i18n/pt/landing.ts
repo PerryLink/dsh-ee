@@ -100,7 +100,7 @@ export default {
     why: {
       eyebrow: "Por que o dsh-ee",
       title: "De testes isolados ao uso controlado por toda a empresa",
-      desc: "Ferramentas de IA não faltam; falta uma forma segura de levar o conhecimento e os sistemas da própria empresa a cada funcionário.",
+      desc: "Dê aos funcionários acesso seguro ao conhecimento e aos sistemas da empresa.",
       before: {
         tag: "Cada um usa suas próprias ferramentas de IA",
         title: "Uma pessoa, uma conversa, nenhum registro",
@@ -121,33 +121,33 @@ export default {
     controls: {
       xinchuang: {
         title: "Pilha tecnológica nacional de ponta a ponta",
-        desc: "Servidor, terminais dos funcionários e modelos podem rodar em CPUs, sistemas operacionais e bancos de dados nacionais, além de modelos nacionais como o DeepSeek.",
+        desc: "Execute servidores, clientes, bancos e modelos em infraestrutura nacional.",
       },
       control: {
         title: "Controlado",
-        desc: "Implantação privada, com suporte a operação totalmente offline. Capacidades e microapps são revisadas na entrada e autorizadas por departamento; o escopo da empresa nunca recorre ao registry público.",
+        desc: "Implante em rede privada ou offline com revisão e permissões; pacotes internos não recorrem à origem.",
       },
       audit: {
         title: "Auditável",
-        desc: "Quem instalou o quê e quem chamou o quê em qual dispositivo: os registros de execução do DSH voltam para o dsh-ee, permitindo rastrear tudo e despublicar em um clique.",
+        desc: "Rastreie instalações e chamadas e retire recursos quando necessário.",
       },
     },
     steps: {
       deploy: {
         title: "Implantar",
-        desc: "docker compose ou pacote offline. Binário único, com OceanBase ou TiDB como banco de dados e suporte a operação totalmente offline.",
+        desc: "Implante com Docker ou pacote offline e OceanBase ou TiDB.",
       },
       capture: {
         title: "Consolidar",
-        desc: "As equipes publicam habilidades, conectores e pacotes de conhecimento no escopo da empresa, por exemplo @acme.",
+        desc: "Publique habilidades, conectores e conhecimento no escopo da empresa.",
       },
       review: {
         title: "Revisar e publicar",
-        desc: "Scripts de instalação, dependências, licenças e vazamento de segredos são verificados automaticamente; depois um administrador aprova e define o escopo de visibilidade.",
+        desc: "Após as verificações automáticas, administradores revisam e autorizam.",
       },
       use: {
         title: "Usar",
-        desc: "Uma única conexão com o registry corporativo e, a partir daí, o uso normal do DSH e dos microapps da área de trabalho.",
+        desc: "Conecte com um comando e use os aplicativos da empresa no DSH.",
       },
     },
     features: {
@@ -157,7 +157,7 @@ export default {
       how: "Como usar",
       hub: {
         title: "Central de capacidades: plugins, habilidades e conexões em um só lugar",
-        lead: "Plugins, habilidades, prompts, conexões corporativas e microapps são gerenciados na Central de capacidades. Depois que um administrador ativa um item, ele é sincronizado automaticamente com o DSH dos funcionários, sem que ninguém precise procurar ou instalar manualmente.",
+        lead: "Gerencie recursos da empresa e sincronize os habilitados com o DSH.",
         points: [
           "Cinco tipos de capacidade, cada um com versões, escopo e histórico de chamadas",
           "Escopo por departamento ou perfil, com opção de instalação automática",
@@ -188,7 +188,7 @@ export default {
       },
       review: {
         title: "Revisão antes da publicação",
-        lead: "Plugins compartilhados por funcionários e plugins da comunidade trazidos para dentro passam por revisão antes de chegar ao registry da empresa: as verificações automáticas rodam primeiro, um revisor analisa os resultados e só então os funcionários passam a vê-los.",
+        lead: "Verifique plugins automaticamente e revise antes de publicar.",
         points: [
           "Verificações automáticas de scripts de instalação, dependências, licenças e vazamento de segredos",
           "Habilidades, prompts e microapps são comparados com a versão em produção",
@@ -213,7 +213,7 @@ export default {
       },
       connect: {
         title: "Conexão com um comando",
-        lead: "O funcionário executa um comando no computador e confirma um código de dispositivo no navegador; o DSH fica conectado à empresa: registry npm, modelos e Central de capacidades são configurados de uma vez, e o token fica no cofre de credenciais do próprio DSH.",
+        lead: "Execute o comando de conexão e confirme o código do dispositivo.",
         points: [
           "setup.sh no macOS / Linux e setup.ps1 no Windows",
           "O token unificado é a interseção das permissões da conta com o escopo; o servidor armazena apenas o hash",
@@ -232,7 +232,7 @@ export default {
       },
       knowledge: {
         title: "Perguntas e respostas de conhecimento, com fonte em cada resposta",
-        lead: "Envie políticas, manuais e documentos para uma base de conhecimento e os funcionários perguntam diretamente em “Perguntas e respostas de conhecimento” no DSH. Sem modelo vetorial: o agente pesquisa por palavras-chave em várias rodadas, lê os originais e responde, e cada fonte abre exatamente as linhas de onde veio.",
+        lead: "Envie documentos, pergunte no DSH e consulte as fontes.",
         points: [
           "PDF, Word e Markdown, com versões e reversão",
           "Controle por base de quem pode pesquisar e quem mantém",
@@ -253,7 +253,7 @@ export default {
       },
       systems: {
         title: "Sistemas corporativos, autorizados por ferramenta",
-        lead: "Conecte sistemas internos como ERP, CRM e chamados por meio de um servidor MCP ou de uma interface OpenAPI. As credenciais ficam sob custódia do dsh-ee, e o DSH de cada funcionário recebe apenas as ferramentas autorizadas para ele.",
+        lead: "Conecte sistemas via MCP ou OpenAPI e autorize por ferramenta.",
         points: [
           "Servidores MCP e interfaces OpenAPI",
           "Credenciais mantidas centralmente, nunca enviadas às máquinas dos funcionários",
@@ -282,7 +282,7 @@ export default {
       },
       models: {
         title: "Gateway de modelos e cotas",
-        lead: "O dsh-ee inclui um gateway compatível com OpenAI: conecte origens como o DeepSeek e exponha um conjunto único de nomes de modelo. Um mesmo modelo pode ficar em várias origens com failover automático, e cada conta recebe uma cota mensal de tokens.",
+        lead: "Conecte modelos com failover e cotas por funcionário.",
         points: [
           "Verificação de conexão com a origem, importação e nomes públicos de modelos",
           "Modelos com o mesmo nome em várias origens, com troca automática em caso de erro",
@@ -317,7 +317,7 @@ export default {
     },
     enter: "Abrir a área de trabalho",
     heroLine1: "Faça o DSH de cada funcionário conhecer a sua empresa.",
-    heroLead: "Conecte ERP, CRM, data warehouse e documentos de políticas, monte microapps de IA e, após revisão e autorização, entregue-os ao DSH de cada funcionário. Os dados e as credenciais ficam no seu próprio servidor, e cada chamada pode ser auditada.",
+    heroLead: "Conecte sistemas e conhecimento da empresa para uso autorizado no DSH.",
     tryDemo: "Experimentar como funcionário",
     videoLabel: "Vídeo de um minuto sobre o dsh-ee",
     seeHow: "Ver como funciona",
@@ -325,7 +325,7 @@ export default {
     howLine: "Dos ativos da empresa às mãos de cada funcionário, com cada etapa sob controle",
     wbLine1: "Ativos viram microapps,",
     wbLine2: "que rodam no DSH",
-    wbDesc: "Assistente de despesas, perguntas sobre dados de negócio, revisão de contratos… A interface é hospedada pelo dsh-ee; o raciocínio e as chamadas de ferramentas ficam no DSH local do funcionário, e as capacidades necessárias são instaladas na primeira abertura do aplicativo.",
+    wbDesc: "Hospede aplicativos no dsh-ee e execute no DSH local dos funcionários.",
     toDsh: "O dsh-ee entrega ao DSH",
     toDshDesc: "Habilidades e contexto da empresa, uma fonte de instalação confiável, microapps e políticas de uso.",
     toEe: "O DSH entrega ao dsh-ee",
@@ -337,7 +337,7 @@ export default {
     codeServer: "# Servidor",
     codeClient: "# Terminal do funcionário, uma vez",
     codeUse: "# Depois, use o DSH normalmente",
-    authNote: "Suporte a contas locais, LDAP e OIDC; os instaladores do DSH só entram na rede interna após a verificação do sha256.",
+    authNote: "Login local, LDAP ou OIDC; verifique instaladores antes de importar.",
     closing: "Faça do conhecimento da empresa a capacidade padrão do DSH de cada funcionário.",
     footerNote: "Protótipo; todos os dados são simulados. Os dados de plugins da origem vêm do dshfind.com.",
     footerMarket: "Mercado de capacidades",

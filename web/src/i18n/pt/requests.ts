@@ -24,7 +24,7 @@ export default {
       rejected: "Rejeitada",
     },
     depsTitle: "Dependências e permissões",
-    depsHint: "As partes sem permissão não podem ser usadas no DSH; após solicitar, o mantenedor correspondente ou o administrador aprova e o DSH é atualizado automaticamente, sem reiniciar.",
+    depsHint: "Sem permissão não é possível usar; o acesso atualiza após aprovação.",
     partialHint: "É possível usar {{tools}} de {{total}} ferramentas; as demais exigem um perfil específico",
     pending: "Em aprovação",
     request: "Solicitar",

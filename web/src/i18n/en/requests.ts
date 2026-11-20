@@ -7,7 +7,7 @@ export default {
     status: { ok: "Available", off: "Not enabled", missing: "No access", partial: "Partly available", gone: "Missing or unpublished" },
     state: { pending: "Pending", approved: "Approved", rejected: "Rejected" },
     depsTitle: "Dependencies and access",
-    depsHint: "Parts you can't access won't work in DSH. Requests go to the owner or an admin; once approved DSH refreshes on its own, no restart needed.",
+    depsHint: "Missing permissions block use; access refreshes automatically after approval.",
     partialHint: "{{tools}} of {{total}} tools available; the rest need specific roles",
     pending: "Pending",
     request: "Request",

@@ -46,7 +46,7 @@ export default {
   },
   "fieldsAdmin": {
     "title": "Campos y reglas de acceso",
-    "desc": "Añada campos a documentos, bases de conocimiento y usuarios, y decida según esos campos quién puede ver cada documento. Las reglas solo endurecen los permisos que ya tiene la base de conocimiento.",
+    "desc": "Configura campos y reglas para restringir el acceso existente.",
     "tabs": {
       "fields": "Campos",
       "rules": "Reglas de acceso",
@@ -77,7 +77,7 @@ export default {
     "options": "Opciones",
     "optionsHint": "Una por línea; los campos de nivel se escriben de menor a mayor",
     "access": "Usar para control de acceso",
-    "accessHint": "Si se activa, solo quienes tengan el permiso «Gestionar campos y reglas de acceso» podrán cambiar el valor de este campo, y los cambios se registran en auditoría",
+    "accessHint": "Solo administradores de campos pueden editar; se auditan los cambios.",
     "source": "De la extensión {{source}}",
     "values": "{{count}} objetos con valor",
     "usedBy": "Usado por la regla «{{rules}}»",
@@ -106,12 +106,12 @@ export default {
       "@username": "Nombre de usuario",
       "@roles": "Roles del usuario"
     },
-    "dualNotice": "Aprobación de dos personas activada: los cambios de campos, reglas y restricciones de administración deben pasar por una solicitud de cambio y solo entran en vigor tras la aprobación de otro administrador.",
+    "dualNotice": "Aprobación doble activa; los cambios requieren otro administrador.",
     "saved": "Guardado",
     "cliHint": "También puede modificar toda la configuración como archivo: dsh-ee config export / plan / test / apply (requiere un token con el scope config)."
   },
   "fieldSync": {
-    "desc": "Sincronice atributos de LDAP o del directorio de Feishu como campos de usuario: LDAP se sincroniza cuando el empleado inicia sesión y Feishu durante la sincronización de la organización. Cuando alguien cambia de puesto, cambia también el alcance de lo que puede ver. Los valores modificados a mano no se sobrescriben salvo que se marque «La sincronización prevalece».",
+    "desc": "Sincroniza campos del directorio; la sincronización autoritativa sobrescribe valores manuales.",
     "source": "Origen",
     "sourceFeishu": "Feishu",
     "attr": "Atributo del directorio",
@@ -133,7 +133,7 @@ export default {
     "noSelfGrant": "No puede concederse permisos a uno mismo",
     "noSelfGrantDesc": "Los administradores no pueden cambiar sus propios roles y atributos.",
     "exclusive": "Roles mutuamente excluyentes",
-    "exclusiveDesc": "Una línea por grupo de códigos de rol, separados por comas; los roles de un mismo grupo no pueden estar en la misma persona a la vez.",
+    "exclusiveDesc": "Un grupo de códigos separado por comas por línea; sus roles son incompatibles.",
     "dual": "Aprobación de dos personas",
     "dualDesc": "Estas operaciones requieren la aprobación de otro administrador; quien aprueba no puede ser quien las inicia.",
     "dualRoles": "Conceder roles con permisos de administración",
@@ -201,18 +201,18 @@ export default {
   },
   "kbSources": {
     "title": "Orígenes de conocimiento",
-    "desc": "Conecte bases de conocimiento que ya tiene la empresa: el modo de sincronización trae el contenido a esta base de forma periódica; la búsqueda federada no copia nada y consulta en tiempo real con la identidad del propio empleado.",
+    "desc": "Sincroniza conocimiento o busca en origen con la identidad del empleado.",
     "empty": "Aún no hay orígenes de conocimiento conectados.",
     "add": "Conectar un origen de conocimiento",
-    "noExtensions": "No hay extensiones que conectar: primero un administrador debe instalar una extensión de servicio que implemente la interfaz de orígenes de conocimiento, o configurar la aplicación de Feishu en el método de inicio de sesión.",
+    "noExtensions": "Instala una extensión de conocimiento o configura una aplicación de Feishu.",
     "extension": "Origen",
     "mode": {
       "sync": "Sincronización",
       "federated": "Búsqueda federada"
     },
     "modeDesc": {
-      "sync": "Trae periódicamente a esta base de conocimiento el alcance seleccionado; el contenido no conserva los permisos del sistema de origen y quién puede verlo lo decide esta base.",
-      "federated": "No copia nada. Cuando un empleado busca, se consulta en tiempo real con su propia identidad en el sistema de origen, así que solo ve lo que ya podía ver."
+      "sync": "Importación periódica; rigen los permisos de esta base, no los de origen.",
+      "federated": "Sin copias; busca en tiempo real con los permisos del empleado en origen."
     },
     "scope": "Alcance",
     "scopeHint": "Marque los espacios, carpetas o documentos que se van a sincronizar; si no marca nada, se sincroniza todo.",
@@ -299,7 +299,7 @@ export default {
     "pick": "O elija un archivo"
   },
   "identityOAuth": {
-    "mine": "Esta conexión usa su propia identidad en el sistema externo. Autorice una vez; dsh-ee guarda los tokens por persona y los renueva automáticamente antes de que caduquen.",
+    "mine": "Autoriza para usar tu identidad; los tokens se renuevan automáticamente.",
     "authorized": "Autorizado",
     "notAuthorized": "Aún no autorizado",
     "authorize": "Autorizar",

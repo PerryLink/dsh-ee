@@ -4,7 +4,7 @@ export default {
     steps: {
       base_url: {
         title: "访问地址",
-        hint: "填写员工电脑能访问到的地址，员工的 DSH 和 npm 都用它连回来",
+        hint: "填写员工电脑可访问的地址",
         detail: {
           from_settings: "{{url}}（来自系统设置）",
           from_flag: "{{url}}（来自启动参数 DSH_EE_PUBLIC_URL）",
@@ -57,7 +57,7 @@ export default {
       },
       connections: {
         title: "企业连接",
-        hint: "可选。接入企业系统（需要上游凭据），员工在 DSH 里就能用",
+        hint: "可选，使用上游凭据接入企业系统",
         detail: {
           count: "{{count}} 个",
         },
@@ -65,12 +65,12 @@ export default {
       demo: {
         title: "示例公司",
         detail: {
-          imported: "已导入示例场景（示例公司「星河科技」或小团队「山海工作室」）：知识库、应用、专家、演示账号和 30 天的使用数据。转正式使用前可以一键清除",
+          imported: "已导入示例场景；正式使用前可清除",
         },
       },
       connect: {
         title: "DSH 接入插件",
-        hint: "发布员工用的 DSH 接入插件；改过访问地址或默认模型后要重新发布",
+        hint: "发布接入插件；地址或默认模型变更后须重新发布",
         hints: {
           disabled: "先在设置里重新打开 DSH 接入，再发布",
         },
@@ -83,8 +83,8 @@ export default {
     title: "首次部署向导",
     desc: "按清单完成必做配置；已经完成的步骤会自动跳过。",
     kicker: "WELCOME TO DSH-EE",
-    heroTitle: "把企业能力，一次性配置到位",
-    heroDesc: "跟随清晰的步骤完成首次部署。每一步都有明确去向，完成后自动进入工作台。",
+    heroTitle: "完成首次部署",
+    heroDesc: "按清单完成首次部署。",
     progress: "部署进度 {{done}}/{{total}}",
     requiredLabel: "必做步骤",
     dialogDesc: "在当前页完成配置，保存后自动刷新进度。",
@@ -116,11 +116,11 @@ export default {
     publish: "发布接入插件",
     publishing: "发布中…",
     agentTitle: "交给 DSH 里的 Agent 配完",
-    agentDesc: "需要密钥的几步在网页上做完后，生成一段提示词贴进 DSH：它会装好接入插件、请你登录并开启管理模式，然后按清单带你配完额度、LDAP、角色和连接，每一步改动都要你确认。下面的清单会自动刷新。",
-    agentNeed: "先在下面完成：{{steps}}（要填上游密钥，只能在网页上做）",
+    agentDesc: "先在网页填密钥，再登录 DSH、开启管理模式并发送提示词；每次改动须确认。",
+    agentNeed: "先在网页填写密钥：{{steps}}",
     agentStart: "生成提示词",
     published: "接入插件 {{version}} 已发布",
     inviteTitle: "邀请员工接入",
-    inviteDesc: "必做项完成后，把下面这行命令发给员工；也可以先到下载页安装 Desktop。",
+    inviteDesc: "完成必做项后，把接入命令发给员工。",
   },
 };

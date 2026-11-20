@@ -197,7 +197,7 @@ async function run(admin, kbId) {
   await admin.getByRole("button", { name: "上传文档" }).click();
   await dialog.locator("input[type=file][accept]").setInputFiles([{ name: "报销须知.md", mimeType: "text/markdown", buffer: Buffer.from(policy.replace("30 天", "45 天")) }]);
   await dialog.getByText("更新为第 2 版").waitFor();
-  await dialog.getByText("这个目录里已经有「报销须知」").waitFor();
+  await dialog.getByText("更新「报销须知」，保留旧版本与引用").waitFor();
   await shot(admin, "kb2-upload-same-name");
   await dialog.getByRole("button", { name: "上传 1 个文件（其中 1 个更新）" }).click();
   await dialog.getByText("已更新为第 2 版").waitFor();

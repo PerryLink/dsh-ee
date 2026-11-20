@@ -8,7 +8,7 @@ export default {
     steps: {
       base_url: {
         title: "URL de acesso",
-        hint: "O endereço que os computadores dos funcionários usam para chegar ao dsh-ee; o DSH e o npm deles se conectam por ele.",
+        hint: "Informe um endereço acessível aos funcionários.",
         detail: {
           from_settings: "{{url}} (das configurações do sistema)",
           from_flag: "{{url}} (do parâmetro de inicialização DSH_EE_PUBLIC_URL)",
@@ -61,7 +61,7 @@ export default {
       },
       connections: {
         title: "Conexões da empresa",
-        hint: "Opcional. Conecte sistemas da empresa (exige credenciais) para usá-los no DSH.",
+        hint: "Opcional: conecte sistemas com credenciais do serviço.",
         detail: {
           count: "{{count}} conexão(ões)",
         },
@@ -69,12 +69,12 @@ export default {
       demo: {
         title: "Empresa de demonstração",
         detail: {
-          imported: "Cenário de demonstração importado (empresa de demonstração ou equipe pequena): base de conhecimento, apps, especialistas, contas de demonstração e 30 dias de dados de uso. Dá para apagar com um clique antes do uso real.",
+          imported: "Exemplos importados; remova antes do uso real, se necessário.",
         },
       },
       connect: {
         title: "Plugin de conexão DSH",
-        hint: "Publique o plugin de conexão DSH para os funcionários. Publique de novo depois de mudar a URL de acesso ou o modelo padrão.",
+        hint: "Republique o plugin ao mudar o endereço ou modelo padrão.",
         hints: {
           disabled: "Reative a conexão DSH nas configurações e depois publique.",
         },
@@ -87,8 +87,8 @@ export default {
     title: "Assistente de primeira implantação",
     desc: "Conclua as configurações obrigatórias seguindo o checklist; etapas já concluídas são ignoradas automaticamente.",
     kicker: "BEM-VINDO AO DSH-EE",
-    heroTitle: "Configure as capacidades da empresa de uma vez",
-    heroDesc: "Siga passos claros para concluir a primeira implantação. Cada passo tem um destino definido e, ao concluir, você entra automaticamente na área de trabalho.",
+    heroTitle: "Configure sua implantação",
+    heroDesc: "Conclua a implantação seguindo a lista.",
     progress: "Progresso da implantação {{done}}/{{total}}",
     requiredLabel: "Etapas obrigatórias",
     dialogDesc: "Conclua a configuração nesta página; após salvar, o progresso é atualizado automaticamente.",
@@ -120,11 +120,11 @@ export default {
     publish: "Publicar plugin de conexão",
     publishing: "Publicando…",
     agentTitle: "Deixe o Agent do DSH concluir a configuração",
-    agentDesc: "Depois de concluir na web as etapas que exigem chaves, gere um prompt e cole no DSH: ele instala o plugin de conexão, pede seu login e ativa o modo de administração, e então segue o checklist para configurar cotas, LDAP, perfis e conexões, com sua confirmação a cada alteração. O checklist abaixo é atualizado automaticamente.",
-    agentNeed: "Conclua antes abaixo: {{steps}} (as chaves de upstream só podem ser preenchidas na web)",
+    agentDesc: "Informe as chaves aqui, entre no DSH, ative o modo administrador e envie o prompt; confirme cada alteração.",
+    agentNeed: "Informe primeiro as chaves aqui: {{steps}}",
     agentStart: "Gerar prompt",
     published: "Plugin de conexão {{version}} publicado",
     inviteTitle: "Convidar funcionários para conectar",
-    inviteDesc: "Depois de concluir as etapas obrigatórias, envie a linha de comando abaixo aos funcionários; você também pode instalar o Desktop pela página de download.",
+    inviteDesc: "Conclua os passos obrigatórios e compartilhe o comando de conexão.",
   },
 } satisfies Messages<typeof zhNs>;

@@ -17,7 +17,7 @@ export default {
       newExpert: "New expert",
       form: "Form",
       formAppHint: "Apps can have a workbench, data tables and a web version.",
-      formExpertHint: "An expert is a domain role: role description, working method and task examples, plus the skills and systems it may use. No workbench, data tables or web version.",
+      formExpertHint: "Configure papel, métodos e recursos; sem painel, tabelas ou aplicativo web.",
       role: "Role description",
       roleHint: "Who it is, what it is good at and how it talks to employees. Goes at the top of the summon instructions.",
       method: "Working method",
@@ -28,7 +28,7 @@ export default {
       examples: "Task examples",
       examplesHint: "One per line; clicking an example in DSH starts with it.",
       members: "Team members",
-      membersHint: "Optional, up to 5 experts. When summoned, this expert leads: it splits the task, does each part per the member's role brief, then combines the result.",
+      membersHint: "Opcional, até 5; este especialista delega e resume.",
     },
     groups: {
       app: "Experts & apps",
@@ -100,9 +100,9 @@ export default {
       },
     },
     agent: {
-      intro: "No need to fill in every field: describe the expert you want, copy the prompt below and send it to the AI in DSH. It reads the expert design guide, checks which systems and knowledge bases you can use, shows you the role, working method and task examples to confirm, then creates an expert only you can use. To change it later, just tell it in DSH.",
+      intro: "Descreva o especialista e envie o prompt ao DSH; confirme o plano para criá-lo só para você.",
       describeTitle: "1. Describe the expert you want",
-      describePlaceholder: "e.g. A contract review expert that helps legal and procurement check payment terms, liability and confidentiality clauses in purchase contracts, listing risks and suggested edits",
+      describePlaceholder: "Exemplo: revisar contratos de compra e sugerir correções de riscos",
       example: {
         contract: {
           label: "Contract review",
@@ -122,10 +122,10 @@ export default {
         },
       },
       steps: [
-        "The AI reads the skill dsh-ee-expert-design (expert design guide) and uses ee_hub to check the skills, systems and knowledge bases you can use.",
-        "It lists the slug, title, role description, working method, expertise and task examples for you to confirm — just say what to change.",
-        "Once you confirm, it creates a just-for-me expert with ee_hub create (for_me): no review, it shows up right away in the DSH right sidebar under “Experts · Skills · Connectors”.",
-        "To share it, change its availability on the web; admins can also categorize and feature it.",
+        "A IA consulta as diretrizes de especialistas e os recursos disponíveis.",
+        "Confirme o papel, os métodos e as tarefas de exemplo.",
+        "Após confirmar, crie um especialista privado sem revisão.",
+        "Compartilhe alterando o acesso; administradores podem categorizar e destacar.",
       ],
       iterate: [
         "Add a step to /<slug>'s working method: confirm the contract amount first",
@@ -140,8 +140,8 @@ export default {
     },
     admin: {
       title: "Experts & connectors policy",
-      desc: "Categorize experts, skills and connectors, pick featured items, block capabilities for people or departments, and look up what any employee can finally use. Changes reach employees' DSH within a minute.",
-      agentHint: "You can also ask the AI in DSH: with admin mode on, say “put the contract expert in Legal and feature it”, “block the ERP connector for contractors”, or “what experts can Zhang San use?”.",
+      desc: "Gerencie categorias, destaques e bloqueios; consulte o acesso dos funcionários.",
+      agentHint: "Ou ative o modo administrador no DSH e peça à IA para configurar.",
       reload: "Refresh",
       tabs: {
         categories: "Categories",
@@ -150,10 +150,10 @@ export default {
         effective: "Access lookup",
       },
       tabHints: {
-        categories: "Categories are grouped by the three tabs of the DSH panel. A category has its own availability: people outside it don't see the capabilities in it. Categories only narrow, never widen, a capability's own availability.",
-        catalog: "Pick a category and featured flag for each capability. Featured items come first in the DSH panel and on the apps page; up to 20 per group.",
-        blocks: "People in scope can't use these capabilities even if they are within the capability's availability — for handovers, contractor accounts or temporary suspensions.",
-        effective: "Pick an employee to see the final result for each capability and which step stopped it: publish state → availability → category → block policies → enabled.",
+        categories: "Escopos de categoria só restringem permissões, nunca ampliam.",
+        catalog: "Categorize e destaque até 20 por grupo, exibidos primeiro.",
+        blocks: "Bloqueios prevalecem sobre o escopo de acesso.",
+        effective: "Escolha um funcionário para ver o acesso efetivo e motivos de bloqueio.",
       },
       group: "Group",
       categoryName: "Category name",

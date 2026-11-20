@@ -37,11 +37,11 @@ export default {
       "skills": {
         "label": "Habilidades incluidas en el paquete",
         "pass": "El paquete no contiene SKILL.md",
-        "warn": "El paquete contiene {{count}} habilidades: {{files}}. Las inyecta el plugin en tiempo de ejecución, no aparecen en la pestaña Habilidades del Centro de capacidades y no pueden autorizarse ni despublicarse por separado."
+        "warn": "Incluye {{count}} habilidades: {{files}}; funcionan con el plugin, sin listado, permisos ni retirada independientes."
       },
       "cordis": {
         "label": "Dependencias de Cordis",
-        "warn": "El paquete incluye {{packages}} en dependencies: DSH ya proporciona Cordis, y una copia duplicada provocaría inyección de servicios y ciclos de vida incorrectos; muévalos a peerDependencies (solo para la compilación pueden ir en devDependencies)."
+        "warn": "Mueve {{packages}} a peerDependencies, o devDependencies si solo se usa al compilar; duplicar Cordis rompe la inyección y el ciclo de vida."
       },
       "cordis-peer": {
         "label": "Versión de Cordis",
@@ -138,7 +138,7 @@ export default {
       "resultPublished": "{{name}} está publicado.",
       "note": "Comentario de revisión: {{note}}",
       "manifestTitle": "Defina todo en package.json",
-      "manifestDesc": "dsh.bundle indica que es un plugin de DSH; el campo opcional dsh-ee determina el nombre visible, la categoría (tools, agent, memory…) y la forma (skill / connector / knowledge / plugin) en el mercado de capacidades.",
+      "manifestDesc": "Declara el plugin con dsh.bundle; usa campos dsh-ee para su presentación.",
       "exampleDesc": "Una frase que explique qué hace",
       "exampleTitle": "Mi plugin"
     },
@@ -153,20 +153,20 @@ export default {
       "tokensCount": "{{count}} tokens válidos",
       "noTokens": "Aún nadie ha creado un token.",
       "revokeConfirm": "¿Revocar el token «{{name}}» de {{user}}? El equipo que lo usa no podrá instalar de inmediato.",
-      "tokensHint": "Los tokens son personales: los empleados los crean en la <link>guía de integración</link>; para CI y servicios similares, cree una cuenta dedicada y luego un token."
+      "tokensHint": "El personal crea tokens en la <link>guía de conexión</link>; usa una cuenta dedicada para CI."
     },
     "upstream": {
       "publishDirectly": "Publicar directamente después de sincronizar",
       "publishDirectlyHint": "Omite la revisión: el plugin aparecerá de inmediato en el mercado de capacidades y en el índice de DSH.",
       "checkUpdates": "Buscar nuevas versiones ahora",
       "noUpdates": "Todos los plugins precargados están en la última versión",
-      "closureNote": "Al precargar se replica también el cierre de dependencias (dependencies, optionalDependencies y peerDependencies obligatorias, incluidos los paquetes principales @deepseek-ai/dsh-*), para poder instalar sin conexión.",
+      "closureNote": "La precarga replica las dependencias necesarias para instalar sin conexión.",
       "feedCount": "Catálogo de plugins: {{count}} plugins · actualizado el {{at}}",
       "refreshFeed": "Actualizar catálogo",
-      "feedDisabled": "Modo sin conexión o catálogo dshfind desactivado en la configuración del sistema: puede usar la importación sin conexión o permitir que los empleados soliciten la introducción de paquetes concretos.",
+      "feedDisabled": "El catálogo está desactivado; importa sin conexión o solicita un paquete.",
       "feedError": "No se pudo obtener el catálogo dshfind: {{msg}}",
       "newer": "Origen {{version}}",
-      "importDesc": "Importe un paquete sin conexión exportado por un dsh-ee con acceso a Internet (p. ej., una instancia en la DMZ). Cada tarball recalcula su sha512 y se rechaza si no coincide con el manifiesto; las versiones de plugins pasan a revisión pendiente.",
+      "importDesc": "Importa un paquete sin conexión; se rechazan resúmenes distintos y los plugins requieren revisión.",
       "importing": "Importando…",
       "importResult": "{{added}} versiones nuevas ({{pending}} pendientes de revisión), {{existing}} ya existentes, {{skipped}} paquetes omitidos.",
       "exportAllHint": "Déjelo vacío para exportar todos los paquetes de origen publicados"
