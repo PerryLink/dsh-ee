@@ -46,10 +46,21 @@ func (s *Server) feishuBotConfig(ctx context.Context) (*oidc.Config, bool) {
 	return cfg, err == nil && cfg.Enabled && cfg.Preset == "feishu" && cfg.FeishuBot
 }
 
+func (s *Server) feishuChatOnline(ctx context.Context, userID int64) (bool, error) {
+	if online, _ := s.chatPresence(userID, false, false); online {
+		return true, nil
+	}
+	return s.store.HasActiveFeishuChat(ctx, userID)
+}
+
 func (s *Server) handleFeishuChatStatus(w http.ResponseWriter, r *http.Request) {
 	_, enabled := s.feishuBotConfig(r.Context())
 	u := currentUser(r)
-	online, _ := s.chatPresence(u.ID, false, false)
+	online, err := s.feishuChatOnline(r.Context(), u.ID)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled, "bound": u.AuthSource == store.AuthOIDC && strings.HasPrefix(u.ExternalDN, "feishu:"), "online": online})
 }
 
@@ -98,8 +109,13 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if userID != 0 {
-		online, _ := s.chatPresence(userID, false, true)
+		s.chatPresence(userID, false, true)
 		s.auditAs(r, u, "feishu_chat.received", strconv.FormatInt(userID, 10), nil)
+		online, err := s.feishuChatOnline(ctx, userID)
+		if err != nil {
+			s.log.Warn("读取飞书聊天在线状态失败", "err", err)
+			return
+		}
 		if !online {
 			notice = feishu.Text(lang, feishu.MsgChatOffline, nil)
 		}

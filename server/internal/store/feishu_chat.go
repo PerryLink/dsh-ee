@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const feishuChatRedelivery = 10 * time.Minute
+
 type FeishuChatMessage struct {
 	ID        int64     `json:"id"`
 	Text      string    `json:"text"`
@@ -32,11 +34,11 @@ func (s *Store) NextFeishuChat(ctx context.Context, userID int64) (*FeishuChatMe
 	}
 	for {
 		var m FeishuChatMessage
-		err := s.db.QueryRowContext(ctx, `SELECT id,text,created_at FROM feishu_chat_messages WHERE user_id=? AND created_at>=? AND (status='pending' OR (status='delivered' AND delivered_at<?)) ORDER BY id LIMIT 1`, userID, t.Add(-time.Hour), t.Add(-10*time.Minute)).Scan(&m.ID, &m.Text, &m.CreatedAt)
+		err := s.db.QueryRowContext(ctx, `SELECT id,text,created_at FROM feishu_chat_messages WHERE user_id=? AND created_at>=? AND (status='pending' OR (status='delivered' AND delivered_at<?)) ORDER BY id LIMIT 1`, userID, t.Add(-time.Hour), t.Add(-feishuChatRedelivery)).Scan(&m.ID, &m.Text, &m.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE feishu_chat_messages SET status='delivered',delivered_at=? WHERE id=? AND (status='pending' OR (status='delivered' AND delivered_at<?))`, t, m.ID, t.Add(-10*time.Minute))
+		res, err := s.db.ExecContext(ctx, `UPDATE feishu_chat_messages SET status='delivered',delivered_at=? WHERE id=? AND (status='pending' OR (status='delivered' AND delivered_at<?))`, t, m.ID, t.Add(-feishuChatRedelivery))
 		if err != nil {
 			return nil, err
 		}
@@ -48,6 +50,13 @@ func (s *Store) NextFeishuChat(ctx context.Context, userID int64) (*FeishuChatMe
 			return &m, nil
 		}
 	}
+}
+
+func (s *Store) HasActiveFeishuChat(ctx context.Context, userID int64) (bool, error) {
+	t := now()
+	var active bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM feishu_chat_messages WHERE user_id=? AND status='delivered' AND delivered_at>=? AND created_at>=?)`, userID, t.Add(-feishuChatRedelivery), t.Add(-time.Hour)).Scan(&active)
+	return active, err
 }
 
 func (s *Store) FeishuChatForReply(ctx context.Context, userID, id int64) (*FeishuChatMessage, error) {

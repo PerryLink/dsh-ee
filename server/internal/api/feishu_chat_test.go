@@ -221,6 +221,35 @@ func TestFeishuBotChat(t *testing.T) {
 	if err := st.DB().QueryRowContext(ctx, `SELECT status FROM feishu_chat_messages WHERE message_id='wake'`).Scan(&status); err != nil || status != "expired" {
 		t.Fatalf("expiry %s %v", status, err)
 	}
+	busyUser, busyBearer := mk("chat-busy")
+	checkBusyStatus := func(want bool) {
+		t.Helper()
+		n, b := c.do("GET", "/api/me/feishu-chat", nil, busyBearer)
+		if n != 200 || !strings.Contains(string(b), fmt.Sprintf(`"online":%t`, want)) {
+			t.Fatalf("busy chat status want %t: %d %s", want, n, b)
+		}
+	}
+	checkBusyStatus(false)
+	if _, err := st.EnqueueFeishuChat(ctx, busyUser.ID, "busy-turn", "oc-busy", "long-running work"); err != nil {
+		t.Fatal(err)
+	}
+	checkBusyStatus(false)
+	if _, err := st.NextFeishuChat(ctx, busyUser.ID); err != nil {
+		t.Fatal(err)
+	}
+	checkBusyStatus(true)
+	post(event("busy-followup", "ou-chat-busy", "text"), 200)
+	select {
+	case got := <-replies:
+		t.Fatalf("busy relay received false offline notice: %s", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := st.DB().ExecContext(ctx, `UPDATE feishu_chat_messages SET delivered_at=? WHERE message_id='busy-turn'`, time.Now().Add(-11*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	checkBusyStatus(false)
+	post(event("busy-offline", "ou-chat-busy", "text"), 200)
+	notice("/messages/busy-offline/reply")
 	disabled := true
 	revokedUser, revokedBearer := mk("chat-revoked")
 	revokedResult := make(chan int, 1)
