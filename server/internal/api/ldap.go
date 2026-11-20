@@ -248,6 +248,16 @@ func (s *Server) handlePutLDAP(w http.ResponseWriter, r *http.Request) {
 			writeErrCode(w, http.StatusForbidden, e.code, e.params, e.msg)
 			return
 		}
+		// 管理约束：同组映射到互斥角色、开了双人批准时新加映射到管理角色（admin_policy.go roleMappingProblem）
+		e, status, err := s.roleMappingProblem(r.Context(), ldapauthMappings(cur.RoleMappings), ldapauthMappings(cfg.RoleMappings))
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+		if e != nil {
+			writeErrCode(w, status, e.code, e.params, e.msg)
+			return
+		}
 	}
 	if err := s.saveLDAP(r.Context(), cfg, currentUser(r).ID); err != nil {
 		s.internalErr(w, r, err)
@@ -521,6 +531,9 @@ func (s *Server) createLDAPUser(ctx context.Context, cfg *ldapauth.Config, usern
 	if member, err := s.store.GetRoleByCode(ctx, rbac.RoleMember); err == nil && !slices.Contains(cfg.ManagedRoles(), member.ID) {
 		roles = dedupe(append(roles, member.ID))
 	}
+	if roles, err = s.syncedRoles(ctx, "ldap", username, nil, roles); err != nil {
+		return nil, err
+	}
 	if err := s.store.SetUserRoles(ctx, u.ID, roles); err != nil {
 		return nil, err
 	}
@@ -558,6 +571,9 @@ func (s *Server) applyLDAPEntry(ctx context.Context, cfg *ldapauth.Config, u *st
 	}
 	next, err := s.ldapRoles(ctx, cfg, a.RoleIDs, e.Groups)
 	if err != nil {
+		return err
+	}
+	if next, err = s.syncedRoles(ctx, "ldap", u.Username, a.RoleIDs, next); err != nil {
 		return err
 	}
 	cur := dedupe(append([]int64{}, a.RoleIDs...))
@@ -717,4 +733,12 @@ func (s *Server) runLDAPSync(ctx context.Context) {
 			})
 		}
 	}
+}
+
+func ldapauthMappings(ms []ldapauth.RoleMapping) []roleMapping {
+	out := make([]roleMapping, len(ms))
+	for i, m := range ms {
+		out[i] = roleMapping{Group: m.Group, RoleID: m.RoleID}
+	}
+	return out
 }

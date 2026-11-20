@@ -49,7 +49,7 @@ dsh-ee config export > access.yaml
   - `intersects`：文档的值和用户的值至少有一个相同（比如项目）；
   - `contains`：用户的值在文档的值里（比如 `user_field: "@department"` 和文档的「可见部门」）。
   `user_field` 可以用内置属性 `@department`、`@username`、`@roles`。`missing` 默认 `deny`（文档没填就当最低、看不到），只有需求明确说「没填就不限制」才写 `open`。`kbases` 留空是全部知识库。
-- **管理约束**（`policy`）：`super_disabled`（关掉超级管理员，关之前每个管理权限点都要有人持有）、`no_self_grant`、`exclusive`（互斥角色组）、`dual_approval`（`roles.assign`、`config`）。这些动静大，需求没明确要就不要动。
+- **管理约束**（`policy`）：`super_disabled`（关掉超级管理员，关之前每个管理权限点都要有人持有）、`no_self_grant`、`exclusive`（互斥角色组）、`dual_approval`（`roles.assign`、`config`）。这些动静大，需求没明确要就不要动。开了 `roles.assign` 时，给已经有人持有（或被 LDAP / OIDC 组映射）的角色加管理权限点，这份配置也要另一位管理员批准，提交人不能自批。
 - **角色**：`permissions` 是权限点编码。不能授出你自己没有的权限点。
 
 ## 4. 看影响、跑测试

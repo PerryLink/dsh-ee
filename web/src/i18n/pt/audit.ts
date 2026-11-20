@@ -72,6 +72,7 @@ export default {
         roles: "Atribuir perfis",
         quota: "Ajustar cota",
         create_bot: "Criar bot",
+        roles_mapping_dropped: "Ignorar perfis exclusivos do mapeamento",
       },
       role: {
         create: "Criar perfil",

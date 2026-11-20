@@ -137,13 +137,13 @@ func (s *Server) handleSetUserRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	// 管理约束：不能给自己授权、互斥角色、双人批准（admin_policy.go）
 	policy := s.adminPolicy(r.Context())
-	msg, grantsAdmin, err := s.roleChangeProblem(r.Context(), policy, currentUser(r).ID, id, target, ids)
+	e, grantsAdmin, err := s.roleChangeProblem(r.Context(), policy, currentUser(r).ID, id, target, ids)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
-	if msg != "" {
-		writeErr(w, http.StatusForbidden, msg)
+	if e != nil {
+		writeErrCode(w, http.StatusForbidden, e.code, e.params, e.msg)
 		return
 	}
 	if grantsAdmin && policy.dual(DualRolesAssign) {
@@ -396,6 +396,20 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.Permissions = perms
+		// 开了双人批准（roles.assign）时，给已经有人持有（或被 LDAP / OIDC 映射）的角色加管理权限点，
+		// 等于不经第二个人就给这些人授了管理权限：要走配置变更，由另一位管理员批准（handleConfigDecide 会拦自批）。
+		if added := addedAdminPerms(role.Permissions, perms); len(added) > 0 && s.adminPolicy(r.Context()).dual(DualRolesAssign) {
+			held, err := s.roleHeldOrMapped(r.Context(), id)
+			if err != nil {
+				s.internalErr(w, r, err)
+				return
+			}
+			if held {
+				writeErrCode(w, http.StatusConflict, codeRoleAdminPermsDualRequired, map[string]any{"role": role.Name},
+					"开了双人批准：角色「"+role.Name+"」已经有人持有（或被企业目录映射），给它加管理权限点要通过配置变更提交（dsh-ee config apply，或「字段与访问规则 → 变更请求」），由另一位管理员批准后生效")
+				return
+			}
+		}
 	}
 	if err := s.store.UpdateRole(r.Context(), id, p); err != nil {
 		s.internalErr(w, r, err)

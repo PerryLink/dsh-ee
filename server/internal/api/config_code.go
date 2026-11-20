@@ -869,7 +869,20 @@ func (s *Server) handleConfigDecide(w http.ResponseWriter, r *http.Request) {
 	}
 	me := currentUser(r)
 	policy := s.adminPolicy(ctx)
-	if req.Approve && cr.CreatedBy == me.ID && (cr.Kind == store.ChangeUserRoles || policy.dual(DualConfig) || cr.ViaToken) {
+	selfApproveForbidden := cr.Kind == store.ChangeUserRoles || policy.dual(DualConfig) || cr.ViaToken
+	// 开了双人批准（roles.assign）：给已有人持有的角色加管理权限点的配置，也要另一位管理员批准（rbac.go handleUpdateRole）
+	if req.Approve && cr.CreatedBy == me.ID && !selfApproveForbidden && cr.Kind == store.ChangeConfig && policy.dual(DualRolesAssign) {
+		var c configDoc
+		if err := json.Unmarshal([]byte(cr.Payload), &c); err == nil {
+			grants, err := s.configGrantsAdminToHolders(ctx, &c)
+			if err != nil {
+				s.internalErr(w, r, err)
+				return
+			}
+			selfApproveForbidden = grants
+		}
+	}
+	if req.Approve && cr.CreatedBy == me.ID && selfApproveForbidden {
 		writeErr(w, http.StatusForbidden, "这条变更要另一位管理员批准，不能自己批准自己提交的")
 		return
 	}
@@ -991,11 +1004,10 @@ func (s *Server) applyChange(r *http.Request, cr *store.ChangeRequest) (string, 
 		if e, ok := s.checkGrantable(r, p.RoleIDs); !ok {
 			return "", errors.New(e.msg)
 		}
-		if msg, _, err := s.roleChangeProblem(ctx, s.adminPolicy(ctx), cr.CreatedBy, p.UserID, target, p.RoleIDs); err != nil || msg != "" {
-			if err != nil {
-				return "", err
-			}
-			return "", errors.New(msg)
+		if e, _, err := s.roleChangeProblem(ctx, s.adminPolicy(ctx), cr.CreatedBy, p.UserID, target, p.RoleIDs); err != nil {
+			return "", err
+		} else if e != nil {
+			return "", errors.New(e.msg)
 		}
 		return "", s.store.SetUserRoles(ctx, p.UserID, p.RoleIDs)
 	case store.ChangeConfig:
