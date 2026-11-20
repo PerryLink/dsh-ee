@@ -131,7 +131,8 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"providers": nonNil(ps)})
+	// 列表额外带 apiKeyOriginUnknown：api_key_origin 为空的历史记录提示管理员重填 key。
+	writeJSON(w, http.StatusOK, map[string]any{"providers": nonNil(providerListItems(ps))})
 }
 
 type providerReq struct {

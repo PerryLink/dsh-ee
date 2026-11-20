@@ -135,6 +135,31 @@ func (s *Store) ListProviders(ctx context.Context, enabledOnly bool) ([]*Provide
 	return out, s.fillProviderModels(ctx, out)
 }
 
+// CountProvidersMissingKeyOrigin 统计「已有 API Key、但 api_key_origin 仍为空」的上游，
+// 返回数量与按 id 排序的名称。这类记录来自 0042_provider_key_origin.sql 加列之前：
+// 读取侧无法判定 key 属于哪个 origin，所以不阻断；启动告警与管理端标记用它提示管理员
+// 重填一次 key 来补上绑定。只返回名称，不返回 key 与密文。
+func (s *Store) CountProvidersMissingKeyOrigin(ctx context.Context) (int, []string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT p.name FROM providers p WHERE p.api_key_origin = '' AND LENGTH(p.api_key_enc) > 0 ORDER BY p.id")
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return 0, nil, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
+	}
+	return len(names), names, nil
+}
+
 type ProviderPatch struct {
 	Vendor       *string
 	BaseURL      *string

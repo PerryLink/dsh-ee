@@ -59,6 +59,8 @@ export default {
     priorityOf: "Priority {{n}}",
     disabled: "Disabled",
     companyKey: "Company key {{hint}}",
+    apiKeyOriginUnknown: "API key binding missing",
+    apiKeyOriginUnknownHint: "This provider is older than API key origin binding, so the current key cannot be confirmed to belong to this address (it may have survived a base URL change made before the upgrade). Re-enter the company API key once, even if the address is unchanged, to record the binding and verify it.",
     enable: "Enabled",
     check: "Check connection",
     updated: "Updated {{name}}",

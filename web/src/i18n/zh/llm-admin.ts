@@ -57,6 +57,8 @@ export default {
     priorityOf: "优先级 {{n}}",
     disabled: "已停用",
     companyKey: "企业 key {{hint}}",
+    apiKeyOriginUnknown: "API Key 待重新绑定",
+    apiKeyOriginUnknownHint: "该上游建于 API Key 绑定功能之前，当前 key 无法确认属于这个地址（升级前可能已被改过地址）。请重新填写一次企业 API Key（即使地址不变），保存后即写入绑定并完成校验。",
     enable: "启用",
     check: "检查连接",
     updated: "已更新 {{name}}",

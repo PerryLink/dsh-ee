@@ -22,6 +22,29 @@ func providerKeyOriginMoved(p *store.Provider) bool {
 	return !ok || origin != p.APIKeyOrigin
 }
 
+// providerKeyOriginUnknown 报告这条记录是否缺少 API Key 绑定 origin（0042 加列前的
+// 历史记录：origin 为空但有 key）。读取侧无法判定它是否已被改过地址，因此不阻断；
+// 管理端列表用这个标记提示管理员重填一次 key（地址不变也会写入绑定并完成校验）。
+func providerKeyOriginUnknown(p *store.Provider) bool {
+	return p != nil && p.APIKeyOrigin == "" && len(p.APIKeyEnc) > 0
+}
+
+// providerListItem 是管理端上游列表的单条视图：store 的字段原样平铺，额外带一个
+// 派生标记 apiKeyOriginUnknown（不落库、不影响既有字段）。其它上游接口（创建、
+// 更新、检查）沿用 store.Provider，保持不动。
+type providerListItem struct {
+	*store.Provider
+	APIKeyOriginUnknown bool `json:"apiKeyOriginUnknown"`
+}
+
+func providerListItems(ps []*store.Provider) []providerListItem {
+	items := make([]providerListItem, 0, len(ps))
+	for _, p := range ps {
+		items = append(items, providerListItem{Provider: p, APIKeyOriginUnknown: providerKeyOriginUnknown(p)})
+	}
+	return items
+}
+
 // openProviderKey 解密上游 key，并在发送前挡住绑定 origin 不一致的记录。
 // 调用方沿用各自现有的「provider 不可用/配置错误」错误壳与故障转移逻辑。
 func (s *Server) openProviderKey(p *store.Provider) ([]byte, error) {
