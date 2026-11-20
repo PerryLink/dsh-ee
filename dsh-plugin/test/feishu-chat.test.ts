@@ -114,7 +114,7 @@ test("only a reply from the matching bridge tool, session and message suppresses
   f.setOnSend(async (id, text) => {
     f.emit(id, true);
     const messageId = text.includes("id=11") ? 11 : 12;
-    for (const hook of f.hooks) await hook({ name: "mcp__company__ee_feishu", agent: { session: { id } }, arguments: { action: "reply", id: messageId === 11 ? 11 : 999 } }, async () => { nextCalls++; });
+    for (const hook of f.hooks) await hook({ name: "mcp__company__ee_feishu", agent: { session: { id } }, arguments: { action: "reply", id: messageId === 11 ? 11 : 999 } }, async () => { nextCalls++; return { content: [{ type: "text", text: '{"ok":true}' }] }; });
     f.emit(id, false);
   });
   f.messages.push({ id: 11, text: "reply with tool" }, { id: 12, text: "wrong id" });
@@ -122,6 +122,27 @@ test("only a reply from the matching bridge tool, session and message suppresses
   await until(() => f.replies.length === 1);
   assert.equal(nextCalls, 2);
   assert.equal(f.replies[0].url, "/api/me/feishu-chat/12/reply");
+});
+
+test("failed, denied and unverified tool results do not suppress fallback", async (t) => {
+  for (const result of [new Error("tool failed"), { isError: true, content: [] }, { kind: "error" }, { ok: false }, { kind: "ask" }, undefined]) {
+    await t.test(JSON.stringify(result) ?? "no result", async (t) => {
+      const f = fixture(t);
+      f.setOnSend(async (id) => {
+        f.emit(id, true);
+        try {
+          await f.hooks[0]({ name: "mcp__company__ee_feishu", agent: { session: { id } }, arguments: { action: "reply", id: 11 } }, async () => {
+            if (result instanceof Error) throw result;
+            return result;
+          });
+        } finally { f.emit(id, false); }
+      });
+      f.messages.push({ id: 11, text: "reply failed" });
+      f.makeRelay().start();
+      await until(() => f.replies.length === 1);
+      assert.equal(f.replies[0].url, "/api/me/feishu-chat/11/reply");
+    });
+  }
 });
 
 test("404 waits a minute and dispose cancels backoff without another request", async (t) => {
