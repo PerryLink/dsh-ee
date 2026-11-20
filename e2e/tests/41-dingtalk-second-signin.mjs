@@ -3,6 +3,9 @@
 // server/internal/api 的 TestDingTalkOrganizationSync / TestFeishuDingTalkIdentityBinding 用假钉钉覆盖。
 import { ADMIN_PW, BASE, api, assert, assertEq, login, logout, newPage, shot, step } from "../lib.mjs";
 
+// ToggleRow 的开关没有可访问名字，按所在行的标题找
+const toggle = (scope, label) => scope.locator("div.items-start").filter({ has: scope.page().getByText(label, { exact: true }) }).getByRole("switch");
+
 export default async function (t) {
   const admin = await newPage(t, { viewport: { width: 1280, height: 1100 } });
   await login(admin, "admin", ADMIN_PW);
@@ -27,15 +30,15 @@ export default async function (t) {
   await second.getByRole("button", { name: "钉钉", exact: true }).waitFor();
   assertEq(await second.getByRole("button", { name: "飞书", exact: true }).count(), 0, "第二入口不能和主登录方式是同一个来源");
   await second.getByRole("button", { name: "钉钉", exact: true }).click();
-  await second.getByRole("switch", { name: "开启第二登录入口" }).click();
+  await toggle(second, "开启第二登录入口").click();
   await second.getByLabel("钉钉企业 CorpId").fill("ding-corp-e2e");
   await second.getByLabel("Client ID").fill("ding-app-e2e");
   await second.getByLabel("Client Secret").fill("ding-secret-e2e");
-  await second.getByRole("switch", { name: "按核实过的手机号 / 企业邮箱自动关联身份" }).click();
+  await toggle(second, "按核实过的手机号 / 企业邮箱自动关联身份").click();
   const sync = second.locator("[data-dingtalk-sync]");
   await sync.getByText("钉钉组织同步", { exact: true }).waitFor();
-  await sync.getByRole("switch", { name: "每小时自动同步" }).click();
-  await sync.getByRole("switch", { name: "已离职的成员同步禁用" }).click();
+  await toggle(sync, "每小时自动同步").click();
+  await toggle(sync, "已离职的成员同步禁用").click();
   assertEq(await second.getByText("钉钉机器人对话").count(), 0, "第二入口不带机器人对话");
   assert(await sync.getByRole("button", { name: "立即同步" }).isDisabled(), "没保存前不能同步");
   await second.getByRole("button", { name: "保存统一登录配置" }).click();
