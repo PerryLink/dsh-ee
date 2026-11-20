@@ -26,6 +26,8 @@ pnpm render    # 输出 out/intro-zh.mp4、out/intro-en.mp4（1920×1080，30 �
 node promo/openmotion/build-film.mjs   # 需要本机有 OpenMotion 源码，默认 ~/openmotion，可用 OPENMOTION_DIR 指定
 ```
 
+模板固定用 OpenMotion `v0.1.0`（commit `19f7424e0cf45606c463216f41c6f8a9db393bfe`）。`build-film.mjs` 读模板前会核对 `OPENMOTION_DIR` 的 git HEAD，和这个 pin 不一致就报错退出（`OPENMOTION_ALLOW_UNPINNED=1` 可放行）；判断不了版本（不是 git 目录 / 没有 git）只警告，要严格失败就设 `OPENMOTION_REQUIRE_PIN=1`。生成的 `out/dsh-ee-openmotion-film-<lang>/README.md` 里记着 pin 和这次实际用的 HEAD。校验逻辑在 `openmotion/pin.mjs`，改完跑 `node --test promo/openmotion/pin.test.mjs`。
+
 - `web/src/components/product-film/generated/`：首页用代码播放的那一份（进 git，首页直接 import）。
 - `out/dsh-ee-openmotion-film-<lang>/`：OpenMotion（Hyperframes）工程，可以在 Studio 里打开，或者渲染成 MP4：
   `hyperframes render out/dsh-ee-openmotion-film-zh --format png-sequence -o frames`，再用 ffmpeg 把帧编码成 H.264（1280×720，30 帧，61 秒，无声）。

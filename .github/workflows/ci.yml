@@ -90,6 +90,11 @@ jobs:
           node-version: 22
       # 相对链接/锚点、上游 pin 表、docs/dev front matter；只读，不需要安装依赖
       - run: node scripts/check-docs.mjs
+      # 短片生成链：语法 + OpenMotion pin 单测（不读模板、不需要网络）
+      - name: 短片生成链 pin 校验
+        run: |
+          node --check promo/openmotion/build-film.mjs
+          node --test promo/openmotion/pin.test.mjs
 
   server:
     runs-on: ubuntu-latest

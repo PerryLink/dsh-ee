@@ -6,6 +6,8 @@
 //
 // 用法：node promo/openmotion/build-film.mjs
 // 需要本机有 OpenMotion 源码（默认 ~/openmotion，可用 OPENMOTION_DIR 指定）：模板和 jsdom 都从那里取。
+// 读模板前会核对 OpenMotion 的 git HEAD 是不是 pin 的 v0.1.0（pin 和规则在 pin.mjs）：不一致默认直接失败，
+// OPENMOTION_ALLOW_UNPINNED=1 可放行；判断不了版本时只警告，OPENMOTION_REQUIRE_PIN=1 时失败。
 // 文字都在下面的 COPY 里；人名、数字和 docs/demo-company.md 保持一致，图标是示例应用自己的图标。
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -13,9 +15,19 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 
+import { checkPin, outDirReadme } from "./pin.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..", "..");
 const openmotion = process.env.OPENMOTION_DIR || join(os.homedir(), "openmotion");
+// 模板换了版本，同一个脚本会静默产出不一样的画面：先按 pin.mjs 的规则核对版本，再读模板。
+const pin = checkPin(openmotion);
+if (!pin.ok) {
+  console.error(pin.message);
+  process.exit(1);
+}
+if (pin.level === "ok") console.log(pin.message);
+else console.warn(pin.message);
 const template = join(openmotion, "library/templates/catalog/motion-f6f244d1-c549-4081-8a5d-f0e1e3660044/source");
 const { JSDOM } = createRequire(join(openmotion, "package.json"))("jsdom");
 
@@ -408,6 +420,7 @@ for (const lang of Object.keys(COPY)) {
   writeFileSync(join(dir, "hyperframes.json"), readFileSync(join(template, "hyperframes.json")));
   cpSync(join(template, "assets/fonts"), join(dir, "assets/fonts"), { recursive: true });
   cpSync(join(template, "assets/gsap.min.js"), join(dir, "assets/gsap.min.js"));
+  writeFileSync(join(dir, "README.md"), outDirReadme(pin, lang));
 
   // 首页用的那一份：画面（去掉编辑器的 data-hf-id）、样式、时间轴分开
   const css = body.slice(body.indexOf("<style>") + 7, body.indexOf("</style>"));
