@@ -1,5 +1,6 @@
 // 能力中心：管理员写技能 → 员工在能力中心启用 → DSH 目录里出现；员工写提示词 → 审核通过；
-// 接入一个 OpenAPI 系统（就用 dsh-ee 自己的 /healthz）→ 员工经 /mcp 调用；系统设置里发布 DSH 接入插件
+// 接入一个 OpenAPI 系统（就用 dsh-ee 自己的 /healthz）→ 员工经 /mcp 调用；系统设置里发布 DSH 接入插件；
+// 新建连接默认「让 AI 帮我做」页签，切到手动配置再切回来不丢已填内容。
 import { ADMIN_PW, BASE, api, assert, assertEq, login, newPage, shot, step, tag } from "../lib.mjs";
 
 /** 以 DSH 的身份（接入令牌）调接口。 */
@@ -132,6 +133,36 @@ export default async function (t) {
   const wbEntry = cat.data.apps.find((a) => a.name === wbApp);
   assert(wbEntry?.workbench?.panes?.length === 2 && wbEntry.workbench.panes[1].url === `${BASE}/hub`, "DSH 目录应带上工作台：" + JSON.stringify(wbEntry));
   step("工作台配置能预览、保存，并随目录下发");
+
+  // ---- 新建连接：默认「让 AI 帮我做」，切手动配置不丢已填内容（两页签都挂着，只切显示） ----
+  await admin.goto(`${BASE}/assets/new?kind=connection`);
+  const guide = admin.locator("[data-conn-agent-guide]");
+  await guide.waitFor();
+  const connTab = (name) => admin.getByRole("button", { name, exact: true }).filter({ visible: true });
+  assert(await guide.isVisible(), "kind=connection 默认显示「让 AI 帮我做」页签");
+  assert(!(await admin.getByLabel("标识").isVisible()), "默认不显示手动配置表单");
+  assertEq(await connTab("让 AI 帮我做（推荐）").getAttribute("aria-pressed"), "true", "默认选中 AI 页签");
+  const agentFill = `E2E 差旅系统 ${tag}`;
+  await admin.getByLabel("接什么、干什么用").fill(agentFill);
+  await connTab("手动配置").click();
+  await admin.waitForURL((u) => u.searchParams.get("mode") === "manual");
+  await admin.getByLabel("标识").waitFor({ state: "visible", timeout: 10_000 });
+  assert(await admin.getByLabel("标识").isVisible(), "切到手动配置后显示表单");
+  await guide.waitFor({ state: "hidden", timeout: 10_000 });
+  assert(!(await guide.isVisible()), "切到手动配置后隐藏 AI 页签");
+  // 隐藏页签的输入值用 evaluate 读，避免可见性等待
+  assertEq(await admin.getByLabel("接什么、干什么用").evaluate((el) => el.value), agentFill, "切页签不丢 AI 页签已填内容");
+  const keep = `e2e-keep-${tag}`;
+  await admin.getByLabel("标识").fill(keep);
+  await connTab("让 AI 帮我做（推荐）").click();
+  await admin.waitForURL((u) => u.searchParams.get("mode") === "agent");
+  await guide.waitFor({ state: "visible", timeout: 10_000 });
+  assertEq(await admin.getByLabel("标识").evaluate((el) => el.value), keep, "切回 AI 页签不丢手动配置已填内容");
+  await admin.goto(`${BASE}/assets/new?kind=connection&mode=manual`);
+  await admin.getByLabel("标识").waitFor({ state: "visible", timeout: 10_000 });
+  await guide.waitFor({ state: "hidden", timeout: 10_000 });
+  assert(await admin.getByLabel("标识").isVisible(), "?mode=manual 直接打开手动配置表单");
+  step("新建连接：默认 AI 页签，?mode=manual 进手动表单，切换页签不丢已填内容");
 
   // ---- 企业连接：OpenAPI，指向 dsh-ee 自己的 /healthz ----
   const doc = JSON.stringify({ openapi: "3.0.0", info: { title: "Health" }, paths: { "/healthz": { get: { operationId: "health", summary: "服务健康状态" } }, "/healthz/x": { post: { operationId: "poke" } } } });
