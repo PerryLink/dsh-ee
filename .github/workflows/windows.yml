@@ -1,7 +1,9 @@
 name: windows
 
 on:
+  # 分支 push 与 PR 重复；push 只在 main 上跑。
   push:
+    branches: [main]
   pull_request:
 
 concurrency:

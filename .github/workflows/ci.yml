@@ -1,7 +1,10 @@
 name: ci
 
 on:
+  # 分支 push 与 PR 会跑两遍同样的 CI：push 只留 main，PR 仍全量跑。
+  # 直接 push 到非 main 分支且没开 PR 时不会触发 CI，属有意取舍。
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -24,7 +27,21 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # dsh-plugin / 扩展 SDK / 模板的 npm ci 共用 npm cache
+          cache: npm
+          cache-dependency-path: |
+            dsh-plugin/package-lock.json
+            extensions/sdk-local/package-lock.json
+            extensions/official/claude-code/package-lock.json
       - run: corepack enable
+      - name: 缓存 pnpm store
+        uses: actions/cache@v4
+        with:
+          # pnpm 12 的 store 默认在 XDG data 目录下；命中即跳过重复下载
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('web/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
       # docs/ 是站内 /docs 的单一事实源：web/src/generated/dev-docs.ts 必须与 docs/ 同步
       # （改了文档要重新生成并提交）；生成器和测试只用 Node 内置模块，不需要先装依赖。
       - name: 校验站内文档生成物
@@ -149,6 +166,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
@@ -202,6 +221,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
       - name: TypeScript SDK（build / typecheck / test / pack）
         working-directory: sdk/typescript
         run: |
