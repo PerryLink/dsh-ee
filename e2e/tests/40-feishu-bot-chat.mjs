@@ -145,7 +145,7 @@ export default async function (t) {
   const stateDir = fs.mkdtempSync(path.join(SHOTS, "feishu-relay-"));
   const timings = {};
   try {
-    const { FeishuChatRelay } = await loader.import("../../dsh-plugin/src/feishu-chat.ts", import.meta.url);
+    const { BotChatRelay } = await loader.import("../../dsh-plugin/src/bot-chat.ts", import.meta.url);
     const { HttpClient } = await loader.import("../../dsh-plugin/src/http.ts", import.meta.url);
     const { normalizeConfig } = await loader.import("../../dsh-plugin/src/config.ts", import.meta.url);
     const { setLang } = await loader.import("../../dsh-plugin/src/i18n/index.ts", import.meta.url);
@@ -244,7 +244,7 @@ export default async function (t) {
     step("员工通过假飞书 OIDC 登录，用正常路由创建 DSH 令牌；真实 McpBridge 注册 ee_feishu");
     let polls = 0;
     const relayHttp = { fetch: (url, ...args) => { if (url.startsWith("/api/me/feishu-chat/next")) polls++; return client.fetch(url, ...args); } };
-    relay = new FeishuChatRelay(ctx, config, tokens, relayHttp, { file: path.join(stateDir, "feishu-chat.json") });
+    relay = new BotChatRelay(ctx, config, tokens, relayHttp, "feishu", { file: path.join(stateDir, "feishu-chat.json") });
     const status = async () => { const r = await client.fetch("/api/me/feishu-chat"); assertEq(r.status, 200, "员工状态 API"); return r.json(); };
     relay.start();
     await until(async () => (await status()).online, "DSH 长轮询在线");
@@ -257,7 +257,7 @@ export default async function (t) {
     assertEq(state.replies.length, 1, "在线时只有模型回复，没有离线或 fallback 提示");
     assertEq((await eventRequest(state.events[0])).status, 200, "飞书重试仍成功");
     await shot(page, "feishu-bot-online-chat"); await pause();
-    step("网页发送私聊 → 真实事件队列 → FeishuChatRelay → 模拟模型 → /mcp tools/call ee_feishu → 原消息回复；重试去重");
+    step("网页发送私聊 → 真实事件队列 → DSH BotChatRelay → 模拟模型 → /mcp tools/call ee_feishu → 原消息回复；重试去重");
 
     await relay.stop();
     state.status = "DSH 已停止 · 等待服务端在线状态自然过期（60 秒）";

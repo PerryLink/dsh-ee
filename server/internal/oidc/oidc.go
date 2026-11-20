@@ -69,6 +69,7 @@ type Config struct {
 	// 飞书后台同一页的 Encrypt Key（可选）。填了，回调就按加密的收；不参与 JSON，由调用方加密保存。
 	FeishuEncryptKey string `json:"-"`
 	DingTalkCorpID   string `json:"dingTalkCorpId,omitempty"`
+	DingTalkBot      bool   `json:"dingTalkBot"`
 }
 
 type RoleMapping struct {

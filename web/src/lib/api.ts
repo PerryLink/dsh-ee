@@ -603,6 +603,7 @@ export interface OidcConfig {
   feishuEncryptKey?: string;
   feishuEncryptKeySet?: boolean;
   dingTalkCorpId?: string;
+  dingTalkBot?: boolean;
 }
 
 export interface OidcView extends OidcConfig {
@@ -1988,6 +1989,7 @@ export const api = {
     request<{ revoked: number }>("POST", "/api/admin/tokens/revoke", input),
 
   authMethods: () => request<{ ldap: boolean; oidc: { name: string } | null; demo: DemoSite | null; init_admin?: boolean }>("GET", "/api/auth/methods", undefined, { silent401: true }),
+  dingTalkChatStatus: () => request<{ available: boolean; enabled: boolean; bound: boolean; online: boolean }>("GET", "/api/me/dingtalk-chat"),
   oidc: () => request<OidcView>("GET", "/api/admin/auth/oidc"),
   saveOidc: (c: OidcInput) => request<OidcView>("PUT", "/api/admin/auth/oidc", c),
   testOidc: (c: OidcInput) => request<OidcTestResult>("POST", "/api/admin/auth/oidc/test", c),

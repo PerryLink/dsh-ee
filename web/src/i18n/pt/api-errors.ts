@@ -3,6 +3,13 @@ import type zhNs from "../zh/api-errors";
 import type { Messages } from "../types";
 
 export default {
+  dingtalk_chat: {
+    disabled: "O bot do DingTalk está desativado.",
+    unbound: "Entre com DingTalk e conecte o DSH primeiro.",
+    empty: "Escreva uma resposta.",
+    missing: "A mensagem não foi encontrada ou expirou.",
+    send: "Não foi possível enviar a resposta. Tente novamente mais tarde.",
+  },
   feishu_chat: {
     disabled: "O bot do Feishu está desativado.",
     empty: "A resposta não pode ficar vazia.",

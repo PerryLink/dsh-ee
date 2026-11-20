@@ -31,7 +31,7 @@ ADMIN_PW=...
 
 ## 飞书机器人对话本地演示（40）
 
-`40-feishu-bot-chat.mjs` 不需要真实飞书租户或 DSH 二进制。它在本机启动带 OIDC、通讯录和回复捕获的假飞书，浏览器操作管理开关、飞书登录与聊天预览；通过 `tsx` 加载真正的 `FeishuChatRelay`、`HttpClient`、`McpBridge` 与 `registerApproval`。只有 DSH 宿主和模型是确定性模拟，模型经员工的 DSH 类型令牌、真实审批钩子与桥接器调用 `/mcp` 的 `ee_feishu`，不关闭服务端写操作确认，也不直接伪造聊天回复。
+`40-feishu-bot-chat.mjs` 不需要真实飞书租户或 DSH 二进制。它在本机启动带 OIDC、通讯录和回复捕获的假飞书，浏览器操作管理开关、飞书登录与聊天预览；通过 `tsx` 加载真正的 `BotChatRelay`（飞书模式）、`HttpClient`、`McpBridge` 与 `registerApproval`。只有 DSH 宿主和模型是确定性模拟，模型经员工的 DSH 类型令牌、真实审批钩子与桥接器调用 `/mcp` 的 `ee_feishu`，不关闭服务端写操作确认，也不直接伪造聊天回复。
 
 ```bash
 # 仓库根目录；也可按构建文档使用已嵌入最新前端的本地二进制

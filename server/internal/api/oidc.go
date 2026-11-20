@@ -114,8 +114,15 @@ func (s *Server) oidcHTTP() *oidc.Client {
 
 func (s *Server) oidcRedirect(r *http.Request) string { return s.publicBase(r) + oidcCallback }
 
-func (s *Server) dingTalkClient(cfg *oidc.Config) dingtalk.Client {
-	return dingtalk.Client{HTTP: s.oidcHTTP().HTTP, ID: cfg.ClientID, Secret: cfg.ClientSecret}
+func (s *Server) dingTalkClient(cfg *oidc.Config) *dingtalk.Client {
+	s.dingTalkClientMu.Lock()
+	defer s.dingTalkClientMu.Unlock()
+	c := s.dingTalkAPIClient
+	if c == nil || c.ID != cfg.ClientID || c.Secret != cfg.ClientSecret {
+		c = &dingtalk.Client{HTTP: s.oidcHTTP().HTTP, ID: cfg.ClientID, Secret: cfg.ClientSecret}
+		s.dingTalkAPIClient = c
+	}
+	return c
 }
 
 func dingTalkLoginTarget(cfg *oidc.Config) string {

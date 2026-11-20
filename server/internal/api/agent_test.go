@@ -101,7 +101,7 @@ func TestAgentTools(t *testing.T) {
 	expect(t, "员工登录网页", code, 200, body)
 
 	t.Run("工具清单按令牌范围与账号权限过滤", func(t *testing.T) {
-		want := []string{"ee_connections", "ee_doctor", "ee_feishu", "ee_hub", "ee_me", "ee_plugins", "ee_records", "ee_tokens"}
+		want := []string{"ee_connections", "ee_dingtalk", "ee_doctor", "ee_feishu", "ee_hub", "ee_me", "ee_plugins", "ee_records", "ee_tokens"}
 		if got := eeTools(a.tools()); !slices.Equal(got, want) {
 			t.Fatalf("员工的 ee_* 工具：%v，期望 %v", got, want)
 		}
