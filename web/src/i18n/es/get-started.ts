@@ -5,7 +5,7 @@ import type { Messages } from "../types";
 export default {
   "getStarted": {
     "title": "Empezar con {{org}}",
-    "subtitle": "Pega el mensaje de abajo en DSH. Instala el plugin de la empresa, te pide iniciar sesión una vez y luego te guía por los modelos, la cuota y los skills que puedes usar.",
+    "subtitle": "Envía el mensaje a DSH para instalar el plugin e iniciar sesión.",
     "later": "Ahora no",
     "enter": "Ir al banco de trabajo",
     "other": "¿Prefieres la terminal?",
@@ -14,7 +14,7 @@ export default {
     "step1": "① Envía esto en DSH",
     "pathPrompt": "DSH ya puede chatear",
     "pathManual": "DSH recién instalado",
-    "promptDesc": "Copia esto y envíalo en un chat nuevo de DSH. Después de instalar el plugin de la empresa, DSH te pedirá que introduzcas un comando de inicio de sesión.",
+    "promptDesc": "Envíalo en un chat nuevo de DSH y sigue las instrucciones de acceso.",
     "manualAdd": "En DSH, abre Plugins → Añadir plugin y pega esta dirección:",
     "manualRestart": "Reinicia DSH cuando termine la instalación.",
     "manualLogin": "Escribe esto en el cuadro de chat:",
@@ -32,14 +32,14 @@ export default {
     "denied": "Denegado. Para volver a iniciar sesión, introduce {{cmd}} en DSH.",
     "connected": "«{{client}}» está conectado",
     "step3Admin": "③ Activar el modo de administración",
-    "adminDesc": "Para cambiar la configuración del sistema, el agente de DSH necesita el modo de administración temporal en este DSH. El agente no puede activarlo por sí mismo: introduce tu contraseña aquí.",
+    "adminDesc": "Introduce tu contraseña para dar acceso temporal de administrador a este DSH. El agente no puede activarlo.",
     "password": "Contraseña",
     "hours": "{{n}} h",
     "adminOnButton": "Activar el modo de administración",
     "adminOn": "El modo de administración está activado",
     "step3": "③ Continuar en DSH",
     "step4Admin": "④ Continuar en DSH",
-    "nextDesc": "Envía esto en DSH. El agente te presentará tus modelos, tu cuota y los skills recomendados, y activará los que quieras.",
-    "nextDescAdmin": "Envía esto en DSH. El agente te guiará por la lista de comprobación de la configuración; el progreso de abajo se actualiza automáticamente."
+    "nextDesc": "Envía este mensaje para ver y habilitar modelos y habilidades disponibles.",
+    "nextDescAdmin": "Envía este mensaje para continuar con la configuración."
   }
 } satisfies Messages<typeof zhNs>;

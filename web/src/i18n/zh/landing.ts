@@ -58,7 +58,7 @@ export default {
     why: {
       eyebrow: "为什么是 dsh-ee",
       title: "从各自试用，到全员可控地用起来",
-      desc: "AI 工具不缺，缺的是把企业自己的知识和系统，安全地送到每位员工手里。",
+      desc: "把企业知识和系统安全地交给员工使用。",
       before: {
         tag: "员工各自用 AI 工具",
         title: "单人、单次、无记录",
@@ -77,15 +77,15 @@ export default {
       },
     },
     controls: {
-      xinchuang: { title: "全链路信创", desc: "服务端、员工终端到模型，都能落在国产 CPU、操作系统、数据库与 DeepSeek 等国产大模型上。" },
-      control: { title: "可控", desc: "私有部署，支持完全离线。能力与微应用在入口处审核、按部门授权，企业作用域永不回源。" },
-      audit: { title: "可审计", desc: "谁装了什么、谁在什么终端上调用了什么，DSH 的执行记录回流到 dsh-ee，可追溯、可一键下架。" },
+      xinchuang: { title: "全链路信创", desc: "服务端、终端、数据库与模型均支持国产环境。" },
+      control: { title: "可控", desc: "私有或离线部署，审核授权；企业包不回源。" },
+      audit: { title: "可审计", desc: "追溯安装与调用记录，随时下架能力。" },
     },
     steps: {
-      deploy: { title: "部署", desc: "docker compose 或离线安装包，单个二进制，数据库用 OceanBase 或 TiDB，支持完全离线。" },
-      capture: { title: "沉淀", desc: "各部门把 Skill、连接器和知识包发布到企业作用域，例如 @acme。" },
-      review: { title: "审核上架", desc: "自动检查安装脚本、依赖、许可证与密钥泄露，再由管理员审批、设可见范围。" },
-      use: { title: "员工使用", desc: "一条命令接入企业源，之后照常使用 DSH 和工作台里的微应用。" },
+      deploy: { title: "部署", desc: "用 Docker 或离线包部署，支持 OceanBase 与 TiDB。" },
+      capture: { title: "沉淀", desc: "把技能、连接器和知识包发布到企业作用域。" },
+      review: { title: "审核上架", desc: "自动检查后，由管理员审核并授权。" },
+      use: { title: "员工使用", desc: "一条命令接入，在 DSH 中使用企业应用。" },
     },
     features: {
       open: "展开说明：{{title}}",
@@ -94,7 +94,7 @@ export default {
       how: "怎么用",
       hub: {
         title: "能力中心：插件、技能、连接一处管",
-        lead: "插件、技能、提示词、企业连接和微应用都在能力中心统一管理。管理员启用之后，会自动同步到员工的 DSH，员工不用自己找、自己装。",
+        lead: "集中管理企业能力，启用后同步到员工的 DSH。",
         points: ["五类能力分页浏览，每个都有版本、可用范围和调用记录", "按部门或角色设可见范围，可设为自动安装", "随时停用或下架，员工端跟着同步"],
         steps: ["打开「能力中心」，挑选或搜索要用的能力", "设置可用范围：全员、指定部门或指定角色", "点「启用」，员工下次打开 DSH 就能直接用"],
         cta: "去能力中心",
@@ -102,7 +102,7 @@ export default {
       },
       review: {
         title: "先审核，再上架",
-        lead: "员工分享的插件和引入的社区插件，进入企业源之前都要过审核：系统先自动检查，审核员再对照结果看一眼，通过后才对员工可见。",
+        lead: "插件先自动检查，再审核上架。",
         points: ["自动检查安装脚本、依赖、许可证与密钥泄露", "技能、提示词、微应用对照线上版本看改动", "驳回时写明原因，提交人在「我的提交」里能看到"],
         steps: ["员工在「分享能力」上传 .tgz，或直接 npm publish", "审核员在「待审核」查看检查结果与改动", "通过后进入企业作用域，按可用范围分发"],
         cta: "看审核队列",
@@ -110,7 +110,7 @@ export default {
       },
       connect: {
         title: "一条命令接入",
-        lead: "员工在电脑上执行一条命令，再到浏览器里确认设备码，DSH 就接上了企业源：npm 源、模型和能力中心一次配好，令牌存进 DSH 自己的凭据库。",
+        lead: "运行接入命令，核对设备码后即可使用企业源。",
         points: ["macOS / Linux 用 setup.sh，Windows 用 setup.ps1", "统一令牌按账号权限与 scope 取交集，服务端只存哈希", "在 DSH 对话里用 /ee-login、/ee-status、/ee-logout 随时管理"],
         steps: ["复制「接入指南」里的命令，到终端执行", "浏览器打开提示的地址，确认设备码", "回到 DSH，企业能力和模型已经可用"],
         cta: "看接入指南",
@@ -118,7 +118,7 @@ export default {
       },
       knowledge: {
         title: "知识库问答，句句带出处",
-        lead: "把制度、手册和资料传进知识库，员工在 DSH 的「知识问答」里直接提问。不依赖向量模型：Agent 多轮关键词检索、读原文后作答，每个出处都能点开，定位到原文那几行。",
+        lead: "上传企业资料，在 DSH 提问并查看原文出处。",
         points: ["支持 PDF、Word、Markdown，文档有版本，可回滚", "按库设置谁能查、谁来维护", "出处链接直达原文，并高亮对应的行"],
         steps: ["新建知识库，设好可见范围，上传文档", "在知识库里试搜一下，确认找得到", "员工在 DSH 打开「知识问答」直接提问"],
         cta: "去知识库",
@@ -126,7 +126,7 @@ export default {
       },
       systems: {
         title: "企业系统，按工具授权",
-        lead: "把 ERP、CRM、工单这类内部系统，通过 MCP 服务或 OpenAPI 接口接进来。凭据由 dsh-ee 托管，员工的 DSH 只拿得到授权给自己的那几个工具。",
+        lead: "通过 MCP 或 OpenAPI 接入系统，按工具授权。",
         points: ["支持 MCP 服务与 OpenAPI 接口", "凭据集中托管，不下发到员工电脑", "每个工具单独授权，调用都有记录"],
         steps: ["在「企业连接」添加 MCP 服务或 OpenAPI 地址", "填入凭据，勾选要开放的工具和授权范围", "员工在 DSH 里直接让 Agent 调用"],
         cta: "看企业连接",
@@ -134,7 +134,7 @@ export default {
       },
       models: {
         title: "模型网关与额度",
-        lead: "dsh-ee 自带 OpenAI 兼容网关：接入 DeepSeek 等上游后对外统一模型名，同一个模型可以挂多个上游自动故障转移，每个账号按月分配 token 额度。",
+        lead: "统一接入模型，配置故障切换与员工额度。",
         points: ["上游连接检查、模型导入与对外命名", "同名模型挂多个上游，出错自动切换", "按账号设月度额度、可用模型与有效期，超额返回 429"],
         steps: ["在「模型接入」添加上游并导入模型", "在「额度分配」给账号设月度额度", "在「运营数据」按部门、模型看用量"],
         cta: "看模型接入",
@@ -144,7 +144,7 @@ export default {
     nav: { how: "工作方式", why: "为什么", workbench: "工作台", control: "可控与审计", deploy: "部署" },
     enter: "进入工作台",
     heroLine1: "让每位员工的 DSH 都认识你的公司。",
-    heroLead: "把 ERP、CRM、数仓和制度文档接进来，组装成 AI 微应用，审核授权后送到每位员工的 DSH。数据和凭据都留在你自己的服务器上，每一次调用都可以审计。",
+    heroLead: "接入企业系统与知识，审核授权后供员工在 DSH 使用。",
     tryDemo: "以员工身份试一试",
     videoLabel: "dsh-ee 一分钟介绍短片",
     seeHow: "看它怎么工作",
@@ -152,7 +152,7 @@ export default {
     howLine: "从企业资产到员工手里，每一步都可控",
     wbLine1: "资产变成微应用，",
     wbLine2: "在 DSH 里跑起来",
-    wbDesc: "报销助手、经营数据问答、合同审查……界面由 dsh-ee 托管，推理与工具调用交给员工本机的 DSH，依赖的能力首次打开时自动装好。",
+    wbDesc: "企业应用由 dsh-ee 托管，在员工本机 DSH 中运行。",
     toDsh: "dsh-ee 给 DSH",
     toDshDesc: "企业 Skill 与上下文、可信的安装源、微应用与使用策略。",
     toEe: "DSH 给 dsh-ee",
@@ -164,7 +164,7 @@ export default {
     codeServer: "# 服务端",
     codeClient: "# 员工终端，一次接入",
     codeUse: "# 之后照常使用 DSH",
-    authNote: "支持本地账号、LDAP 与 OIDC；DSH 安装包核对 sha256 后才进入内网。",
+    authNote: "支持本地、LDAP 和 OIDC 登录；安装包校验后入网。",
     closing: "让企业知识成为每位员工 DSH 的默认能力。",
     footerNote: "原型，全部为模拟数据。上游插件数据来自 dshfind.com。",
     footerMarket: "能力市场",

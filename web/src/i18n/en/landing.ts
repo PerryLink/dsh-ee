@@ -60,7 +60,7 @@ export default {
     why: {
       eyebrow: "Why dsh-ee",
       title: "From scattered trials to company-wide use",
-      desc: "There's no shortage of AI tools. What's missing is a safe way to get your own knowledge and systems into every employee's hands.",
+      desc: "Give employees safe access to company knowledge and systems.",
       before: {
         tag: "Everyone on their own AI tools",
         title: "One person, one chat, no record",
@@ -79,15 +79,15 @@ export default {
       },
     },
     controls: {
-      xinchuang: { title: "Domestic stack, end to end", desc: "Server, employee endpoints and models can all run on domestic CPUs, operating systems, databases and models such as DeepSeek." },
-      control: { title: "Controlled", desc: "Self-hosted and fully offline-capable. Capabilities and micro-apps are reviewed at the gate and granted per department; company scopes never resolve from the public registry." },
-      audit: { title: "Auditable", desc: "Who installed what, and who called what from which device: DSH activity flows back to dsh-ee, so everything is traceable and can be pulled in one click." },
+      xinchuang: { title: "Domestic stack, end to end", desc: "Run servers, clients, databases and models on domestic infrastructure." },
+      control: { title: "Controlled", desc: "Deploy privately or offline with review and access controls; company packages never fall back upstream." },
+      audit: { title: "Auditable", desc: "Trace installs and calls, and unpublish capabilities when needed." },
     },
     steps: {
-      deploy: { title: "Deploy", desc: "docker compose or an offline bundle. A single binary on OceanBase or TiDB, fully offline if needed." },
-      capture: { title: "Capture", desc: "Teams publish skills, connectors and knowledge packs under the company scope, e.g. @acme." },
-      review: { title: "Review and publish", desc: "Install scripts, dependencies, licenses and leaked secrets are checked automatically, then an admin approves and sets who can see it." },
-      use: { title: "Use", desc: "Employees connect once with a single command, then keep using DSH and the micro-apps in their workbench." },
+      deploy: { title: "Deploy", desc: "Deploy with Docker or an offline package using OceanBase or TiDB." },
+      capture: { title: "Capture", desc: "Publish skills, connectors and knowledge packages to the company scope." },
+      review: { title: "Review and publish", desc: "After automated checks, administrators review and grant access." },
+      use: { title: "Use", desc: "Connect with one command and use company apps in DSH." },
     },
     features: {
       open: "Open details: {{title}}",
@@ -96,7 +96,7 @@ export default {
       how: "How to use it",
       hub: {
         title: "Capability hub: plugins, skills and connections in one place",
-        lead: "Plugins, skills, prompts, company connections and micro-apps are all managed in the capability hub. Once an admin enables something, it syncs to employees' DSH automatically, so nobody has to hunt for it or install it by hand.",
+        lead: "Manage company capabilities centrally and sync enabled ones to DSH.",
         points: ["Five kinds of capability, each with versions, scope and call history", "Scope by department or role, and optionally install automatically", "Disable or yank at any time and employees' DSH follows"],
         steps: ["Open the capability hub and pick or search for a capability", "Set who can use it: everyone, certain departments or roles", "Click Enable; employees can use it the next time they open DSH"],
         cta: "Open the hub",
@@ -104,7 +104,7 @@ export default {
       },
       review: {
         title: "Reviewed before it ships",
-        lead: "Plugins shared by employees and community plugins being brought in are reviewed before they reach the company registry: automated checks run first, a reviewer looks over the results, and only then do employees see it.",
+        lead: "Check plugins automatically, then review them for publication.",
         points: ["Automatic checks for install scripts, dependencies, licenses and leaked secrets", "Skills, prompts and micro-apps are diffed against the live version", "Rejections carry a reason the submitter sees under My submissions"],
         steps: ["An employee uploads a .tgz under Share, or runs npm publish", "A reviewer checks results and changes in the review queue", "Once approved it joins the company scope and ships to its audience"],
         cta: "See the review queue",
@@ -112,7 +112,7 @@ export default {
       },
       connect: {
         title: "Connected with one command",
-        lead: "An employee runs one command and confirms a device code in the browser. DSH is then connected to the company: npm registry, models and capability hub are set up in one go, and the token is kept in DSH's own credential store.",
+        lead: "Run the setup command and confirm the device code to connect.",
         points: ["setup.sh on macOS / Linux, setup.ps1 on Windows", "The unified token is the intersection of account permissions and scope; the server stores only a hash", "Manage it from DSH chat with /ee-login, /ee-status and /ee-logout"],
         steps: ["Copy the command from the setup guide and run it in a terminal", "Open the address shown and confirm the device code", "Back in DSH, company capabilities and models are ready"],
         cta: "Open the setup guide",
@@ -120,7 +120,7 @@ export default {
       },
       knowledge: {
         title: "Knowledge Q&A with a source for every answer",
-        lead: "Upload policies, handbooks and documents to a knowledge base and employees ask questions in DSH's Knowledge Q&A. No vector model needed: the agent searches by keyword over several rounds, reads the originals and answers, and every citation opens the exact lines it came from.",
+        lead: "Upload company documents, ask in DSH and follow source citations.",
         points: ["PDF, Word and Markdown, with versions and rollback", "Per-base control over who can search and who maintains it", "Citation links open the original with the lines highlighted"],
         steps: ["Create a knowledge base, set its audience and upload documents", "Try a search in the base to make sure it finds things", "Employees open Knowledge Q&A in DSH and ask away"],
         cta: "Open knowledge bases",
@@ -128,7 +128,7 @@ export default {
       },
       systems: {
         title: "Company systems, authorized per tool",
-        lead: "Bring in internal systems such as ERP, CRM and ticketing through an MCP server or an OpenAPI interface. dsh-ee holds the credentials, and each employee's DSH only gets the tools they are authorized for.",
+        lead: "Connect systems through MCP or OpenAPI and grant access per tool.",
         points: ["MCP servers and OpenAPI interfaces", "Credentials are held centrally, never sent to employee machines", "Each tool is authorized separately and every call is recorded"],
         steps: ["Add the MCP server or OpenAPI address under Connections", "Enter credentials, pick the tools to expose and who gets them", "Employees ask the agent in DSH to use them"],
         cta: "Open Connections",
@@ -136,7 +136,7 @@ export default {
       },
       models: {
         title: "Model gateway and quotas",
-        lead: "dsh-ee includes an OpenAI-compatible gateway: connect upstreams such as DeepSeek and expose one set of model names. A model can sit on several upstreams with automatic failover, and every account gets a monthly token quota.",
+        lead: "Connect models with failover and employee quotas.",
         points: ["Upstream health checks, model import and public names", "Failover across upstreams serving the same model", "Monthly quota, allowed models and expiry per account; over quota returns 429"],
         steps: ["Add an upstream and import models under Models", "Give accounts a monthly quota under Quotas", "Track usage by department and model under Analytics"],
         cta: "Open Models",
@@ -146,7 +146,7 @@ export default {
     nav: { how: "How it works", why: "Why", workbench: "Workbench", control: "Control & audit", deploy: "Deploy" },
     enter: "Open workbench",
     heroLine1: "Your company, inside every employee's Harness.",
-    heroLead: "Connect your ERP, CRM, data warehouse and policy docs, assemble them into AI micro-apps, and ship them, reviewed and permissioned, to every employee's DSH. Data and credentials stay on your own server, and every call can be audited.",
+    heroLead: "Connect company systems and knowledge for approved use in DSH.",
     tryDemo: "Try it as an employee",
     videoLabel: "dsh-ee in one minute",
     seeHow: "See how it works",
@@ -154,7 +154,7 @@ export default {
     howLine: "From company assets to every employee, with every step under control",
     wbLine1: "Assets become micro-apps",
     wbLine2: "that run in DSH",
-    wbDesc: "Expense assistant, business-data Q&A, contract review… dsh-ee hosts the interface, the employee's local DSH does the reasoning and tool calls, and required capabilities install the first time an app opens.",
+    wbDesc: "Host company apps in dsh-ee and run them in employees’ local DSH.",
     toDsh: "dsh-ee gives DSH",
     toDshDesc: "Company skills and context, a trusted install source, micro-apps and usage policies.",
     toEe: "DSH gives dsh-ee",
@@ -166,7 +166,7 @@ export default {
     codeServer: "# Server",
     codeClient: "# Employee machine, once",
     codeUse: "# Then use DSH as usual",
-    authNote: "Local accounts, LDAP and OIDC supported; DSH installers enter the intranet only after their sha256 checks out.",
+    authNote: "Use local, LDAP or OIDC login; verify installers before importing.",
     closing: "Make company knowledge every employee's default in DSH.",
     footerNote: "Prototype; all data is sample data. Upstream plugin data from dshfind.com.",
     footerMarket: "Capability market",
