@@ -3,6 +3,7 @@ import type { Messages } from "../types";
 
 export default {
   appAgent: {
+    howItWorks: "How does it work?",
     tabAgent: "Let AI build it (recommended)",
     tabManual: "Configure manually",
     intro: "No need to fill in every field here: describe what you want, copy the prompt below and send it to the AI in DSH. It reads the design guide, checks which systems you can use, shows you a plan to confirm, then creates an app only you can use.",

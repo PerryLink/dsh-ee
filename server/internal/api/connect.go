@@ -423,6 +423,9 @@ type connectInfo struct {
 	ServerName string `json:"server_name"`
 	// TarballURL 是免登录的安装地址：在 DSH 插件页直接粘贴，不需要先配置 npm 源
 	TarballURL string `json:"tarball_url,omitempty"`
+	// BaseURL 是员工连回 dsh-ee 的地址（与插件里写的一致）；BaseURLSet 为 false 表示是按当前请求推断的
+	BaseURL    string `json:"base_url,omitempty"`
+	BaseURLSet bool   `json:"base_url_set"`
 	Error      string `json:"error,omitempty"`
 }
 

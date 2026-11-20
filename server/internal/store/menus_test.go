@@ -526,6 +526,47 @@ func TestMigrateMenusDirectory(t *testing.T) {
 	}
 }
 
+// 0044：管理后台「能力管理」改叫「插件管理」（和页面标题一致）；管理员改过的名字不动。
+func TestMigrateMenusPluginsTitle(t *testing.T) {
+	ctx := context.Background()
+	st := openTokenTestStore(t)
+	if err := st.ResetMenus(ctx, rbac.DefaultMenus); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "UPDATE menus SET title = '能力管理' WHERE page_key = 'admin-plugins'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0044_plugins_menu_title'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	title := func() string {
+		var s string
+		if err := st.DB().QueryRowContext(ctx, "SELECT title FROM menus WHERE page_key = 'admin-plugins'").Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	if got := title(); got != "插件管理" {
+		t.Fatalf("迁移后标题 %q", got)
+	}
+	// 管理员自定义的名字保留
+	if _, err := st.DB().ExecContext(ctx, "UPDATE menus SET title = '插件与技能' WHERE page_key = 'admin-plugins'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0044_plugins_menu_title'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := title(); got != "插件与技能" {
+		t.Fatalf("自定义标题被改成了 %q", got)
+	}
+}
+
 // 侧栏默认只放每天用的页面（0043）；其余页面有路由、默认不进侧栏。
 var declutteredPages = []string{"templates", "materials", "dsh-download", "setup", "my-keys", "dev-docs", "dev-examples"}
 

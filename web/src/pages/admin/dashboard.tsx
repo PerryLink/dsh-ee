@@ -100,9 +100,9 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-3">
         <ChainPanel
           step={t("dashboard.assets")}
-          lead={formatNumber(approved.length)}
+          lead={s ? formatNumber(s.totals.apps) : "—"}
           unit={t("dashboard.published")}
-          note={t("dashboard.assetsNote", { internal, upstream: approved.length - internal })}
+          note={t("dashboard.assetsNote", { plugins: approved.length, internal, upstream: approved.length - internal })}
         >
           <BarList rows={byKind} highlight={(l) => l !== t("kinds.plugin")} />
         </ChainPanel>

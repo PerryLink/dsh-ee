@@ -28,7 +28,7 @@ export default {
   },
   pluginDetail: {
     notFound: "O plugin não existe ou ainda não passou na revisão.",
-    backToMarket: "Voltar à central de capacidades",
+    backToMarket: "Voltar aos aplicativos da empresa",
     market: "Central de capacidades",
     internal: "Interno · {{department}}",
     upstream: "Upstream · incluído no dshfind",

@@ -32,6 +32,10 @@ export default {
     no: "Não",
   },
   shell: {
+    publicUrl: {
+      unset: "O endereço público não está definido: {{url}} foi deduzido de como você abriu esta página, e o DSH dos funcionários não conecta se os computadores deles não o alcançarem.",
+      action: "Definir nas configurações do sistema",
+    },
     getStarted: {
       title: "Comece com o DSH",
       desc: "Ainda não conectado: instale o plugin da empresa e entre uma vez para usar os apps da empresa no DSH.",
@@ -159,7 +163,7 @@ export default {
     "admin-dashboard": "Visão geral",
     "admin-stats": "Dados de operação",
     "admin-audit": "Registro de auditoria",
-    "admin-plugins": "Gerenciamento de capacidades",
+    "admin-plugins": "Plugins",
     "admin-connections": "Conexões da empresa",
     "admin-review": "Aguardando revisão",
     "admin-registry": "Fonte npm",
@@ -197,7 +201,7 @@ export default {
     "admin-dashboard": "Visão geral de ponta a ponta: ativos, governança, pessoas e dispositivos",
     "admin-stats": "Instalações, uso de modelos, departamentos e armazenamento",
     "admin-audit": "Registros de login, permissões, configurações, publicação e revisão",
-    "admin-plugins": "Publicar e despublicar capacidades",
+    "admin-plugins": "Publicar e despublicar plugins",
     "admin-connections": "Conecte serviços MCP e APIs HTTP da empresa, armazene credenciais e configure ferramentas e autorizações",
     "admin-review": "Fila de revisão",
     "admin-registry": "Regras de roteamento, upstream e tokens de acesso",

@@ -29,6 +29,10 @@ export default {
     no: "否",
   },
   shell: {
+    publicUrl: {
+      unset: "还没设置「访问地址」：这里的地址 {{url}} 是按你现在打开网页的方式推断的，员工电脑访问不到时 DSH 接入会失败。",
+      action: "去系统设置填写",
+    },
     getStarted: {
       title: "开始使用 DSH",
       desc: "还没接入 DSH：装好企业插件、登录一次，就能在 DSH 里用企业应用。",
@@ -130,7 +134,7 @@ export default {
     "admin-dashboard": "总览",
     "admin-stats": "运营数据",
     "admin-audit": "审计日志",
-    "admin-plugins": "能力管理",
+    "admin-plugins": "插件管理",
     "admin-connections": "企业连接",
     "admin-review": "待审核",
     "admin-registry": "npm 源",
@@ -168,7 +172,7 @@ export default {
     "admin-dashboard": "全链路总览：资产、治理、员工与终端",
     "admin-stats": "安装、模型用量、部门与存储",
     "admin-audit": "登录、权限、设置、发布与审核等操作记录",
-    "admin-plugins": "能力上下架",
+    "admin-plugins": "插件上下架",
     "admin-connections": "接入企业 MCP 服务与 HTTP 接口，托管凭据，配置工具与授权",
     "admin-review": "审核队列",
     "admin-registry": "路由规则、上游、访问令牌",

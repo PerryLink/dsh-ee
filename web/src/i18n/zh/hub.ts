@@ -45,7 +45,7 @@ export default {
   },
   asset: {
     highlights: "它能帮你做什么",
-    back: "返回能力中心",
+    back: "返回{{page}}",
     notFound: "这项能力不存在，或不在你的可用范围内。",
     version: "v{{n}}",
     owner: "负责人",

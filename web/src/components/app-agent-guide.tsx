@@ -181,9 +181,12 @@ export function AppAgentGuide({ onManual, expert = false }: { onManual: () => vo
         </Card>
       </div>
 
-      <aside className="space-y-4 lg:sticky lg:top-4">
+      <aside className="lg:sticky lg:top-4">
+        {/* 说明默认收起：主表单之外只留一张卡 */}
         <Card className="p-5">
-          <h3 className="mb-3 text-neutral-900 text-[15px] font-semibold">{t("appAgent.stepsTitle")}</h3>
+          <details data-app-guide-help="">
+          <summary className="cursor-pointer text-neutral-900 text-[15px] font-semibold">{t("appAgent.howItWorks")}</summary>
+          <h3 className="mt-4 mb-3 text-neutral-900 text-sm font-semibold">{t("appAgent.stepsTitle")}</h3>
           <ol className="space-y-3">
             {steps.map((s, i) => (
               <li key={i} className="flex gap-3 text-sm text-neutral-700">
@@ -192,26 +195,23 @@ export function AppAgentGuide({ onManual, expert = false }: { onManual: () => vo
               </li>
             ))}
           </ol>
-          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-100 pt-3 text-sm">
-            <span className="text-neutral-600">{t("appAgent.notReady")}</span>
-            <Link to="/get-started" className="font-medium text-brand-600 dark:text-brand-300 hover:underline">{t("appAgent.goSetup")} →</Link>
-            <PageLink page="build" className="font-medium text-brand-600 dark:text-brand-300 hover:underline">{t("appAgent.goBuild")} →</PageLink>
-          </div>
-        </Card>
-        <Card className="p-5">
-          <h3 className="mb-1 flex items-center gap-2 text-neutral-900 text-[15px] font-semibold"><Repeat size={15} /> {t("appAgent.iterateTitle")}</h3>
+          <h3 className="mt-5 mb-1 flex items-center gap-2 text-neutral-900 text-sm font-semibold"><Repeat size={15} /> {t("appAgent.iterateTitle")}</h3>
           <p className="mb-2 text-sm text-neutral-600">{t("appAgent.iterateDesc")}</p>
           <ul className="space-y-1.5">
             {iterate.map((s) => (
               <li key={s} className="rounded-md bg-neutral-50 px-3 py-1.5 font-mono text-xs text-neutral-700">{s}</li>
             ))}
           </ul>
-        </Card>
-        <Card className="p-5">
-          <h3 className="mb-2 flex items-center gap-2 text-neutral-900 text-[15px] font-semibold"><Lightbulb size={15} /> {t("appAgent.tipsTitle")}</h3>
+          <h3 className="mt-5 mb-2 flex items-center gap-2 text-neutral-900 text-sm font-semibold"><Lightbulb size={15} /> {t("appAgent.tipsTitle")}</h3>
           <ul className="list-disc space-y-1.5 pl-5 text-sm text-neutral-700">
             {tips.map((s) => <li key={s}>{s}</li>)}
           </ul>
+          </details>
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-100 pt-3 text-sm">
+            <span className="text-neutral-600">{t("appAgent.notReady")}</span>
+            <Link to="/get-started" className="font-medium text-brand-600 dark:text-brand-300 hover:underline">{t("appAgent.goSetup")} →</Link>
+            <PageLink page="build" className="font-medium text-brand-600 dark:text-brand-300 hover:underline">{t("appAgent.goBuild")} →</PageLink>
+          </div>
         </Card>
       </aside>
     </div>

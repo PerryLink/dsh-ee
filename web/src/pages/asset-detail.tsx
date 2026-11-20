@@ -207,10 +207,11 @@ function AssetDetail() {
       );
     });
 
+  const backPage = a.kind === "app" ? (owns ? "build" : "apps") : "materials";
   return (
     <div className="max-w-5xl">
-      <PageLink page={a.kind === "app" ? (owns ? "build" : "apps") : "materials"} className={backLinkCls}>
-        <ArrowLeft size={14} /> {t("asset.back")}
+      <PageLink page={backPage} className={backLinkCls}>
+        <ArrowLeft size={14} /> {t("asset.back", { page: t(`pages.${backPage}`) })}
       </PageLink>
 
       <div className="mb-6 flex flex-wrap items-start gap-4">
