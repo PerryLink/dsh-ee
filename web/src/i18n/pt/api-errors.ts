@@ -3,7 +3,18 @@ import type zhNs from "../zh/api-errors";
 import type { Messages } from "../types";
 
 export default {
+  llm: {
+    base_url_invalid: "A URL base deve ser um endereço http(s), por exemplo https://api.deepseek.com",
+    name_key_required: "Nome (até 64 caracteres) e chave de API são obrigatórios.",
+    vendor_invalid: "O fornecedor só aceita minúsculas, dígitos e -.",
+    model_invalid: "Nome de modelo inválido ({{model}}).",
+    name_exists: "Esse nome já existe.",
+  },
   auth: {
+    init_done: "A configuração já foi feita. Entre normalmente.",
+    init_locked: "Códigos errados demais; este código foi invalidado. Reinicie o servidor e use o novo código do log.",
+    init_bad_code: "Código de configuração errado. Veja o log do servidor.",
+    bad_username: "O usuário só aceita minúsculas, dígitos e . _ -, de 2 a 64 caracteres.",
     login_required: "Please sign in first.",
     session_expired: "Your session has expired. Please sign in again.",
     bad_credentials: "Incorrect username or password.",
@@ -12,8 +23,8 @@ export default {
     forbidden: "You don't have permission to perform this action.",
     bad_old_password: "Your current password is incorrect.",
     password_managed_externally: "This account's password is managed by your company directory or SSO. Change it in your company's account system.",
-    weak_password: "Password must be at least {{min}} characters.",
-    password_too_long: "Password must be at most {{max}} bytes.",
+    weak_password: "A senha deve ter pelo menos {{min}} caracteres.",
+    password_too_long: "A senha não pode passar de {{max}} bytes.",
     too_many_attempts: "Too many failed attempts. Try again in {{minutes}} minutes.",
     ip_rate_limited: "Too many failed sign-in attempts. Try again later.",
   },

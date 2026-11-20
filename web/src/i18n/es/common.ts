@@ -36,6 +36,10 @@ export default {
       "unset": "La dirección pública no está configurada: {{url}} se deduce de cómo abriste esta página, y el DSH de los empleados no podrá conectarse si sus equipos no llegan a ella.",
       "action": "Configurarla en los ajustes del sistema",
     },
+    "getStarted": {
+      "title": "Empieza con DSH",
+      "desc": "Aún no te has conectado: instala el plugin de la empresa e inicia sesión una vez para usar las apps de la empresa en DSH.",
+    },
     "limited": {
       "employee": "Abriste esta página desde DSH y se inició sesión automáticamente. Las funciones de seguridad de la cuenta, como Mis tokens, requieren tu contraseña.",
       "admin": "Abriste esta página desde DSH y se inició sesión automáticamente con acceso solo de empleado. Inicia sesión con tu contraseña para usar las funciones de administración.",

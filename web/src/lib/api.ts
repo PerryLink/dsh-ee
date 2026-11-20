@@ -1516,6 +1516,8 @@ export interface SetupStep {
   done: boolean;
   optional?: boolean;
   detail?: string;
+  detail_key?: string;
+  detail_params?: Record<string, string | number>;
   how?: string;
 }
 

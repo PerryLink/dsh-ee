@@ -50,6 +50,27 @@ const (
 	codeAuthWeakPassword = "auth.weak_password"
 	// codeAuthPasswordTooLong：新密码超过 bcrypt 能处理的最大字节数，400。params：max（最大字节数）。
 	codeAuthPasswordTooLong = "auth.password_too_long"
+	// codeAuthInitDone：首次初始化已完成（或没开放网页初始化），404。params 无。
+	codeAuthInitDone = "auth.init_done"
+	// codeAuthInitLocked：初始化码错误次数过多已作废，429。params 无。
+	codeAuthInitLocked = "auth.init_locked"
+	// codeAuthInitBadCode：初始化码不对，403。params 无。
+	codeAuthInitBadCode = "auth.init_bad_code"
+	// codeAuthBadUsername：用户名格式不对，400。params 无。
+	codeAuthBadUsername = "auth.bad_username"
+
+	// ---- 模型上游：server/internal/api/llm.go（首次配置向导会用到） ----
+
+	// codeLLMBaseURLInvalid：base_url 不是 http(s) 地址，400。params 无。
+	codeLLMBaseURLInvalid = "llm.base_url_invalid"
+	// codeLLMNameKeyRequired：name 为空或过长、api_key 为空，400。params 无。
+	codeLLMNameKeyRequired = "llm.name_key_required"
+	// codeLLMVendorInvalid：vendor 含非法字符，400。params 无。
+	codeLLMVendorInvalid = "llm.vendor_invalid"
+	// codeLLMModelInvalid：模型名不合法，400。params：model。
+	codeLLMModelInvalid = "llm.model_invalid"
+	// codeLLMNameExists：上游名称已存在，409。params 无。
+	codeLLMNameExists = "llm.name_exists"
 
 	// ---- 登录限流：server/internal/api/auth.go、login_ratelimit.go ----
 

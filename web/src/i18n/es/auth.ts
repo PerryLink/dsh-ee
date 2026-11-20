@@ -63,6 +63,13 @@ export default {
     "submitting": "Creando…"
   },
   "account": {
+    "shortcuts": {
+      "title": "Conexión con DSH y desarrollo",
+      "hint": "Estas páginas no están en la barra lateral; ábrelas desde aquí.",
+      "connect": "Conectar",
+      "develop": "Desarrollar",
+      "getStarted": "Empezar",
+    },
     "title": "Cuenta",
     "logout": "Cerrar sesión",
     "username": "Nombre de usuario",
