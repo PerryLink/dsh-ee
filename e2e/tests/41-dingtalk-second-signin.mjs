@@ -68,6 +68,38 @@ export default async function (t) {
   await shot(admin, "dingtalk-identity-card");
   step("个人账号页显示飞书 / 钉钉身份；本地账号不提供绑定");
 
+  // 模拟员工身份 API 和授权回跳，覆盖同一页解除绑定与重新绑定后的卡片状态。
+  let bound = true;
+  await admin.route("**/api/me/identities", (route) => route.fulfill({ json: { identities: [
+    { provider: "feishu", name: "飞书", bound: true, via: "home" },
+    { provider: "dingtalk", name: "钉钉", bound, via: "explicit", canBind: !bound, canUnlink: bound },
+  ] } }));
+  await admin.route("**/api/me/dingtalk-chat", (route) =>
+    route.fulfill({ json: { available: true, enabled: true, bound, online: bound } }));
+  await admin.route("**/api/me/identities/dingtalk", (route) => {
+    assertEq(route.request().method(), "DELETE", "解除绑定请求");
+    bound = false;
+    return route.fulfill({ json: { ok: true } });
+  });
+  await admin.route(/\/api\/auth\/oidc\/start\?provider=dingtalk&bind=1$/, (route) => {
+    bound = true;
+    return route.fulfill({ status: 302, headers: { location: "/account?identity_bound=dingtalk" } });
+  });
+  await admin.goto(`${BASE}/account`);
+  const connection = admin.locator("[data-dingtalk-connection]");
+  const boundStatus = connection.getByText("已绑定钉钉身份", { exact: true });
+  await boundStatus.waitFor();
+  await card.getByRole("button", { name: "解除绑定" }).click();
+  await admin.getByRole("alertdialog").getByRole("button", { name: "解除绑定" }).click();
+  await connection.getByText("请先用钉钉登录以绑定员工身份", { exact: false }).waitFor();
+  await boundStatus.waitFor({ state: "hidden" });
+  await shot(admin, "dingtalk-connection-unbound");
+  await card.getByRole("link", { name: "绑定钉钉" }).click();
+  await card.locator("[data-identity-bound]").waitFor();
+  await boundStatus.waitFor();
+  await shot(admin, "dingtalk-connection-rebound");
+  step("解除钉钉绑定时连接卡立即更新，重新绑定后恢复");
+
   const english = await newPage(t, { lang: "en" });
   await login(english, "admin", ADMIN_PW);
   await english.goto(`${BASE}/account?identity_error=${encodeURIComponent("身份冲突")}&identity_error_code=identity.already_linked`);

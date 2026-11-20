@@ -47,9 +47,8 @@ function Shortcuts() {
   );
 }
 
-function DingTalkConnection() {
+function DingTalkConnection({ data }: { data: Awaited<ReturnType<typeof api.dingTalkChatStatus>> | null }) {
   const { t } = useTranslation();
-  const { data } = useApi(api.dingTalkChatStatus);
   if (!data?.available) return null;
   return (
     <Card className="mt-4 p-5" data-dingtalk-connection="">
@@ -65,7 +64,7 @@ function DingTalkConnection() {
 }
 
 /** 飞书 / 钉钉身份绑定：两个登录入口都开着时，员工可以把另一个身份绑到当前账号上，之后用哪边登录都是这个账号。 */
-function IdentityBindings() {
+function IdentityBindings({ onUnlinkSuccess }: { onUnlinkSuccess: (provider: string) => void }) {
   const { t, i18n } = useTranslation();
   const { notify } = useStore();
   const { data, reload } = useApi(api.myIdentities);
@@ -83,6 +82,7 @@ function IdentityBindings() {
     if (!r.ok) return notify(r.error);
     notify(t("oidcAdmin.identity.unlinked", { name }));
     reload();
+    onUnlinkSuccess(provider);
   };
   return (
     <Card className="mt-4 p-5" data-identity-bindings="">
@@ -118,6 +118,7 @@ export default function Account() {
   const { user, logout, clear } = useAuth();
   const navigate = useNavigate();
   const { busy, run } = useAction();
+  const { data: dingTalkStatus, reload: reloadDingTalkStatus } = useApi(api.dingTalkChatStatus);
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
@@ -245,8 +246,10 @@ export default function Account() {
         </div>
       </Card>
 
-      <IdentityBindings />
-      <DingTalkConnection />
+      <IdentityBindings onUnlinkSuccess={(provider) => {
+        if (provider === "dingtalk") reloadDingTalkStatus();
+      }} />
+      <DingTalkConnection data={dingTalkStatus} />
       <Shortcuts />
 
       {user.auth_source !== "local" ? (
