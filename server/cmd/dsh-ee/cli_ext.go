@@ -14,13 +14,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/extension"
@@ -137,10 +135,10 @@ func startExtension(dir, run, eeURL string, stderr io.Writer) (string, *syncBuff
 		return "", nil, nil, err
 	}
 	url := "http://" + addr
-	cmd := exec.Command("sh", "-c", run)
+	cmd := extensionShellCommand(run)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "DSH_EE_URL="+eeURL, "EXTENSION_ADDR="+addr, "EXTENSION_URL="+url, "DSH_EE_INSECURE=")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = extensionSysProcAttr()
 	logs := &syncBuffer{}
 	cmd.Stdout, cmd.Stderr = logs, logs
 	if err := cmd.Start(); err != nil {
@@ -150,11 +148,11 @@ func startExtension(dir, run, eeURL string, stderr io.Writer) (string, *syncBuff
 	go func() { exited <- cmd.Wait() }()
 	stop := func() {
 		// 连同它起的子进程一起停（go run 会再起一个进程）
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		terminateExtension(cmd, false)
 		select {
 		case <-exited:
 		case <-time.After(3 * time.Second):
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			terminateExtension(cmd, true)
 		}
 	}
 	deadline := time.Now().Add(120 * time.Second)
@@ -335,7 +333,7 @@ func cliExtDev(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, tr("\n按 Ctrl+C 结束。", "\nPress Ctrl+C to stop."))
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sig, extensionInterruptSignals()...)
 	<-sig
 	return 0
 }
