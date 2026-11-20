@@ -161,7 +161,7 @@ type Options struct {
 
 type Server struct {
 	feishuChatMu       sync.Mutex
-	feishuChatPresence map[int64]*feishuChatPresence
+	feishuChatPresence map[store.FeishuChatKey]*feishuChatPresence
 	dingTalkState      dingTalkChatState
 	dingTalkClientMu   sync.Mutex
 	dingTalkAPIClient  *dingtalk.Client

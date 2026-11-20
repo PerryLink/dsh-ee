@@ -90,7 +90,7 @@ export default {
       "title": "Segundo login (Feishu + DingTalk)",
       "desc": "Se o login principal for Feishu, você também pode ativar o DingTalk, e vice-versa. Depois que as identidades de um funcionário são vinculadas, entrar por qualquer uma leva à mesma conta.",
       "enabled": "Ativar o segundo login",
-      "enabledDesc": "Requer que o login principal acima esteja ativado, com um lado Feishu e o outro DingTalk. Notificações e chat com o bot continuam seguindo apenas o login principal; perfil, departamento e papéis mapeados são geridos pela identidade com que a conta foi criada.",
+      "enabledDesc": "Requer que o login principal acima esteja ativado, com um lado Feishu e o outro DingTalk. As notificações continuam seguindo apenas o login principal, mas ambos os métodos podem ativar o chat com o bot; perfil, departamento e papéis mapeados são geridos pela identidade com que a conta foi criada.",
       "linkByContact": "Vincular identidades automaticamente por celular verificado ou e-mail corporativo",
       "linkByContactDesc": "Desativado por padrão; assim, só o próprio funcionário pode vincular a outra identidade em Conta. Quando ativado, o login e a sincronização leem dos dois diretórios, com as credenciais do aplicativo, o celular e o e-mail atribuído pela organização, e vinculam apenas se exatamente uma conta ativa corresponder. E-mail informado pelo funcionário, nome de exibição e nome de usuário nunca são usados; correspondências ambíguas ou contraditórias não são vinculadas, e duas contas existentes nunca são mescladas.",
       "syncLinked": "Vinculados a contas existentes em vez de criar novas: {{count}}",

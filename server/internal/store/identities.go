@@ -110,6 +110,10 @@ func (s *Store) GetSecondaryIdentity(ctx context.Context, subject string) (*Iden
 	return scanIdentity(s.db.QueryRowContext(ctx, "SELECT "+identityColumns+" FROM user_identities WHERE subject = ? AND via <> ?", subject, IdentityHome))
 }
 
+func (s *Store) LinkedIdentityForProvider(ctx context.Context, userID int64, provider string) (*Identity, error) {
+	return scanIdentity(s.db.QueryRowContext(ctx, "SELECT "+identityColumns+" FROM user_identities WHERE user_id=? AND active_provider=? AND via<>?", userID, provider, IdentityHome))
+}
+
 func (s *Store) ListUserIdentities(ctx context.Context, userID int64) ([]*Identity, error) {
 	return s.listIdentities(ctx, "user_id = ? AND via <> ?", userID, IdentityUnlinked)
 }

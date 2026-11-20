@@ -60,8 +60,8 @@ func (s *Store) DingTalkChatForReply(ctx context.Context, scope string, userID, 
 	return m, err
 }
 
-func (s *Store) FinishDingTalkChat(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE dingtalk_chat_messages SET replied_at=? WHERE id=?`, now(), id)
+func (s *Store) FinishDingTalkChat(ctx context.Context, scope string, userID, id int64, sender string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE dingtalk_chat_messages SET replied_at=? WHERE id=? AND app_scope=? AND user_id=? AND sender_user_id=?`, now(), id, scope, userID, sender)
 	return err
 }
 

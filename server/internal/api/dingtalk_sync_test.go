@@ -23,7 +23,8 @@ import (
 // fakeDingTalk 模拟钉钉的登录（OAuth）和通讯录接口。登录用的授权码就是成员的 userId。
 type fakeDingTalk struct {
 	*httptest.Server
-	mu sync.Mutex
+	mux *http.ServeMux
+	mu  sync.Mutex
 	// 部门 id → 名字 / 上级 / 直属成员（按顺序）
 	names   map[int64]string
 	parents map[int64]int64
@@ -62,6 +63,7 @@ func newFakeDingTalk(t *testing.T) *fakeDingTalk {
 		}
 	}
 	mux := http.NewServeMux()
+	f.mux = mux
 	mux.HandleFunc("POST api.dingtalk.com/v1.0/oauth2/accessToken", func(w http.ResponseWriter, r *http.Request) {
 		var in map[string]string
 		if json.NewDecoder(r.Body).Decode(&in) != nil || in["appKey"] != "ding-app" || in["appSecret"] != "ding-app-secret" {
@@ -446,8 +448,8 @@ func TestFeishuDingTalkIdentityBinding(t *testing.T) {
 	expect(t, "两个入口不能是同一个来源", code, 400, body)
 	code, body = admin.do("PUT", "/api/admin/auth/oidc?slot=secondary", second, nil)
 	expect(t, "保存钉钉第二入口", code, 200, body)
-	if strings.Contains(string(body), "ding-app-secret") || !strings.Contains(string(body), `"dingTalkBot":false`) {
-		t.Fatalf("第二入口不回显密钥，也不带机器人：%s", body)
+	if strings.Contains(string(body), "ding-app-secret") || !strings.Contains(string(body), `"dingTalkBot":true`) {
+		t.Fatalf("第二入口不回显密钥，但应保留机器人开关：%s", body)
 	}
 	if primary := mustGet(t, admin, "/api/admin/auth/oidc"); !strings.Contains(string(primary), `"preset":"feishu"`) {
 		t.Fatalf("保存第二入口不能动主登录方式：%s", primary)

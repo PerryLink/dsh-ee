@@ -82,7 +82,7 @@ export default {
       "title": "Second sign-in (Feishu + DingTalk)",
       "desc": "When the primary sign-in is Feishu you can also enable DingTalk, and vice versa. Once an employee's identities are linked, signing in with either lands on the same account.",
       "enabled": "Enable the second sign-in",
-      "enabledDesc": "Requires the primary sign-in above to be enabled, with one side Feishu and the other DingTalk. Notifications and bot chat still follow the primary sign-in only; profile, department and mapped roles are managed by the identity the account was created with.",
+      "enabledDesc": "Requires the primary sign-in above to be enabled, with one side Feishu and the other DingTalk. Notifications still follow the primary sign-in only, but either sign-in can enable bot chat; profile, department and mapped roles are managed by the identity the account was created with.",
       "linkByContact": "Link identities automatically by verified mobile number or work email",
       "linkByContactDesc": "Off by default; when off, employees can only bind the other identity themselves under Account. When on, sign-in and organization sync read the mobile number and organization-assigned email from both directories with the app credentials, and link only when exactly one active account matches. Self-reported email, display name and username are never used; ambiguous or contradictory matches are not linked, and two existing accounts are never merged.",
       "syncLinked": "Linked to existing accounts instead of creating new ones: {{count}}",

@@ -15,8 +15,15 @@ type FeishuChatMessage struct {
 	MessageID string    `json:"-"`
 }
 
-func (s *Store) EnqueueFeishuChat(ctx context.Context, userID int64, messageID, chatID, text string) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `INSERT INTO feishu_chat_messages (user_id,message_id,chat_id,text,status,created_at) VALUES (?,?,?,?, 'pending',?)`, userID, messageID, chatID, text, now())
+type FeishuChatKey struct {
+	AppScope string
+	UserID   int64
+	SenderID string
+}
+
+func (s *Store) EnqueueFeishuChat(ctx context.Context, key FeishuChatKey, messageID, chatID, text string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `INSERT INTO feishu_chat_messages (app_scope,user_id,sender_user_id,message_id,chat_id,text,status,created_at)
+		VALUES (?,?,?,?,?,?,'pending',?)`, key.AppScope, key.UserID, key.SenderID, messageID, chatID, text, now())
 	if isDuplicate(err) {
 		return false, nil
 	}
@@ -27,14 +34,17 @@ func (s *Store) EnqueueFeishuChat(ctx context.Context, userID int64, messageID, 
 	return n == 1, err
 }
 
-func (s *Store) NextFeishuChat(ctx context.Context, userID int64) (*FeishuChatMessage, error) {
+func (s *Store) NextFeishuChat(ctx context.Context, key FeishuChatKey) (*FeishuChatMessage, error) {
 	t := now()
-	if _, err := s.db.ExecContext(ctx, `UPDATE feishu_chat_messages SET status='expired' WHERE user_id=? AND status IN ('pending','delivered') AND created_at < ?`, userID, t.Add(-time.Hour)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE feishu_chat_messages SET status='expired' WHERE app_scope=? AND user_id=? AND sender_user_id=?
+		AND status IN ('pending','delivered') AND created_at < ?`, key.AppScope, key.UserID, key.SenderID, t.Add(-time.Hour)); err != nil {
 		return nil, err
 	}
 	for {
 		var m FeishuChatMessage
-		err := s.db.QueryRowContext(ctx, `SELECT id,text,created_at FROM feishu_chat_messages WHERE user_id=? AND created_at>=? AND (status='pending' OR (status='delivered' AND delivered_at<?)) ORDER BY id LIMIT 1`, userID, t.Add(-time.Hour), t.Add(-feishuChatRedelivery)).Scan(&m.ID, &m.Text, &m.CreatedAt)
+		err := s.db.QueryRowContext(ctx, `SELECT id,text,created_at FROM feishu_chat_messages WHERE app_scope=? AND user_id=? AND sender_user_id=?
+			AND created_at>=? AND (status='pending' OR (status='delivered' AND delivered_at<?)) ORDER BY id LIMIT 1`,
+			key.AppScope, key.UserID, key.SenderID, t.Add(-time.Hour), t.Add(-feishuChatRedelivery)).Scan(&m.ID, &m.Text, &m.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -52,21 +62,24 @@ func (s *Store) NextFeishuChat(ctx context.Context, userID int64) (*FeishuChatMe
 	}
 }
 
-func (s *Store) HasActiveFeishuChat(ctx context.Context, userID int64) (bool, error) {
+func (s *Store) HasActiveFeishuChat(ctx context.Context, key FeishuChatKey) (bool, error) {
 	t := now()
 	var active bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM feishu_chat_messages WHERE user_id=? AND status='delivered' AND delivered_at>=? AND created_at>=?)`, userID, t.Add(-feishuChatRedelivery), t.Add(-time.Hour)).Scan(&active)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM feishu_chat_messages WHERE app_scope=? AND user_id=? AND sender_user_id=?
+		AND status='delivered' AND delivered_at>=? AND created_at>=?)`, key.AppScope, key.UserID, key.SenderID, t.Add(-feishuChatRedelivery), t.Add(-time.Hour)).Scan(&active)
 	return active, err
 }
 
-func (s *Store) FeishuChatForReply(ctx context.Context, userID, id int64) (*FeishuChatMessage, error) {
+func (s *Store) FeishuChatForReply(ctx context.Context, key FeishuChatKey, id int64) (*FeishuChatMessage, error) {
 	var m FeishuChatMessage
-	err := s.db.QueryRowContext(ctx, `SELECT id,message_id,text,created_at FROM feishu_chat_messages WHERE id=? AND user_id=? AND status IN ('pending','delivered','replied')`, id, userID).Scan(&m.ID, &m.MessageID, &m.Text, &m.CreatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,message_id,text,created_at FROM feishu_chat_messages WHERE id=? AND app_scope=? AND user_id=? AND sender_user_id=?
+		AND status IN ('pending','delivered','replied')`, id, key.AppScope, key.UserID, key.SenderID).Scan(&m.ID, &m.MessageID, &m.Text, &m.CreatedAt)
 	return &m, err
 }
 
-func (s *Store) FinishFeishuChatReply(ctx context.Context, userID, id int64, text string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE feishu_chat_messages SET status='replied',reply=CONCAT(COALESCE(reply,''),?),replied_at=? WHERE id=? AND user_id=?`, text, now(), id, userID)
+func (s *Store) FinishFeishuChatReply(ctx context.Context, key FeishuChatKey, id int64, text string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE feishu_chat_messages SET status='replied',reply=CONCAT(COALESCE(reply,''),?),replied_at=?
+		WHERE id=? AND app_scope=? AND user_id=? AND sender_user_id=?`, text, now(), id, key.AppScope, key.UserID, key.SenderID)
 	if err != nil {
 		return err
 	}

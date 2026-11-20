@@ -39,7 +39,7 @@ export default async function (t) {
   await sync.getByText("钉钉组织同步", { exact: true }).waitFor();
   await toggle(sync, "每小时自动同步").click();
   await toggle(sync, "已离职的成员同步禁用").click();
-  assertEq(await second.getByText("钉钉机器人对话").count(), 0, "第二入口不带机器人对话");
+  await toggle(second, "钉钉机器人对话").click();
   assert(await sync.getByRole("button", { name: "立即同步" }).isDisabled(), "没保存前不能同步");
   await second.getByRole("button", { name: "保存统一登录配置" }).click();
   await admin.getByText("已保存统一登录配置").first().waitFor();
@@ -52,6 +52,7 @@ export default async function (t) {
   assertEq(saved.data.dingTalkSync, true, "每小时同步已保存");
   assertEq(saved.data.dingTalkSyncDisable, true, "离职禁用已保存");
   assertEq(saved.data.linkByContact, true, "自动关联已保存");
+  assertEq(saved.data.dingTalkBot, true, "第二入口同样可以开启机器人");
   const primary = await api(admin, "GET", "/api/admin/auth/oidc");
   assertEq(primary.data.preset, "feishu", "保存第二入口不动主登录方式");
   step("第二登录入口选钉钉：凭据、组织同步开关与自动关联开关保存成功，secret 不回显");

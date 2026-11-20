@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,16 +22,16 @@ type feishuChatPresence struct {
 	wake     chan struct{}
 }
 
-func (s *Server) chatPresence(userID int64, poll, wake bool) (bool, <-chan struct{}) {
+func (s *Server) chatPresence(key store.FeishuChatKey, poll, wake bool) (bool, <-chan struct{}) {
 	s.feishuChatMu.Lock()
 	defer s.feishuChatMu.Unlock()
 	if s.feishuChatPresence == nil {
-		s.feishuChatPresence = map[int64]*feishuChatPresence{}
+		s.feishuChatPresence = map[store.FeishuChatKey]*feishuChatPresence{}
 	}
-	p := s.feishuChatPresence[userID]
+	p := s.feishuChatPresence[key]
 	if p == nil {
 		p = &feishuChatPresence{wake: make(chan struct{})}
-		s.feishuChatPresence[userID] = p
+		s.feishuChatPresence[key] = p
 	}
 	if poll {
 		p.lastPoll = time.Now()
@@ -42,30 +44,63 @@ func (s *Server) chatPresence(userID int64, poll, wake bool) (bool, <-chan struc
 }
 
 func (s *Server) feishuBotConfig(ctx context.Context) (*oidc.Config, bool) {
-	cfg, err := s.loadOIDC(ctx)
-	return cfg, err == nil && cfg.Enabled && cfg.Preset == "feishu" && cfg.FeishuBot
+	cfg, _ := s.oidcByPreset(ctx, "feishu")
+	return cfg, cfg != nil && cfg.FeishuBot
 }
 
-func (s *Server) feishuChatOnline(ctx context.Context, userID int64) (bool, error) {
-	if online, _ := s.chatPresence(userID, false, false); online {
+func feishuChatScope(cfg *oidc.Config) string {
+	base := feishu.NewClient(cfg.FeishuAPIBase, "", "", nil).BaseURL
+	sum := sha256.Sum256([]byte(cfg.ClientID + "\x00" + normalizeOIDCIssuer(cfg.Issuer) + "\x00" + normalizeOIDCIssuer(base)))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (s *Server) feishuChatKey(ctx context.Context, cfg *oidc.Config, u *store.User) (store.FeishuChatKey, error) {
+	if cfg == nil {
+		return store.FeishuChatKey{}, nil
+	}
+	sender, err := s.chatSender(ctx, u, "feishu", feishu.ExternalSubject(""))
+	if err != nil || sender == "" {
+		return store.FeishuChatKey{}, err
+	}
+	return store.FeishuChatKey{AppScope: feishuChatScope(cfg), UserID: u.ID, SenderID: sender}, nil
+}
+
+func (s *Server) feishuChatOnline(ctx context.Context, key store.FeishuChatKey) (bool, error) {
+	if online, _ := s.chatPresence(key, false, false); online {
 		return true, nil
 	}
-	return s.store.HasActiveFeishuChat(ctx, userID)
+	return s.store.HasActiveFeishuChat(ctx, key)
 }
 
 func (s *Server) handleFeishuChatStatus(w http.ResponseWriter, r *http.Request) {
-	_, enabled := s.feishuBotConfig(r.Context())
-	u := currentUser(r)
-	online, err := s.feishuChatOnline(r.Context(), u.ID)
+	cfg, enabled := s.feishuBotConfig(r.Context())
+	key, err := s.feishuChatKey(r.Context(), cfg, currentUser(r))
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled, "bound": u.AuthSource == store.AuthOIDC && strings.HasPrefix(u.ExternalDN, "feishu:"), "online": online})
+	var online bool
+	if enabled && key.UserID != 0 {
+		online, err = s.feishuChatOnline(r.Context(), key)
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled, "bound": key.UserID != 0, "online": online})
 }
 
 func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
-	cb := s.verifiedFeishuCallback(w, r, true)
+	cfg, _, err := s.loadOIDCByPreset(r.Context(), "feishu")
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	if cfg == nil || !cfg.FeishuBot {
+		writeErrCode(w, 404, codeFeishuChatDisabled, nil, "飞书机器人未开启")
+		return
+	}
+	cb := verifiedFeishuCallback(w, r, cfg)
 	if cb == nil {
 		return
 	}
@@ -77,12 +112,16 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 	// Queue persistence is completed before returning; only outbound network calls are asynchronous.
 	ctx := r.Context()
 	msg := cb.Event.Message
-	u, err := s.store.GetUserByExternalDN(ctx, store.AuthOIDC, feishu.ExternalSubject(cb.Event.Sender.SenderID.OpenID))
+	sender := cb.Event.Sender.SenderID.OpenID
+	if sender == "" || len(feishu.ExternalSubject(sender)) > 512 {
+		return
+	}
+	u, err := s.chatUserBySubject(ctx, feishu.ExternalSubject(sender))
 	var content struct {
 		Text string `json:"text"`
 	}
 	notice := ""
-	userID := int64(0)
+	key := store.FeishuChatKey{AppScope: feishuChatScope(cfg), SenderID: sender}
 	lang := s.orgLanguage(ctx)
 	if u != nil {
 		lang = s.userLanguage(ctx, u)
@@ -92,14 +131,14 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusInternalServerError
 		return
 	}
-	if u == nil || u.Disabled || u.AccountType != store.AccountHuman {
+	if !chatEmployee(u) {
 		notice = feishu.Text(lang, feishu.MsgChatLogin, map[string]string{"url": s.publicBase(r)})
 	} else if msg.MessageType != "text" || json.Unmarshal([]byte(msg.Content), &content) != nil || strings.TrimSpace(content.Text) == "" {
 		notice = feishu.Text(lang, feishu.MsgChatTextOnly, nil)
 	} else {
-		userID = u.ID
+		key.UserID = u.ID
 	}
-	inserted, err := s.store.EnqueueFeishuChat(ctx, userID, msg.MessageID, msg.ChatID, content.Text)
+	inserted, err := s.store.EnqueueFeishuChat(ctx, key, msg.MessageID, msg.ChatID, content.Text)
 	if err != nil {
 		s.log.Warn("保存飞书聊天消息失败", "err", err)
 		status = http.StatusInternalServerError
@@ -108,10 +147,10 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 	if !inserted {
 		return
 	}
-	if userID != 0 {
-		s.chatPresence(userID, false, true)
-		s.auditAs(r, u, "feishu_chat.received", strconv.FormatInt(userID, 10), nil)
-		online, err := s.feishuChatOnline(ctx, userID)
+	if key.UserID != 0 {
+		s.chatPresence(key, false, true)
+		s.auditAs(r, u, "feishu_chat.received", strconv.FormatInt(key.UserID, 10), nil)
+		online, err := s.feishuChatOnline(ctx, key)
 		if err != nil {
 			s.log.Warn("读取飞书聊天在线状态失败", "err", err)
 			return
@@ -121,10 +160,6 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if notice != "" {
-		cfg, ok := s.feishuBotConfig(ctx)
-		if !ok {
-			return
-		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
@@ -137,10 +172,6 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFeishuChatNext(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.feishuBotConfig(r.Context()); !ok {
-		writeErrCode(w, 404, codeFeishuChatDisabled, nil, "飞书机器人未开启")
-		return
-	}
 	wait, _ := strconv.Atoi(r.URL.Query().Get("wait"))
 	wait = max(0, min(wait, 25))
 	timer := time.NewTimer(time.Duration(wait) * time.Second)
@@ -149,6 +180,11 @@ func (s *Server) handleFeishuChatNext(w http.ResponseWriter, r *http.Request) {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
+		cfg, enabled := s.feishuBotConfig(r.Context())
+		if !enabled {
+			writeErrCode(w, 404, codeFeishuChatDisabled, nil, "飞书机器人未开启")
+			return
+		}
 		rp, p, _, ok := s.tokenRequest(w, r)
 		if !ok {
 			return
@@ -158,15 +194,23 @@ func (s *Server) handleFeishuChatNext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		r = rp
-		_, wake := s.chatPresence(currentUser(r).ID, true, false)
-		m, err := s.store.NextFeishuChat(r.Context(), currentUser(r).ID)
-		if err == nil {
-			writeJSON(w, 200, m)
-			return
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		key, err := s.feishuChatKey(r.Context(), cfg, currentUser(r))
+		if err != nil {
 			s.internalErr(w, r, err)
 			return
+		}
+		var wake <-chan struct{}
+		if key.UserID != 0 {
+			_, wake = s.chatPresence(key, true, false)
+			m, err := s.store.NextFeishuChat(r.Context(), key)
+			if err == nil {
+				writeJSON(w, 200, m)
+				return
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				s.internalErr(w, r, err)
+				return
+			}
 		}
 		select {
 		case <-r.Context().Done():
@@ -176,10 +220,6 @@ func (s *Server) handleFeishuChatNext(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-wake:
 		case <-tick.C:
-		}
-		if _, ok := s.feishuBotConfig(r.Context()); !ok {
-			writeErrCode(w, 404, codeFeishuChatDisabled, nil, "飞书机器人未开启")
-			return
 		}
 	}
 }
@@ -201,7 +241,16 @@ func (s *Server) handleFeishuChatReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	m, err := s.store.FeishuChatForReply(r.Context(), currentUser(r).ID, id)
+	key, err := s.feishuChatKey(r.Context(), cfg, currentUser(r))
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	if key.UserID == 0 {
+		writeErrCode(w, 404, codeFeishuChatMissing, nil, "消息不存在或已过期")
+		return
+	}
+	m, err := s.store.FeishuChatForReply(r.Context(), key, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErrCode(w, 404, codeFeishuChatMissing, nil, "消息不存在或已过期")
 		return
@@ -216,7 +265,7 @@ func (s *Server) handleFeishuChatReply(w http.ResponseWriter, r *http.Request) {
 		writeErrCode(w, 502, codeFeishuChatSend, nil, "飞书回复发送失败，请稍后重试")
 		return
 	}
-	if err := s.store.FinishFeishuChatReply(r.Context(), currentUser(r).ID, id, text); err != nil {
+	if err := s.store.FinishFeishuChatReply(r.Context(), key, id, text); err != nil {
 		s.internalErr(w, r, err)
 		return
 	}

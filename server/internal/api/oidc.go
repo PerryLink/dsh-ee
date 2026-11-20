@@ -108,26 +108,49 @@ func chatPreset(preset string) bool { return preset == "feishu" || preset == din
 // oidcSecondary 返回生效的第二登录入口。只有主登录方式开着、两边一个是飞书一个是钉钉时才生效；
 // 主登录方式换成别的 IdP 或关掉，第二入口跟着失效，不需要另外清配置。
 func (s *Server) oidcSecondary(ctx context.Context) (*oidc.Config, bool) {
-	primary, ok := s.oidcEnabled(ctx)
-	if !ok || !chatPreset(primary.Preset) {
+	primary, err := s.loadOIDC(ctx)
+	if err != nil {
 		return nil, false
+	}
+	cfg, err := s.loadOIDCSecondary(ctx, primary)
+	return cfg, err == nil && cfg != nil
+}
+
+func (s *Server) loadOIDCSecondary(ctx context.Context, primary *oidc.Config) (*oidc.Config, error) {
+	if !oidcSlotEnabled(primary) || !chatPreset(primary.Preset) {
+		return nil, nil
 	}
 	cfg, err := s.loadOIDCSlot(ctx, oidcSecondaryKey)
-	if err != nil || !cfg.Enabled || cfg.Issuer == "" || cfg.ClientID == "" || !chatPreset(cfg.Preset) || cfg.Preset == primary.Preset {
-		return nil, false
+	if err != nil || !oidcSlotEnabled(cfg) || !chatPreset(cfg.Preset) || cfg.Preset == primary.Preset {
+		return nil, err
 	}
-	return cfg, true
+	return cfg, nil
 }
 
 // oidcByPreset 在主登录方式和第二登录入口里找开着的飞书（或钉钉）配置；第二个返回值是它所在的配置键。
 func (s *Server) oidcByPreset(ctx context.Context, preset string) (*oidc.Config, string) {
-	if cfg, ok := s.oidcEnabled(ctx); ok && cfg.Preset == preset {
-		return cfg, oidcSettingsKey
+	cfg, key, _ := s.loadOIDCByPreset(ctx, preset)
+	return cfg, key
+}
+
+func (s *Server) loadOIDCByPreset(ctx context.Context, preset string) (*oidc.Config, string, error) {
+	primary, err := s.loadOIDC(ctx)
+	if err != nil {
+		return nil, "", err
 	}
-	if cfg, ok := s.oidcSecondary(ctx); ok && cfg.Preset == preset {
-		return cfg, oidcSecondaryKey
+	if oidcSlotEnabled(primary) && primary.Preset == preset {
+		return primary, oidcSettingsKey, nil
 	}
-	return nil, ""
+	if cfg, err := s.loadOIDCSecondary(ctx, primary); err != nil {
+		return nil, "", err
+	} else if cfg != nil && cfg.Preset == preset {
+		return cfg, oidcSecondaryKey, nil
+	}
+	return nil, "", nil
+}
+
+func oidcSlotEnabled(cfg *oidc.Config) bool {
+	return cfg != nil && cfg.Enabled && cfg.Issuer != "" && cfg.ClientID != ""
 }
 
 // oidcSlotKey：管理接口用 ?slot=secondary 指第二登录入口。
@@ -140,7 +163,7 @@ func oidcSlotKey(r *http.Request) string {
 
 func (s *Server) oidcEnabled(ctx context.Context) (*oidc.Config, bool) {
 	cfg, err := s.loadOIDC(ctx)
-	if err != nil || !cfg.Enabled || cfg.Issuer == "" || cfg.ClientID == "" {
+	if err != nil || !oidcSlotEnabled(cfg) {
 		return nil, false
 	}
 	return cfg, true
@@ -231,8 +254,7 @@ func (s *Server) resolveOIDCInput(ctx context.Context, key string, in *oidcInput
 		cfg.FeishuEncryptKey = cur.FeishuEncryptKey
 	}
 	if key == oidcSecondaryKey {
-		// 第二登录入口只管登录、组织同步和身份关联；通知和机器人始终跟主登录方式走。
-		cfg.FeishuNotify, cfg.FeishuNotifyActions, cfg.FeishuBot, cfg.DingTalkBot = false, false, false, false
+		cfg.FeishuNotify, cfg.FeishuNotifyActions = false, false
 		if cfg.Enabled && !chatPreset(cfg.Preset) {
 			return nil, "第二登录入口只能是飞书或钉钉", nil
 		}

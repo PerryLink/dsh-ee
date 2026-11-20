@@ -27,6 +27,7 @@ import (
 // fakeIdP 是一个最小的 OIDC 身份提供方：发现配置、JWKS、换令牌（校验 PKCE）、userinfo。
 type fakeIdP struct {
 	*httptest.Server
+	mux *http.ServeMux
 	key *rsa.PrivateKey
 	mu  sync.Mutex
 	// code → 这次登录要签发的声明与 PKCE 挑战
@@ -47,6 +48,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 	}
 	f := &fakeIdP{key: key, codes: map[string]fakeGrant{}}
 	mux := http.NewServeMux()
+	f.mux = mux
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"issuer": f.URL, "authorization_endpoint": f.URL + "/authorize", "token_endpoint": f.URL + "/token",
@@ -102,9 +104,14 @@ func (f *fakeIdP) sign(claims map[string]any) string {
 // login 走一遍浏览器的跳转：start → IdP（这里直接发码）→ callback；返回最后跳到的地址。
 func (f *fakeIdP) login(t *testing.T, c *client, claims map[string]any, tamper func(q url.Values)) string {
 	t.Helper()
+	return f.loginFrom(t, c, "next=/build", claims, tamper)
+}
+
+func (f *fakeIdP) loginFrom(t *testing.T, c *client, query string, claims map[string]any, tamper func(q url.Values)) string {
+	t.Helper()
 	noFollow := *c.hc
 	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := noFollow.Get(c.base + "/api/auth/oidc/start?next=/build")
+	resp, err := noFollow.Get(c.base + "/api/auth/oidc/start?" + query)
 	if err != nil {
 		t.Fatal(err)
 	}

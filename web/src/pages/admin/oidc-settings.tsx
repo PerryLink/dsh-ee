@@ -263,7 +263,7 @@ export default function OidcSettings({ slot = "primary", only, onSaved }: { slot
         <ToggleRow label={t("oidcAdmin.autoCreate")} desc={t("oidcAdmin.autoCreateDesc")} checked={form.autoCreate} onChange={(v) => set({ autoCreate: v })} />
         <ToggleRow label={t("oidcAdmin.requireEmailVerified")} desc={t("oidcAdmin.requireEmailVerifiedDesc")} checked={form.requireEmailVerified} onChange={(v) => set({ requireEmailVerified: v })} />
         {secondary && <ToggleRow label={t("oidcAdmin.secondary.linkByContact")} desc={t("oidcAdmin.secondary.linkByContactDesc")} checked={!!form.linkByContact} onChange={(v) => set({ linkByContact: v })} />}
-        {dingTalk && !secondary && <ToggleRow label={t("oidcAdmin.dingTalkBot")} desc={t("oidcAdmin.dingTalkBotDesc")} checked={!!form.dingTalkBot} onChange={(v) => set({ dingTalkBot: v })} />}
+        {dingTalk && <ToggleRow label={t("oidcAdmin.dingTalkBot")} desc={t("oidcAdmin.dingTalkBotDesc")} checked={!!form.dingTalkBot} onChange={(v) => set({ dingTalkBot: v })} />}
         {dingTalk && (
           <section className="space-y-4" data-dingtalk-sync>
             <SubHeading>{t("oidcAdmin.dingTalkSync.title")}</SubHeading>
@@ -291,6 +291,7 @@ export default function OidcSettings({ slot = "primary", only, onSaved }: { slot
             {!secondary && <>
             <ToggleRow label={t("oidcAdmin.feishu.notify")} desc={t("oidcAdmin.feishu.notifyDesc")} checked={!!form.feishuNotify} onChange={(v) => set({ feishuNotify: v })} />
             <ToggleRow label={t("oidcAdmin.feishu.notifyActions")} desc={t("oidcAdmin.feishu.notifyActionsDesc")} checked={!!form.feishuNotifyActions} onChange={(v) => set({ feishuNotifyActions: v })} />
+            </>}
             <ToggleRow label={t("oidcAdmin.feishu.bot")} desc={t("oidcAdmin.feishu.botDesc")} checked={!!form.feishuBot} onChange={(v) => set({ feishuBot: v })} />
             {form.feishuBot && (
               <Field label={t("oidcAdmin.feishu.eventLink")} hint={t("oidcAdmin.feishu.botSetupHint")}>
@@ -307,6 +308,7 @@ export default function OidcSettings({ slot = "primary", only, onSaved }: { slot
                 <input className={cx(inputCls, "font-mono")} type="password" autoComplete="new-password" value={form.feishuEncryptKey ?? ""} placeholder={form.feishuEncryptKeySet ? "••••••••" : ""} onChange={(e) => set({ feishuEncryptKey: e.target.value })} />
               </Field>
             )}
+            {!secondary && <>
             <Field label={t("oidcAdmin.feishu.workspaceNext")} hint={t("oidcAdmin.feishu.workspaceNextHint")}>
               <div className="flex flex-wrap gap-2">
                 <input className={cx(inputCls, "min-w-56 flex-1 font-mono")} value={workspaceNext} onChange={(e) => setWorkspaceNext(e.target.value)} placeholder="/a/team-outing" aria-label={t("oidcAdmin.feishu.workspaceNext")} />

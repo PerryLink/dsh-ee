@@ -38,6 +38,48 @@ func identityProvider(subject string) string {
 	return ""
 }
 
+func chatEmployee(u *store.User) bool {
+	return u != nil && !u.Disabled && u.AccountType == store.AccountHuman && u.AuthSource == store.AuthOIDC
+}
+
+func (s *Server) chatUserBySubject(ctx context.Context, subject string) (*store.User, error) {
+	u, err := s.store.GetUserByExternalDN(ctx, store.AuthOIDC, subject)
+	if !notFound(err) {
+		return u, err
+	}
+	row, err := s.store.GetSecondaryIdentity(ctx, subject)
+	if notFound(err) || (err == nil && row.Via == store.IdentityUnlinked) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetUser(ctx, row.UserID)
+}
+
+func (s *Server) chatSender(ctx context.Context, u *store.User, provider, prefix string) (string, error) {
+	if !chatEmployee(u) {
+		return "", nil
+	}
+	if identityProvider(u.ExternalDN) == provider {
+		if sender, ok := strings.CutPrefix(u.ExternalDN, prefix); ok {
+			return sender, nil
+		}
+		return "", nil
+	}
+	row, err := s.store.LinkedIdentityForProvider(ctx, u.ID, provider)
+	if notFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if sender, ok := strings.CutPrefix(row.Subject, prefix); ok {
+		return sender, nil
+	}
+	return "", nil
+}
+
 // identityContacts 是目录里核实过的联系方式的摘要；空表示没拿到。
 type identityContacts struct{ mobile, email string }
 
