@@ -21,7 +21,10 @@ const markup: Record<ProductFilmLang, () => Promise<{ html: string }>> = {
 const END_FRAME = FILM_SECONDS - 0.5;
 
 let fonts: Promise<unknown> | null = null;
-/** 影子 DOM 里的 @font-face 不生效，短片的字体在页面上注册一次。加载失败就用系统字体。 */
+/**
+ * 影子 DOM 里的 @font-face 不生效，短片的字体在页面上注册一次。
+ * 字体只是观感增强项：加载失败就退回系统字体，绝不让整片失败。
+ */
 function loadFonts() {
   fonts ??= Promise.all(
     [
@@ -31,11 +34,37 @@ function loadFonts() {
       const face = new FontFace("FilmSans", `url(${url}) format("woff2")`, { weight });
       document.fonts.add(await face.load());
     }),
-  ).catch(() => undefined);
+  )
+    .then(() => undefined)
+    .catch(() => undefined);
   return fonts;
 }
 
-export function ProductFilmPlayer({ lang, label, className }: { lang: ProductFilmLang; label: string; className?: string }) {
+/**
+ * 按需加载某语言的画面。部署换版后浏览器还拿着旧 index.html 时，旧 chunk 的哈希对不上会 404，
+ * 这里回落英文版一次；英文版也失败才抛错（同一语言只试一次，不会来回重试）。
+ */
+async function loadMarkup(lang: ProductFilmLang): Promise<{ html: string; fallback: boolean }> {
+  try {
+    return { ...(await markup[lang]()), fallback: false };
+  } catch (err) {
+    if (lang === "en") throw err;
+    return { ...(await markup.en()), fallback: true };
+  }
+}
+
+export function ProductFilmPlayer({
+  lang,
+  label,
+  className,
+  onFailed,
+}: {
+  lang: ProductFilmLang;
+  label: string;
+  className?: string;
+  /** 语言画面（含英文回落）都加载不出来时通知上层换成兜底内容。 */
+  onFailed?: () => void;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -43,9 +72,16 @@ export function ProductFilmPlayer({ lang, label, className }: { lang: ProductFil
   const time = useRef(0);
   const [scale, setScale] = useState(0);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [fallback, setFallback] = useState(false);
   const [paused, setPaused] = useState(false);
   const [visible, setVisible] = useState(true);
   const [still] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  /** 上层每次渲染都可能传新的回调，用 ref 存住，避免把加载 effect 顶掉。 */
+  const onFailedRef = useRef(onFailed);
+  useEffect(() => {
+    onFailedRef.current = onFailed;
+  }, [onFailed]);
 
   useEffect(() => {
     const el = box.current;
@@ -66,16 +102,28 @@ export function ProductFilmPlayer({ lang, label, className }: { lang: ProductFil
   useEffect(() => {
     let stale = false;
     setReady(false);
-    void Promise.all([markup[lang](), loadFonts()]).then(([film]) => {
-      const host = stage.current;
-      if (stale || !host) return;
-      const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-      // 内容是构建时生成的固定画面，不含用户输入
-      root.innerHTML = `<style>${css}</style>${film.html}`;
-      draw.current = createFilm(root);
-      draw.current(still ? END_FRAME : time.current);
-      setReady(true);
-    });
+    setFailed(false);
+    setFallback(false);
+    // 字体在 loadFonts 内部单独吞掉失败；Promise.all 只会因为画面加载失败而 reject。
+    void Promise.all([loadMarkup(lang), loadFonts()])
+      .then(([film]) => {
+        const host = stage.current;
+        if (stale || !host) return;
+        const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+        // 内容是构建时生成的固定画面，不含用户输入
+        root.innerHTML = `<style>${css}</style>${film.html}`;
+        draw.current = createFilm(root);
+        draw.current(still ? END_FRAME : time.current);
+        setFallback(film.fallback);
+        setReady(true);
+      })
+      .catch(() => {
+        // 语言画面加载不出来（最常见：部署换版后旧 chunk 404）：不留空白占位、不退化成未捕获异常，
+        // 交给上层换成兜底内容；上层没给回调就干脆不渲染，免得占着预留高度。
+        if (stale) return;
+        setFailed(true);
+        onFailedRef.current?.();
+      });
     return () => {
       stale = true;
     };
@@ -99,6 +147,9 @@ export function ProductFilmPlayer({ lang, label, className }: { lang: ProductFil
     return () => cancelAnimationFrame(raf);
   }, [running]);
 
+  // 所有语言的画面都加载失败：不渲染隐藏的空框、不占预留高度，由上层决定展示什么。
+  if (failed) return null;
+
   return (
     <div
       ref={box}
@@ -106,6 +157,7 @@ export function ProductFilmPlayer({ lang, label, className }: { lang: ProductFil
       aria-label={label}
       data-intro-film
       data-film-lang={lang}
+      data-film-fallback={fallback ? "en" : undefined}
       data-paused={paused || still ? "true" : "false"}
       onClick={() => !still && setPaused((p) => !p)}
       className={className}
