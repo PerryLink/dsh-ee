@@ -3,7 +3,18 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  llm: {
+    base_url_invalid: "La URL base debe ser una dirección http(s), p. ej. https://api.deepseek.com",
+    name_key_required: "El nombre (hasta 64 caracteres) y la clave de API son obligatorios.",
+    vendor_invalid: "El proveedor solo admite minúsculas, dígitos y -.",
+    model_invalid: "Nombre de modelo no válido ({{model}}).",
+    name_exists: "Ese nombre ya existe.",
+  },
   auth: {
+    init_done: "La configuración ya está hecha. Inicia sesión.",
+    init_locked: "Demasiados códigos incorrectos; este código ya no es válido. Reinicia el servidor y usa el nuevo código de su registro.",
+    init_bad_code: "Código de configuración incorrecto. Revisa el registro del servidor.",
+    bad_username: "El usuario solo admite minúsculas, dígitos y . _ -, de 2 a 64 caracteres.",
     login_required: "Please sign in first.",
     session_expired: "Your session has expired. Please sign in again.",
     bad_credentials: "Incorrect username or password.",
@@ -12,8 +23,8 @@ export default {
     forbidden: "You don't have permission to perform this action.",
     bad_old_password: "Your current password is incorrect.",
     password_managed_externally: "This account's password is managed by your company directory or SSO. Change it in your company's account system.",
-    weak_password: "Password must be at least {{min}} characters.",
-    password_too_long: "Password must be at most {{max}} bytes.",
+    weak_password: "La contraseña debe tener al menos {{min}} caracteres.",
+    password_too_long: "La contraseña no puede superar {{max}} bytes.",
     too_many_attempts: "Too many failed attempts. Try again in {{minutes}} minutes.",
     ip_rate_limited: "Too many failed sign-in attempts. Try again later.",
   },

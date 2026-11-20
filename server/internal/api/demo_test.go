@@ -371,6 +371,11 @@ func TestDemoImport(t *testing.T) {
 	if !strings.Contains(string(body), `"tokens":`) || strings.Contains(string(body), `"calls":0,"call_errors":0,"tokens":0,"users"`) {
 		t.Fatalf("运营数据应有模型调用：%.300s", body)
 	}
+	if st := decodeAs[struct {
+		Totals struct{ Apps int } `json:"totals"`
+	}](t, body); st.Totals.Apps == 0 {
+		t.Fatalf("总览应统计在用的企业应用：%.300s", body)
+	}
 
 	// 演示接口不认外来调用
 	code, body = newClient(t, ts.URL).do("GET", "/demo/travel/claims", nil, nil)

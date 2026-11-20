@@ -25,6 +25,9 @@ type setupStep struct {
 	Done     bool   `json:"done"`
 	Optional bool   `json:"optional,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	// 网页按 detail_key + detail_params 取多语言文案，取不到时回退 Detail（中文，Agent 也读它）
+	DetailKey    string         `json:"detail_key,omitempty"`
+	DetailParams map[string]any `json:"detail_params,omitempty"`
 	// 下一步怎么做：用哪个工具，或必须去网页
 	How string `json:"how,omitempty"`
 }
@@ -46,7 +49,11 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		base, source = s.opts.PublicURL, "启动参数 DSH_EE_PUBLIC_URL"
 	}
 	if base != "" {
-		add(setupStep{ID: "base_url", Title: "访问地址", Done: true, Detail: base + "（来自" + source + "）"})
+		key := "from_settings"
+		if set.BaseURL == "" {
+			key = "from_flag"
+		}
+		add(setupStep{ID: "base_url", Title: "访问地址", Done: true, Detail: base + "（来自" + source + "）", DetailKey: key, DetailParams: map[string]any{"url": base}})
 	} else {
 		add(setupStep{ID: "base_url", Title: "访问地址", How: "ee_settings.put，changes={\"baseUrl\":\"https://…\"}：员工的 DSH 和 npm 都用它连回来，要写员工电脑能访问到的地址"})
 	}
@@ -69,9 +76,9 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	case enabled == 0:
 		add(setupStep{ID: "provider", Title: "模型供应商", How: "必须在网页「模型接入」里接入：需要上游 API key，机密不经过 Agent"})
 	case unhealthy > 0:
-		add(setupStep{ID: "provider", Title: "模型供应商", Detail: fmt.Sprintf("%d 个启用的供应商，其中 %d 个最近检测不通", enabled, unhealthy), How: "ee_models.check_provider 重新检测；API key 有问题要在网页上改"})
+		add(setupStep{ID: "provider", Title: "模型供应商", Detail: fmt.Sprintf("%d 个启用的供应商，其中 %d 个最近检测不通", enabled, unhealthy), DetailKey: "unhealthy", DetailParams: map[string]any{"enabled": enabled, "unhealthy": unhealthy}, How: "ee_models.check_provider 重新检测；API key 有问题要在网页上改"})
 	default:
-		add(setupStep{ID: "provider", Title: "模型供应商", Done: true, Detail: fmt.Sprintf("%d 个启用的供应商", enabled)})
+		add(setupStep{ID: "provider", Title: "模型供应商", Done: true, Detail: fmt.Sprintf("%d 个启用的供应商", enabled), DetailKey: "enabled", DetailParams: map[string]any{"enabled": enabled}})
 	}
 
 	models, err := s.store.PublicModels(ctx)
@@ -93,7 +100,7 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	case set.Connect.DefaultModel == "":
 		add(setupStep{ID: "default_model", Title: "默认模型", How: "ee_settings.put，changes={\"connect\":{\"defaultModel\":\"<对外模型名>\"}}；可选：" + strings.Join(names, "、")})
 	case !slices.Contains(names, set.Connect.DefaultModel):
-		add(setupStep{ID: "default_model", Title: "默认模型", Detail: "默认模型 " + set.Connect.DefaultModel + " 不在已上架的模型里", How: "ee_settings.put 改成已上架的模型：" + strings.Join(names, "、")})
+		add(setupStep{ID: "default_model", Title: "默认模型", Detail: "默认模型 " + set.Connect.DefaultModel + " 不在已上架的模型里", DetailKey: "not_listed", DetailParams: map[string]any{"model": set.Connect.DefaultModel}, How: "ee_settings.put 改成已上架的模型：" + strings.Join(names, "、")})
 	default:
 		add(setupStep{ID: "default_model", Title: "默认模型", Done: true, Detail: set.Connect.DefaultModel})
 	}
@@ -140,13 +147,14 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if canUse > 0 {
-		detail := fmt.Sprintf("%d 个账号有额度", canUse)
+		detail, key := fmt.Sprintf("%d 个账号有额度", canUse), "has_quota"
 		if zero > 0 {
 			detail += fmt.Sprintf("，%d 个还是 0（新账号默认不能调用模型）", zero)
+			key = "has_quota_zero"
 		}
-		add(setupStep{ID: "quota", Title: "员工额度", Done: true, Detail: detail})
+		add(setupStep{ID: "quota", Title: "员工额度", Done: true, Detail: detail, DetailKey: key, DetailParams: map[string]any{"ok": canUse, "zero": zero}})
 	} else {
-		add(setupStep{ID: "quota", Title: "员工额度", Detail: fmt.Sprintf("%d 个员工账号，都还没分配额度", humans), How: "ee_users.set_quota 按人分配每月额度（新账号默认 0，不能调用模型）"})
+		add(setupStep{ID: "quota", Title: "员工额度", Detail: fmt.Sprintf("%d 个员工账号，都还没分配额度", humans), DetailKey: "none_assigned", DetailParams: map[string]any{"humans": humans}, How: "ee_users.set_quota 按人分配每月额度（新账号默认 0，不能调用模型）"})
 	}
 
 	ldap, err := s.loadLDAP(ctx)
@@ -172,7 +180,7 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	add(setupStep{ID: "roles", Title: "部门与角色", Optional: true, Done: custom > 0 || len(depts) > 0,
-		Detail: fmt.Sprintf("%d 个自定义角色，%d 个部门", custom, len(depts)), How: "可选。ee_roles.create 建角色、ee_users.create / set_roles 分配"})
+		Detail: fmt.Sprintf("%d 个自定义角色，%d 个部门", custom, len(depts)), DetailKey: "summary", DetailParams: map[string]any{"roles": custom, "depts": len(depts)}, How: "可选。ee_roles.create 建角色、ee_users.create / set_roles 分配"})
 
 	assets, err := s.store.ListAssets(ctx)
 	if err != nil {
@@ -185,10 +193,10 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 			conns++
 		}
 	}
-	add(setupStep{ID: "connections", Title: "企业连接", Optional: true, Done: conns > 0, Detail: fmt.Sprintf("%d 个", conns),
+	add(setupStep{ID: "connections", Title: "企业连接", Optional: true, Done: conns > 0, Detail: fmt.Sprintf("%d 个", conns), DetailKey: "count", DetailParams: map[string]any{"count": conns},
 		How: "可选。新建连接要上游凭据，请在网页「企业连接」里接入；接入后可用 ee_connections_admin 试连、开关工具"})
 	if _, imported := s.demoState(ctx); imported {
-		add(setupStep{ID: "demo", Title: "示例公司", Optional: true, Done: true, Detail: "已导入示例场景（示例公司「星河科技」或小团队「山海工作室」）：知识库、应用、专家、演示账号和 30 天的使用数据。转正式使用前可以一键清除"})
+		add(setupStep{ID: "demo", Title: "示例公司", Optional: true, Done: true, DetailKey: "imported", Detail: "已导入示例场景（示例公司「星河科技」或小团队「山海工作室」）：知识库、应用、专家、演示账号和 30 天的使用数据。转正式使用前可以一键清除"})
 	} else {
 		add(setupStep{ID: "demo", Title: "示例公司", Optional: true,
 			How: "可选。一键导入一个示例场景：示例公司「星河科技」（6 个部门的知识库、差旅 / CRM / IT 工单三个演示系统、带工作台的应用、10 个演示员工），或小团队「山海工作室」（4 个人的小说连载团队，知识库 + 应用 + 审稿专家）；都带 30 天的使用数据，打开 DSH 就能试。只能由超级管理员在网页部署清单里导入，试完可以一键清除"})
@@ -207,11 +215,15 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case !set.Connect.Enabled:
-		add(setupStep{ID: "connect", Title: "DSH 接入插件", Detail: "DSH 接入已被关闭", How: "ee_settings.put，changes={\"connect\":{\"enabled\":true}}"})
+		add(setupStep{ID: "connect", Title: "DSH 接入插件", Detail: "DSH 接入已被关闭", DetailKey: "disabled", How: "ee_settings.put，changes={\"connect\":{\"enabled\":true}}"})
 	case ready:
 		add(setupStep{ID: "connect", Title: "DSH 接入插件", Done: true, Detail: st.Package + "@" + st.Version})
 	default:
-		add(setupStep{ID: "connect", Title: "DSH 接入插件", Detail: nonEmpty(st.Error, "还没有发布"), How: "ee_settings.connect_publish 发布；前面几步（访问地址、默认模型）改过之后也要重新发布"})
+		key := ""
+		if st.Error == "" {
+			key = "unpublished"
+		}
+		add(setupStep{ID: "connect", Title: "DSH 接入插件", Detail: nonEmpty(st.Error, "还没有发布"), DetailKey: key, How: "ee_settings.connect_publish 发布；前面几步（访问地址、默认模型）改过之后也要重新发布"})
 	}
 
 	next, requiredDone := "", true

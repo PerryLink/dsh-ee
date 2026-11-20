@@ -134,11 +134,15 @@ func (s *Server) connectInfoFor(ctx context.Context, r *http.Request, set *store
 		return connectInfo{}, err
 	}
 	info := connectInfo{Package: connectPackage(set), Enabled: set.Connect.Enabled, TokenEnv: connectTokenEnv, Profile: connectProfile, ServerName: s.mcpServerName(r)}
+	info.BaseURLSet = set.BaseURL != "" || s.opts.PublicURL != ""
+	if base, err := s.connectBase(ctx, r); err == nil {
+		info.BaseURL = strings.TrimRight(base, "/")
+	}
 	if st.Package == info.Package && st.Version != "" {
 		if v, err := s.store.GetVersion(ctx, st.Package, st.Version); err == nil && v.Status == store.StatusPublished {
 			info.Version, info.Ready = st.Version, true
-			if base, err := s.connectBase(ctx, r); err == nil {
-				info.TarballURL = base + "/dl/connect/" + connectTarballFile(st.Version)
+			if info.BaseURL != "" {
+				info.TarballURL = info.BaseURL + "/dl/connect/" + connectTarballFile(st.Version)
 			}
 		}
 	}

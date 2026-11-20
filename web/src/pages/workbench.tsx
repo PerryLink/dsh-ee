@@ -8,7 +8,7 @@ import { useAuth } from "../lib/auth";
 import { api, formatTokens, type MyOverview, type MyQuota } from "../lib/api";
 import { useApi } from "../lib/use-api";
 import { pluginPath } from "../components/plugin-card";
-import { Badge, Button, Card, CardHeader, PluginIcon, Stat, StatStrip, buttonCls } from "../components/ui";
+import { Badge, Button, Card, CardHeader, PluginIcon, Stat, StatStrip, buttonCls, cx } from "../components/ui";
 import { HoverArrow, Ribbon } from "../components/landing-graphics";
 import { BuildStateBadge } from "./build";
 import { AccessRequestsCard } from "../components/access-requests";
@@ -43,7 +43,7 @@ function keysHint(t: TFunction, quota: MyQuota | undefined, error: string | null
 export default function Workbench() {
   const { t } = useTranslation();
   const { plugins, notify } = useStore();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const { data: myKeys, error: keysError } = useApi(api.myKeys);
   const overview = useApi(api.myOverview);
   const hub = useApi(api.hub);
@@ -55,6 +55,9 @@ export default function Workbench() {
   const o = overview.data;
   const quota = myKeys?.quota;
   const byName = (n: string) => plugins.find((p) => p.name === n);
+  // 空卡不占位：加载中 / 出错时照常显示（LoadState 负责状态）
+  const showInstalled = o?.installed.length !== 0;
+  const showPicks = o?.picks.length !== 0;
 
   const copyInstall = async (name: string) => {
     const profile = connect.data?.profile || "web";
@@ -85,29 +88,34 @@ export default function Workbench() {
         </div>
       </section>
 
-      <StatStrip>
+      {/* 值为 0 的指标不占位（本月用量总是显示：额度说明在它下面） */}
+      <StatStrip cols={Math.max(2, 1 + Number(quota?.active_keys !== 0) + Number(o?.installed.length !== 0) + Number(!hub.data || built.length > 0)) as 2 | 3 | 4}>
         <Stat
           label={t("workbench.tokensThisMonth")}
           value={quota ? formatTokens(quota.month_tokens) : noValue}
           hint={tokenHint(t, quota, keysError)}
         />
-        <Stat
-          label={t("workbench.myKeys")}
-          value={quota ? quota.active_keys : noValue}
-          hint={keysHint(t, quota, keysError)}
-        />
-        <Stat label={t("workbench.myInstalls")} value={o ? o.installed.length : noValue} hint={installsHint(t, o, overview.error)} />
-        <Stat
-          label={t("workbench.myContributions")}
-          value={hub.data ? built.length : noValue}
-          hint={hub.data ? t("workbench.contributionsReach", { count: built.reduce((n, a) => n + a.users, 0) }) : hub.error ? t("workbench.unavailable") : t("workbench.reading")}
-        />
+        {quota?.active_keys !== 0 && (
+          <Stat
+            label={t("workbench.myKeys")}
+            value={quota ? quota.active_keys : noValue}
+            hint={keysHint(t, quota, keysError)}
+          />
+        )}
+        {o?.installed.length !== 0 && <Stat label={t("workbench.myInstalls")} value={o ? o.installed.length : noValue} hint={installsHint(t, o, overview.error)} />}
+        {(!hub.data || built.length > 0) && (
+          <Stat
+            label={t("workbench.myContributions")}
+            value={hub.data ? built.length : noValue}
+            hint={hub.data ? t("workbench.contributionsReach", { count: built.reduce((n, a) => n + a.users, 0) }) : hub.error ? t("workbench.unavailable") : t("workbench.reading")}
+          />
+        )}
       </StatStrip>
 
       <AccessRequestsCard className="mt-4" />
 
       {/* 开发双卡：文档与样例的发现入口（位置在权限申请卡之后） */}
-      <DevCards className="mt-4" />
+      {(can("extensions.develop") || can("plugins.manage")) && <DevCards className="mt-4" />}
 
       <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <Card>
@@ -207,7 +215,9 @@ export default function Workbench() {
         </Card>
       </div>
 
-      <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+      {(showInstalled || showPicks) && (
+      <div className={cx("mt-4 grid grid-cols-[minmax(0,1fr)] gap-4", showInstalled && showPicks && "lg:grid-cols-[minmax(0,1fr)_380px]")}>
+        {showInstalled && (
         <Card>
           <CardHeader
             title={t("workbench.installed")}
@@ -248,7 +258,9 @@ export default function Workbench() {
             {o && o.installed.length > 0 && <p className="px-5 pb-4 text-xs text-neutral-500">{t("workbench.installedNote")}</p>}
           </LoadState>
         </Card>
+        )}
 
+        {showPicks && (
         <Card>
           <CardHeader
             title={
@@ -283,7 +295,9 @@ export default function Workbench() {
             </ul>
           </LoadState>
         </Card>
+        )}
       </div>
+      )}
     </div>
   );
 }

@@ -9,27 +9,31 @@ import { pluginAddCommand } from "../lib/install";
 import { LoadState } from "../components/api-ui";
 import { Badge, Button, Card, CardHeader, CopyBox, cx, inputBase, PageHeader, Segmented, Notice } from "../components/ui";
 import { useTranslation } from "react-i18next";
+import { PublicUrlNotice } from "../components/public-url-notice";
 
 type Mode = "unix" | "windows" | "manual";
 
 export default function Setup() {
   const { t } = useTranslation();
-  const { settings, baseUrl, plugins } = useStore();
+  const { settings, baseUrl: localBase, plugins } = useStore();
   const [mode, setMode] = useState<Mode>("unix");
   // 刚创建的令牌只在本页显示这一次，下面的命令会自动填进去
   const [token, setToken] = useState<string | null>(null);
   const shown = token ?? t("registry.setup.tokenPlaceholder");
+  const connect = useApi(api.connectInfo);
+  const ci = connect.data;
+  // 和接入插件用同一个地址，页面上不出现第二个
+  const baseUrl = ci?.base_url || localBase;
   const indexUrl = `${baseUrl}/index/dsh-index.json`;
   const registry = `${baseUrl}/npm/`;
   const registryKey = registry.replace(/^https?:/, "");
   const scopes = [settings.scope, ...settings.registry.extraScopes];
   const example = plugins.find((p) => p.origin === "internal")?.name ?? plugins[0]?.name ?? `${settings.scope}/hello`;
-  const connect = useApi(api.connectInfo);
-  const ci = connect.data;
 
   return (
     <div className="max-w-4xl">
       <PageHeader title={t("setup.title")} desc={t("setup.desc")} />
+      <PublicUrlNotice info={ci} className="mb-6" />
 
       <Tokens onCreated={setToken} />
 

@@ -8,6 +8,7 @@ import type { DshClient, DshRelease, DshTarget } from "../lib/types";
 import { Badge, Card, CopyBox, PageHeader, Empty, buttonCls } from "../components/ui";
 import { LoadState } from "../components/api-ui";
 import { PageLink } from "../lib/menus";
+import { PublicUrlNotice } from "../components/public-url-notice";
 
 type Architecture = "arm" | "x64" | "unknown";
 
@@ -76,7 +77,9 @@ function useConnection() {
 
 export default function DshDownload() {
   const { t } = useTranslation();
-  const { baseUrl } = useStore();
+  const { baseUrl: localBase } = useStore();
+  const ci = useApi(api.connectInfo).data;
+  const baseUrl = ci?.base_url || localBase;
   const { data, loading, error, reload } = useApi(api.dshReleases);
   const { connected, timedOut } = useConnection();
   const arch = useArchitecture();
@@ -93,6 +96,7 @@ export default function DshDownload() {
   return (
     <div>
       <PageHeader title={t("download.title")} desc={t("download.desc")} />
+      <PublicUrlNotice info={ci} className="mb-6" />
       <LoadState loading={loading && !data} error={error} onRetry={reload}>
         <div className="space-y-6">
           {!isMac && !isWindows ? (

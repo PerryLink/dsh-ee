@@ -232,7 +232,7 @@ export function AppNew() {
     </div>
     <div hidden={mode !== "agent"} className="max-w-[1400px]">
       <PageLink page="build" className={backLinkCls}>
-        <ArrowLeft size={14} /> {t("asset.back")}
+        <ArrowLeft size={14} /> {t("asset.back", { page: t("pages.build") })}
       </PageLink>
       <PageHeader
         title={expertForm ? t("expertCenter.editor.newExpert") : t("editor.newApp")}
@@ -275,7 +275,7 @@ export function ConnNew() {
     </div>
     <div hidden={mode !== "agent"} className="max-w-[1400px]">
       <PageLink page="admin-connections" className="mb-4 inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900">
-        <ArrowLeft size={14} /> {t("asset.back")}
+        <ArrowLeft size={14} /> {t("asset.back", { page: t("pages.admin-connections") })}
       </PageLink>
       <PageHeader title={t("editor.newConnection")} desc={t("hub.tabHints.connection")} actions={<AppWindow size={28} strokeWidth={1.4} className="text-neutral-400" />} />
       {tabs}
@@ -500,7 +500,7 @@ function AssetEditor({ forceKind, tabs }: { forceKind?: AssetKind; tabs?: ReactN
   return (
     <div className={kind === "app" && !expert ? "max-w-[1400px]" : "max-w-3xl"}>
       <PageLink page={kind === "app" ? "build" : "materials"} className={backLinkCls}>
-        <ArrowLeft size={14} /> {t("asset.back")}
+        <ArrowLeft size={14} /> {t("asset.back", { page: t(kind === "app" ? "pages.build" : "pages.materials") })}
       </PageLink>
       <PageHeader title={title} desc={t(`hub.tabHints.${kind}`)} actions={<Icon size={28} strokeWidth={1.4} className="text-neutral-400" />} />
       {!editing && tabs}

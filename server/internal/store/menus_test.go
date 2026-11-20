@@ -525,3 +525,113 @@ func TestMigrateMenusDirectory(t *testing.T) {
 		t.Fatalf("重复迁移后菜单数 %d → %d", len(again), len(third))
 	}
 }
+
+// 0044：管理后台「能力管理」改叫「插件管理」（和页面标题一致）；管理员改过的名字不动。
+func TestMigrateMenusPluginsTitle(t *testing.T) {
+	ctx := context.Background()
+	st := openTokenTestStore(t)
+	if err := st.ResetMenus(ctx, rbac.DefaultMenus); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "UPDATE menus SET title = '能力管理' WHERE page_key = 'admin-plugins'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0044_plugins_menu_title'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	title := func() string {
+		var s string
+		if err := st.DB().QueryRowContext(ctx, "SELECT title FROM menus WHERE page_key = 'admin-plugins'").Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	if got := title(); got != "插件管理" {
+		t.Fatalf("迁移后标题 %q", got)
+	}
+	// 管理员自定义的名字保留
+	if _, err := st.DB().ExecContext(ctx, "UPDATE menus SET title = '插件与技能' WHERE page_key = 'admin-plugins'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0044_plugins_menu_title'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := title(); got != "插件与技能" {
+		t.Fatalf("自定义标题被改成了 %q", got)
+	}
+}
+
+// 侧栏默认只放每天用的页面（0043）；其余页面有路由、默认不进侧栏。
+var declutteredPages = []string{"templates", "materials", "dsh-download", "setup", "my-keys", "dev-docs", "dev-examples"}
+
+func TestDefaultMenusEmployeeSidebar(t *testing.T) {
+	var shown []string
+	for _, g := range rbac.DefaultMenus {
+		for _, c := range g.Children {
+			if c.Kind == "page" && !c.Hidden && !strings.HasPrefix(c.Path, "/admin") {
+				shown = append(shown, c.PageKey)
+			}
+		}
+	}
+	if want := []string{"apps", "knowledge", "workbench", "app-new", "build"}; !slices.Equal(shown, want) {
+		t.Fatalf("员工侧栏默认页面：%v，期望 %v", shown, want)
+	}
+}
+
+// 0043：已有部署升级后，还是默认路由的样板、原料、接入、开发页面不再进侧栏；管理员改过路由的不动。
+func TestMigrateMenusDeclutter(t *testing.T) {
+	ctx := context.Background()
+	before := make([]rbac.Menu, len(rbac.DefaultMenus))
+	for i, g := range rbac.DefaultMenus {
+		g.Children = slices.Clone(g.Children)
+		for j := range g.Children {
+			if slices.Contains(declutteredPages, g.Children[j].PageKey) {
+				g.Children[j].Hidden = false
+			}
+		}
+		before[i] = g
+	}
+	st := openTokenTestStore(t)
+	if err := st.ResetMenus(ctx, before); err != nil {
+		t.Fatal(err)
+	}
+	// 管理员把「原料」改到了别的路由：迁移不动它
+	if _, err := st.DB().ExecContext(ctx, "UPDATE menus SET path = '/stuff' WHERE page_key = 'materials'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = '0043_declutter_menus'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := st.ListMenus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, m := range ms {
+		if m.Kind != "page" {
+			continue
+		}
+		seen[m.PageKey] = true
+		want := !slices.Contains(declutteredPages, m.PageKey) || m.PageKey == "materials"
+		if m.PageKey == "publish" {
+			want = false
+		}
+		if m.Visible != want {
+			t.Fatalf("%s（%s）迁移后 visible=%v，期望 %v", m.PageKey, m.Path, m.Visible, want)
+		}
+	}
+	for _, k := range declutteredPages {
+		if !seen[k] {
+			t.Fatalf("迁移不应删除页面 %s", k)
+		}
+	}
+}

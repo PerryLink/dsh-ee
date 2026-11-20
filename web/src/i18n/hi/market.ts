@@ -28,7 +28,7 @@ export default {
   },
   "pluginDetail": {
     "notFound": "प्लगइन मौजूद नहीं या अभी समीक्षा से पास नहीं हुआ।",
-    "backToMarket": "क्षमता केंद्र पर वापस जाएँ",
+    "backToMarket": "कंपनी ऐप पर वापस",
     "market": "क्षमता केंद्र",
     "internal": "आंतरिक · {{department}}",
     "upstream": "अपस्ट्रीम · dshfind संग्रहित",

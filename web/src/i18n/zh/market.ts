@@ -25,7 +25,7 @@ export default {
   },
   pluginDetail: {
     notFound: "插件不存在，或尚未通过审核。",
-    backToMarket: "返回能力中心",
+    backToMarket: "返回企业应用",
     market: "能力中心",
     internal: "内部 · {{department}}",
     upstream: "上游 · dshfind 收录",

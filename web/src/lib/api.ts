@@ -421,7 +421,7 @@ export interface DailyStat {
 export interface Stats {
   from: string;
   daily: DailyStat[];
-  totals: { installs: number; downloads: number; calls: number; call_errors: number; tokens: number; users: number; active_users: number };
+  totals: { installs: number; downloads: number; calls: number; call_errors: number; tokens: number; users: number; active_users: number; apps: number };
   top_plugins: { name: string; title: string; origin: "hosted" | "upstream"; installs: number; users: number }[];
   top_models: { model: string; calls: number; users: number; tokens: number }[];
   departments: { department: string; users: number; active_users: number; installs: number; calls: number; tokens: number }[];
@@ -1494,6 +1494,10 @@ export interface ConnectInfo {
   profile: string;
   server_name: string;
   tarball_url?: string;
+  /** 员工连回 dsh-ee 的地址（与插件里写的一致）。 */
+  base_url?: string;
+  /** false：系统设置和启动参数都没填，base_url 是按当前请求推断的。 */
+  base_url_set: boolean;
   error?: string;
 }
 
@@ -1512,6 +1516,8 @@ export interface SetupStep {
   done: boolean;
   optional?: boolean;
   detail?: string;
+  detail_key?: string;
+  detail_params?: Record<string, string | number>;
   how?: string;
 }
 

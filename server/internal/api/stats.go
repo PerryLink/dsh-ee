@@ -47,6 +47,8 @@ type statsTotals struct {
 	Tokens      int64 `json:"tokens"`
 	Users       int   `json:"users"`
 	ActiveUsers int   `json:"active_users"`
+	// Apps 是在用的企业应用数（已上线、没下架），不随时间范围变化
+	Apps int `json:"apps"`
 	// 用量细项，Tokens 的子集
 	ReasoningTokens int64 `json:"reasoning_tokens"`
 	CachedTokens    int64 `json:"cached_tokens"`
@@ -87,6 +89,16 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	totals.Users, totals.ActiveUsers = ut.Users, ut.ActiveUsers
+	apps, err := s.store.ListAssets(ctx, "app")
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	for _, a := range apps {
+		if a.Status != "unpublished" && a.LiveVersion > 0 {
+			totals.Apps++
+		}
+	}
 
 	top, err := s.store.TopPlugins(ctx, rg.From, 10)
 	if err != nil {

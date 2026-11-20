@@ -58,8 +58,12 @@ function AppCard({ a, bySlug, busy, onToggle }: { a: HubAsset; bySlug: Map<strin
             <Star size={12} /> {t("expertCenter.featured")}
           </Badge>
         )}
-        {a.enabled && <Badge tone="green">{t("hub.enabledBadge")}</Badge>}
-        {a.delivery === "auto" && <Badge tone="brand">{t("hub.autoBadge")}</Badge>}
+        {/* 「已在 DSH 生效」「自动生效」是常态，卡片上只标例外 */}
+        {a.status === "unpublished" ? (
+          <Badge tone="red">{t("hub.unpublishedBadge")}</Badge>
+        ) : a.live_version === 0 && a.pending > 0 ? (
+          <Badge tone="amber">{t("hub.pendingBadge")}</Badge>
+        ) : null}
         {a.category && <Badge tone="slate">{a.category}</Badge>}
         {(a.spec.members?.length ?? 0) > 0 && <Badge tone="brand">{t("expertCenter.team", { count: a.spec.members!.length + 1 })}</Badge>}
       </div>

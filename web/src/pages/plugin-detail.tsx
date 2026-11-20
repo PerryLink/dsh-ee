@@ -31,7 +31,7 @@ function Loader({ name }: { name: string }) {
         <Empty
           icon={SearchX}
           action={
-            <PageLink page="market" className={buttonCls("secondary", "sm")}>
+            <PageLink page="apps" className={buttonCls("secondary", "sm")}>
               {t("pluginDetail.backToMarket")}
             </PageLink>
           }
