@@ -102,7 +102,7 @@ async function run(admin, kbId) {
   await admin.getByText("预览（员工看到的样子）").waitFor();
   await admin.locator('[data-dsh-ee-ui="kb-read"]').getByText("入职满一年每年 7 天年假").waitFor();
   await admin.getByText("新增 1 行、删去 1 行").waitFor();
-  await admin.getByText(/这篇近 30 天被 AI 读过 1 次/).waitFor();
+  await admin.getByText(/近 30 天读取 1 次/).waitFor();
   await shot(admin, "kb4-edit");
   step("编辑正文：左边改 Markdown，右边实时是阅读视图；下方提醒改了几行、这篇近 30 天被 AI 读过几次");
   await admin.getByRole("button", { name: "取消" }).click();

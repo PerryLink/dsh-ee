@@ -59,7 +59,7 @@ export default async function (t) {
 
   // ---- 「数据」：改自己的行 ----
   await phone.getByRole("button", { name: "数据", exact: true }).click();
-  const data = phone.locator("section", { hasText: "这个应用自带的数据表" });
+  const data = phone.locator("section").filter({ has: phone.getByRole("heading", { name: "数据", exact: true }) });
   await data.getByRole("cell", { name: "下午" }).waitFor();
   await data.getByRole("button", { name: "编辑" }).click();
   await data.getByText(/编辑第 \d+ 行/).waitFor();
@@ -73,7 +73,7 @@ export default async function (t) {
   await phone.goto(`${BASE}/a/${slug}-off`);
   await phone.getByText("这个应用没有开放网页版").waitFor();
   await admin.goto(`${BASE}/a/${slug}-off`);
-  await admin.getByText("这个应用还没有开放网页版：只有作者和管理员能看到这个预览").waitFor();
+  await admin.getByText("网页版未开放，仅作者和管理员可预览。").waitFor();
   step("没开网页版的应用：员工看到说明，作者能预览");
 
   for (const s of [slug, `${slug}-off`]) {

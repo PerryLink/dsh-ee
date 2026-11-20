@@ -113,8 +113,8 @@ export default async function (t) {
   await admin.getByLabel("说明").fill("带业务面板的微应用");
   await admin.getByLabel("人设与工作方式").fill("你是演示助手。");
   await admin.getByRole("button", { name: "范围内的人自动生效", exact: true }).click();
-  await admin.getByRole("button", { name: /插入示例/ }).click();
   const wbBox = admin.getByPlaceholder('{ "panes": [ … ] }');
+  await admin.locator("label").filter({ has: wbBox }).getByRole("button").filter({ hasText: "插入示例" }).click();
   assert((await wbBox.inputValue()).includes("报销工作台"), "插入示例后编辑框里应有示例工作台");
   await admin.getByRole("button", { name: "提交", exact: true }).click();
   await admin.getByText("不在这个微应用的依赖连接里").waitFor();

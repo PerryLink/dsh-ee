@@ -188,7 +188,7 @@ export default async function (t) {
     assertEq(state.loads, 1, "navigate 不能整页刷新 iframe");
     // 内存 Bearer 还在：再打开「数据」页签会请求 /api/apps/.../data，应成功（无 401）
     await frameLoc.getByRole("button", { name: "数据", exact: true }).click();
-    await frameLoc.getByText("这个应用自带的数据表").waitFor({ timeout: 10000 });
+    await frameLoc.getByRole("heading", { name: "数据", exact: true }).waitFor({ timeout: 10000 });
     step("navigate：只允许本应用路径，pushState 切换且保留内存 Bearer");
 
     // navigate-request / open-external：iframe 里点击站外链接，交给宿主确认

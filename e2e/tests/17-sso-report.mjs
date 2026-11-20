@@ -101,7 +101,7 @@ export default async function (t) {
     await admin.getByLabel("每次打开应用节省（分钟）").fill("12");
     await admin.getByRole("button", { name: "保存参数" }).click();
     await admin.getByText("已保存估算参数").first().waitFor();
-    await admin.getByText("每次 12 分钟").first().waitFor();
+    await admin.getByText("应用次数 × 12").first().waitFor();
     await shot(admin, "report-monthly");
     const rep = await api(admin, "GET", `/api/admin/report/monthly?month=${month}&tz=480`);
     // 隔离模式下这个库是全新的，没有其它测试留下的调用记录；这里只断言报告结构、
