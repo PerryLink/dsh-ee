@@ -31,6 +31,10 @@ export default {
     no: "No",
   },
   shell: {
+    publicUrl: {
+      unset: "The public address isn't set: {{url}} is inferred from how you opened this page, and employees' DSH can't connect if their computers can't reach it.",
+      action: "Set it in system settings",
+    },
     limited: {
       employee: "You opened this page from DSH and were signed in automatically. Account-security features such as My tokens need your password.",
       admin: "You opened this page from DSH and were signed in automatically with employee access only. Sign in with your password to use admin features.",
@@ -127,7 +131,7 @@ export default {
     "admin-dashboard": "Overview",
     "admin-stats": "Usage stats",
     "admin-audit": "Audit log",
-    "admin-plugins": "Capabilities",
+    "admin-plugins": "Plugins",
     "admin-connections": "Connections",
     "admin-review": "Review queue",
     "admin-registry": "npm registry",
@@ -165,7 +169,7 @@ export default {
     "admin-dashboard": "End-to-end overview: assets, governance, people and devices",
     "admin-stats": "Installs, model usage, departments and storage",
     "admin-audit": "Sign-ins, permissions, settings, publishing and review",
-    "admin-plugins": "Publish and unpublish capabilities",
+    "admin-plugins": "Publish and unpublish plugins",
     "admin-connections": "Connect MCP servers and HTTP APIs, hold credentials, configure tools and access",
     "admin-review": "Review queue",
     "admin-registry": "Routing rules, upstream, access tokens",

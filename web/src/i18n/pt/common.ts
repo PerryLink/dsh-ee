@@ -32,6 +32,10 @@ export default {
     no: "Não",
   },
   shell: {
+    publicUrl: {
+      unset: "O endereço público não está definido: {{url}} foi deduzido de como você abriu esta página, e o DSH dos funcionários não conecta se os computadores deles não o alcançarem.",
+      action: "Definir nas configurações do sistema",
+    },
     limited: {
       employee: "Você abriu esta página diretamente pelo DSH e entrou automaticamente. Recursos de segurança da conta, como «Meus tokens», exigem login com senha.",
       admin: "Você abriu esta página diretamente pelo DSH e entrou automaticamente, mas apenas com permissão de funcionário. Para usar recursos administrativos, entre com sua senha.",
@@ -155,7 +159,7 @@ export default {
     "admin-dashboard": "Visão geral",
     "admin-stats": "Dados de operação",
     "admin-audit": "Registro de auditoria",
-    "admin-plugins": "Gerenciamento de capacidades",
+    "admin-plugins": "Plugins",
     "admin-connections": "Conexões da empresa",
     "admin-review": "Aguardando revisão",
     "admin-registry": "Fonte npm",
@@ -193,7 +197,7 @@ export default {
     "admin-dashboard": "Visão geral de ponta a ponta: ativos, governança, pessoas e dispositivos",
     "admin-stats": "Instalações, uso de modelos, departamentos e armazenamento",
     "admin-audit": "Registros de login, permissões, configurações, publicação e revisão",
-    "admin-plugins": "Publicar e despublicar capacidades",
+    "admin-plugins": "Publicar e despublicar plugins",
     "admin-connections": "Conecte serviços MCP e APIs HTTP da empresa, armazene credenciais e configure ferramentas e autorizações",
     "admin-review": "Fila de revisão",
     "admin-registry": "Regras de roteamento, upstream e tokens de acesso",

@@ -285,7 +285,11 @@ func TestConnectTarball(t *testing.T) {
 	info := decodeAs[struct {
 		Version    string `json:"version"`
 		TarballURL string `json:"tarball_url"`
+		BaseURL    string `json:"base_url"`
 	}](t, body)
+	if info.BaseURL != ts.URL {
+		t.Fatalf("base_url 应与插件地址一致：%+v", info)
+	}
 	if info.TarballURL != ts.URL+"/dl/connect/dsh-connect-"+info.Version+".tgz" {
 		t.Fatalf("tarball_url 不对：%+v", info)
 	}

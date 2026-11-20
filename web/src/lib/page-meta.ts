@@ -37,7 +37,7 @@ const META = {
   "admin-dashboard": { title: "总览", defaultPath: "/admin", description: "全链路总览：资产、治理、员工与终端" },
   "admin-stats": { title: "运营数据", defaultPath: "/admin/stats", description: "安装、模型用量、部门与存储" },
   "admin-audit": { title: "审计日志", defaultPath: "/admin/audit", description: "登录、权限、设置、发布与审核等操作记录" },
-  "admin-plugins": { title: "能力管理", defaultPath: "/admin/plugins", description: "能力上下架" },
+  "admin-plugins": { title: "插件管理", defaultPath: "/admin/plugins", description: "插件上下架" },
   "admin-connections": { title: "企业连接", defaultPath: "/admin/connections", description: "接入企业 MCP 服务与 HTTP 接口，托管凭据，配置工具与授权" },
   "admin-review": { title: "待审核", defaultPath: "/admin/review", description: "审核队列" },
   "admin-registry": { title: "npm 源", defaultPath: "/admin/registry", description: "路由规则、上游、访问令牌" },

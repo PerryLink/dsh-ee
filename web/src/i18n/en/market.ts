@@ -27,7 +27,7 @@ export default {
   },
   pluginDetail: {
     notFound: "This plugin doesn't exist or hasn't been approved yet.",
-    backToMarket: "Back to the hub",
+    backToMarket: "Back to company apps",
     market: "Capability hub",
     internal: "Internal · {{department}}",
     upstream: "Upstream · listed on dshfind",

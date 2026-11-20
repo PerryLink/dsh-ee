@@ -1,5 +1,5 @@
 // DSH 里的 Agent 操作工作台（直接对 /mcp 发 JSON-RPC，模拟 DSH 里的模型）：
-// 员工只看到员工侧工具 → 经 Agent 启用技能（网页上变成「已在 DSH 生效」）→ 经 Agent 分享提示词（进审核）
+// 员工只看到员工侧工具 → 经 Agent 启用技能（网页上按钮变成「停用」）→ 经 Agent 分享提示词（进审核）
 // → 吊销令牌要两步确认 → 审计页按来源「Agent」能筛到这些操作
 import { ADMIN_PW, BASE, api, assert, assertEq, login, newPage, shot, step, tag } from "../lib.mjs";
 
@@ -44,15 +44,15 @@ export default async function (t) {
   assert(!listed.some((n) => /^ee_(users|roles|settings|admin_tokens)$/.test(n)), "员工不该看到管理工具：" + listed);
   step(`员工的工具：${listed.filter((n) => n.startsWith("ee_")).join("、")}`);
 
-  // 2. 经 Agent 启用技能 → 网页上变成「已在 DSH 生效」
+  // 2. 经 Agent 启用技能 → 网页上按钮变成「停用」
   const found = (await tool(token, "ee_hub", { action: "search", q: skillTitle })).json();
   assertEq(found.assets.length, 1, "搜到技能");
   assertEq((await tool(token, "ee_hub", { action: "enable", id: found.assets[0].id })).isError, false, "启用");
   await page.goto(`${BASE}/hub?tab=skill`);
   const card = page.locator("div.rounded-lg", { hasText: skillTitle }).last();
-  await card.getByText("已在 DSH 生效").waitFor();
+  await card.getByRole("button", { name: "停用" }).waitFor();
   await shot(page, "agent-hub-enabled");
-  step("经 Agent 启用技能，能力中心页面显示已在 DSH 生效");
+  step("经 Agent 启用技能，企业应用页面按钮变成「停用」");
 
   // 3. 经 Agent 分享提示词 → 进审核队列
   const created = await tool(token, "ee_hub", { action: "create", kind: "prompt", slug: prompt, spec: { title: promptTitle, description: "把本周工作整理成周报", body: "按项目整理本周进展。" } });

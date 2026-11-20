@@ -4,6 +4,7 @@ import type { Messages } from "../types";
 
 export default {
   appAgent: {
+    howItWorks: "Como funciona?",
     tabAgent: "Deixe a IA fazer (recomendado)",
     tabManual: "Configuração manual",
     intro: "Não é preciso configurar item por item na página: descreva o que você quer e copie o prompt abaixo para a IA do DSH. Ela primeiro lê as diretrizes de design, verifica quais sistemas você pode usar, apresenta o plano para sua confirmação e então cria um aplicativo que só você poderá usar.",

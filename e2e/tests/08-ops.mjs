@@ -43,9 +43,12 @@ export default async function (t) {
   assertEq((await api(emp, "GET", "/api/admin/audit")).status, 403, "员工读审计日志");
   assertEq((await api(emp, "GET", "/api/admin/auth/ldap")).status, 403, "员工读 LDAP 配置");
   await emp.goto(`${BASE}/workbench`);
-  await emp.getByRole("heading", { name: "装过的能力" }).waitFor();
-  await emp.getByText("还没有从企业源装过能力。").waitFor();
-  step("员工：工作台显示真实的空状态，管理接口都是 403");
+  await emp.getByRole("heading", { name: "在用的应用" }).waitFor();
+  // 空卡、值为 0 的指标、开发卡都不占位
+  assertEq(await emp.getByRole("heading", { name: "装过的能力" }).count(), 0, "没装过能力时不显示空卡");
+  assertEq(await emp.getByText("我的密钥", { exact: true }).count(), 0, "0 个密钥不显示指标");
+  assertEq(await emp.locator("[data-dev-block]").count(), 0, "员工工作台不显示开发卡");
+  step("员工：工作台隐藏空卡、0 值指标和开发卡，管理接口都是 403");
   await shot(emp, "ops-workbench-empty");
 
   // LDAP：连不上的地址 → 逐步结果里第一步失败；不保存

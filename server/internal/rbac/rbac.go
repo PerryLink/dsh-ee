@@ -141,7 +141,7 @@ var DefaultMenus = []Menu{
 		{Kind: "page", Title: "令牌管理", Path: "/admin/tokens", PageKey: "admin-keys", Icon: "KeyRound", Permission: KeysManage},
 	}},
 	{Kind: "group", Title: "能力与连接", Children: []Menu{
-		{Kind: "page", Title: "能力管理", Path: "/admin/plugins", PageKey: "admin-plugins", Icon: "Boxes", Permission: PluginsManage},
+		{Kind: "page", Title: "插件管理", Path: "/admin/plugins", PageKey: "admin-plugins", Icon: "Boxes", Permission: PluginsManage},
 		{Kind: "page", Title: "待审核", Path: "/admin/review", PageKey: "admin-review", Icon: "ClipboardCheck", Permission: PluginsManage},
 		// 专家 · 技能 · 连接器的分类、精选、禁用策略与权限查询（docs/expert-center.md §6）
 		{Kind: "page", Title: "专家与连接器策略", Path: "/admin/expert-center", PageKey: "admin-expert-center", Icon: "GraduationCap", Permission: PluginsManage},

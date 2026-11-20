@@ -60,7 +60,7 @@ export default {
   },
   "asset": {
     "highlights": "Qué puede hacer por usted",
-    "back": "Volver al Centro de capacidades",
+    "back": "Volver a {{page}}",
     "notFound": "Esta capacidad no existe o no está en su alcance de disponibilidad.",
     "version": "v{{n}}",
     "owner": "Responsable",

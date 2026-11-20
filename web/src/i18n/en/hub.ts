@@ -47,7 +47,7 @@ export default {
   },
   asset: {
     highlights: "What it does for you",
-    back: "Back to the hub",
+    back: "Back to {{page}}",
     notFound: "This capability doesn't exist or isn't available to you.",
     version: "v{{n}}",
     owner: "Owner",
