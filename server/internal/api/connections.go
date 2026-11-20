@@ -404,9 +404,13 @@ func (s *Server) discoverTools(ctx context.Context, sp *assetSpec, client *mcp.C
 		if err != nil {
 			return nil, "", err
 		}
-		usedNames := map[string]bool{}
-		for _, t := range tools {
-			name := openapi.UniqueToolName(openapi.ToolName(t.Name), usedNames)
+		raws := make([]string, len(tools))
+		for i, t := range tools {
+			raws[i] = t.Name
+		}
+		names := openapi.MCPToolNames(raws)
+		for i, t := range tools {
+			name := names[i]
 			schema := t.InputSchema
 			if len(schema) == 0 {
 				schema = json.RawMessage(`{"type":"object"}`)
@@ -415,8 +419,13 @@ func (s *Server) discoverTools(ctx context.Context, sp *assetSpec, client *mcp.C
 			if desc == "" {
 				desc = t.Title
 			}
+			// 对外的名字只能是字母数字下划线；上游的名字不一样时（get-issue、files.read）记下来，调用时用它
+			var op json.RawMessage
+			if name != t.Name {
+				op, _ = json.Marshal(store.MCPToolOp{Name: t.Name})
+			}
 			// MCP 工具默认启用；管理员可以逐个关掉或限定角色
-			out = append(out, &store.ConnectionTool{Name: name, Description: desc, InputSchema: schema, ReadOnly: t.ReadOnly(), Enabled: true})
+			out = append(out, &store.ConnectionTool{Name: name, Description: desc, InputSchema: schema, Operation: op, ReadOnly: t.ReadOnly(), Enabled: true})
 		}
 		if sp.Extension.service() {
 			m, err := sp.Extension.manifest()
@@ -591,7 +600,7 @@ func (s *Server) doConnectionCall(ctx context.Context, a *store.Asset, t *store.
 		if err != nil {
 			return nil, mode, ext, err
 		}
-		res, err := client.CallTool(withCaller(ctx, v, base), t.Name, args)
+		res, err := client.CallTool(withCaller(ctx, v, base), t.UpstreamName(), args)
 		if service {
 			// 凭据没填、还没授权这类问题不是扩展的故障，不计入熔断
 			s.extBreak.report(a.ID, err != nil && !errors.Is(err, errNeedCredential) && !errors.Is(err, errNeedAuthorize))
