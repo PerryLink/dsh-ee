@@ -218,10 +218,20 @@ export default async function (t) {
           const args = { action: "reply", id: Number(match[1]), text };
           const exec = { name: "mcp__company__ee_feishu", agent: { session }, arguments: args };
           const chain = hooks.get("tools/pre-execute") || [];
-          const invoke = (i) => i < chain.length ? chain[i](exec, () => invoke(i + 1)) : registered.get(exec.name).execute(args, exec);
-          const result = await invoke(0);
-          assert(result.kind !== "ask", "Feishu 回复不应要求员工到电脑批准");
+          const invoke = (i) => i < chain.length ? chain[i](exec, () => invoke(i + 1)) : Promise.resolve({ kind: "allow" });
+          const decision = await invoke(0);
+          assertEq(decision.kind, "allow", "Feishu 回复直接获准，不要求员工到电脑批准");
+          const tool = registered.get(exec.name);
+          let result;
+          try {
+            const value = await tool.execute(args, exec);
+            result = { isError: false, value, content: tool.output.render(args, value) };
+          } catch (error) {
+            result = { isError: true, error: { message: error.message }, content: [] };
+          }
+          for (const hook of hooks.get("tools/result") || []) hook(Object.freeze(exec), Object.freeze(result));
           assert(!result.isError, JSON.stringify(result));
+          assertEq(result.value.isError, false, "MCP 回复工具成功");
           turns.push({ sessionId: session.id, id: args.id, question });
         } catch (error) { t.errors.push(`模拟模型：${error.message}`); throw error; }
         finally { emit(session.id, false); }
@@ -232,7 +242,9 @@ export default async function (t) {
     await bridge.sync();
     assert(registered.has("mcp__company__ee_feishu"), "真实 MCP 与桥接器注册 ee_feishu");
     step("员工通过假飞书 OIDC 登录，用正常路由创建 DSH 令牌；真实 McpBridge 注册 ee_feishu");
-    relay = new FeishuChatRelay(ctx, config, tokens, client, { file: path.join(stateDir, "feishu-chat.json") });
+    let polls = 0;
+    const relayHttp = { fetch: (url, ...args) => { if (url.startsWith("/api/me/feishu-chat/next")) polls++; return client.fetch(url, ...args); } };
+    relay = new FeishuChatRelay(ctx, config, tokens, relayHttp, { file: path.join(stateDir, "feishu-chat.json") });
     const status = async () => { const r = await client.fetch("/api/me/feishu-chat"); assertEq(r.status, 200, "员工状态 API"); return r.json(); };
     relay.start();
     await until(async () => (await status()).online, "DSH 长轮询在线");
@@ -241,7 +253,7 @@ export default async function (t) {
     await page.getByRole("textbox").fill(firstQuestion); await pause();
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await page.getByText("今天的待办建议：", { exact: false }).waitFor();
-    await until(() => turns.length === 1, "MCP 工具完成");
+    await until(() => turns.length === 1 && polls >= 2, "MCP 工具与完整中继周期完成");
     assertEq(state.replies.length, 1, "在线时只有模型回复，没有离线或 fallback 提示");
     assertEq((await eventRequest(state.events[0])).status, 200, "飞书重试仍成功");
     await shot(page, "feishu-bot-online-chat"); await pause();
@@ -261,9 +273,10 @@ export default async function (t) {
     await shot(page, "feishu-bot-offline-notice"); await pause();
     step("停止真实中继，等待 60 秒 presence 自然过期；新私聊收到服务端离线提示");
 
+    const pollsBeforeRestart = polls;
     relay.start(); state.status = "DSH 已重新连接 · 正在处理服务端排队消息";
     await page.getByText("明天的计划建议：", { exact: false }).waitFor();
-    await until(() => turns.length === 2, "排队消息 MCP 回复完成");
+    await until(() => turns.length === 2 && polls >= pollsBeforeRestart + 2, "排队消息 MCP 回复与完整中继周期完成");
     state.status = "DSH 已连接 · 离线期间的排队消息已回复";
     await page.getByText(state.status, { exact: true }).waitFor();
     assertEq(turns[0].sessionId, turns[1].sessionId, "重启复用本机专用会话");

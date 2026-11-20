@@ -37,17 +37,13 @@ export class FeishuChatRelay {
   constructor(private ctx: DshContext, private config: PluginConfig, private tokens: Pick<TokenManager, "resolve">, private http: Pick<HttpClient, "fetch">, private options: Options = {}) {
     this.file = options.file ?? path.join(dshHome(), "dsh-ee", "feishu-chat.json");
     this.delay = options.delay ?? ((ms, signal) => sleep(ms, undefined, { signal, ref: false }));
-    ctx.on("tools/pre-execute", async (exec: any, next: () => Promise<unknown>) => {
+    ctx.on("tools/result", (exec: any, result: any) => {
       const turn = this.active;
-      const matching = turn && exec.name === `mcp__${config.serverName}__ee_feishu`
-        && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id);
-      const result: any = await next();
-      if (matching && this.active === turn && !this.controller?.signal.aborted && result
-        && !result.isError && !result.error && result.ok !== false && result.kind !== "error" && result.kind !== "ask" && result.kind !== "deny"
-        && (Array.isArray(result.content) || result.kind === "success" || result.ok === true)) {
+      if (turn && !this.controller?.signal.aborted && exec.name === `mcp__${config.serverName}__ee_feishu`
+        && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id)
+        && result?.isError === false && result.value?.isError === false) {
         turn.replied = true;
       }
-      return result;
     });
   }
 

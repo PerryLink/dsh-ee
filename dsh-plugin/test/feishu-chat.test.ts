@@ -24,7 +24,7 @@ function fixture(t: any) {
   setLang("en");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "feishu-chat-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const hooks: any[] = [];
+  const hooks = new Map<string, any[]>();
   const listeners = new Set<() => void>();
   const rows: Record<string, any> = {};
   const messages: any[] = [];
@@ -39,7 +39,7 @@ function fixture(t: any) {
     for (const listener of listeners) listener();
   };
   const ctx: any = {
-    on: (_name: string, hook: any) => hooks.push(hook),
+    on: (name: string, hook: any) => { const list = hooks.get(name) ?? []; list.push(hook); hooks.set(name, list); },
     get: () => undefined,
     workspaces: { initializeDefault: async () => ({ workspaceId: "workspace" }) },
     sessions: {
@@ -69,6 +69,24 @@ function fixture(t: any) {
     return pending(init?.signal as AbortSignal);
   } };
   const config = normalizeConfig({ base: "https://ee.example", serverName: "company" });
+  const approve = async (exec: any, decision = { kind: "allow" }) => {
+    const chain = hooks.get("tools/pre-execute") ?? [];
+    const invoke = (i: number): Promise<any> => i < chain.length ? chain[i](exec, () => invoke(i + 1)) : Promise.resolve(decision);
+    return invoke(0);
+  };
+  const executeTool = async (exec: any, body: () => Promise<any>, decision = { kind: "allow" }, finalize = (result: any) => result) => {
+    const approval = await approve(exec, decision);
+    let result: any;
+    try {
+      if (approval.kind !== "allow") throw new Error("not approved");
+      result = { isError: false, value: await body(), content: [] };
+    } catch (error) {
+      result = { isError: true, error: { message: String(error) }, content: [] };
+    }
+    result = Object.freeze(finalize(result));
+    for (const hook of hooks.get("tools/result") ?? []) hook(Object.freeze(exec), result);
+    return result;
+  };
   const tokens = { resolve: async () => token ? { value: token, source: "test" } : undefined };
   const makeRelay = (delay?: (ms: number, signal: AbortSignal) => Promise<void>) => {
     const relay = new FeishuChatRelay(ctx, config, tokens, http, {
@@ -78,7 +96,7 @@ function fixture(t: any) {
     t.after(() => relay.stop());
     return relay;
   };
-  return { ctx, hooks, messages, sent, replies, calls, rows, emit, makeRelay, dir,
+  return { ctx, approve, executeTool, messages, sent, replies, calls, rows, emit, makeRelay, dir,
     setToken: (value?: string) => { token = value; }, setOnSend: (fn: typeof onSend) => { onSend = fn; }, created: () => created };
 }
 
@@ -108,34 +126,50 @@ test("delivers sequentially into one session and posts localized fallback after 
   assert.equal(f.created(), 2);
 });
 
-test("only a reply from the matching bridge tool, session and message suppresses fallback", async (t) => {
-  const f = fixture(t);
-  let nextCalls = 0;
-  f.setOnSend(async (id, text) => {
-    f.emit(id, true);
-    const messageId = text.includes("id=11") ? 11 : 12;
-    for (const hook of f.hooks) await hook({ name: "mcp__company__ee_feishu", agent: { session: { id } }, arguments: { action: "reply", id: messageId === 11 ? 11 : 999 } }, async () => { nextCalls++; return { content: [{ type: "text", text: '{"ok":true}' }] }; });
-    f.emit(id, false);
-  });
-  f.messages.push({ id: 11, text: "reply with tool" }, { id: 12, text: "wrong id" });
-  f.makeRelay().start();
-  await until(() => f.replies.length === 1);
-  assert.equal(nextCalls, 2);
-  assert.equal(f.replies[0].url, "/api/me/feishu-chat/12/reply");
-});
-
-test("failed, denied and unverified tool results do not suppress fallback", async (t) => {
-  for (const result of [new Error("tool failed"), { isError: true, content: [] }, { kind: "error" }, { ok: false }, { kind: "ask" }, undefined]) {
-    await t.test(JSON.stringify(result) ?? "no result", async (t) => {
+test("only a successful final result for the matching tool, session, action and message suppresses fallback", async (t) => {
+  for (const mismatch of ["none", "tool", "session", "action", "message"]) {
+    await t.test(mismatch, async (t) => {
       const f = fixture(t);
       f.setOnSend(async (id) => {
         f.emit(id, true);
-        try {
-          await f.hooks[0]({ name: "mcp__company__ee_feishu", agent: { session: { id } }, arguments: { action: "reply", id: 11 } }, async () => {
-            if (result instanceof Error) throw result;
-            return result;
-          });
-        } finally { f.emit(id, false); }
+        const exec = {
+          name: mismatch === "tool" ? "mcp__other__ee_feishu" : "mcp__company__ee_feishu",
+          agent: { session: { id: mismatch === "session" ? "other-session" : id } },
+          arguments: { action: mismatch === "action" ? "remove" : "reply", id: mismatch === "message" ? 999 : 11 },
+        };
+        assert.deepEqual(await f.approve(exec), { kind: "allow" });
+        await f.executeTool(exec, async () => ({ isError: false, content: [{ type: "text", text: '{"ok":true}' }] }));
+        f.emit(id, false);
+      });
+      f.messages.push({ id: 11, text: "reply with tool" });
+      f.makeRelay().start();
+      await until(() => f.calls.at(-1) === "/api/me/feishu-chat/next?wait=25" && f.calls.length >= 2);
+      assert.equal(f.replies.length, mismatch === "none" ? 0 : 1);
+    });
+  }
+});
+
+test("approval alone, tool failures and final policy failures retain fallback", async (t) => {
+  for (const scenario of ["approval only", "throw", "MCP error", "missing MCP result", "deny", "ask", "post-execute failure"]) {
+    await t.test(scenario, async (t) => {
+      const f = fixture(t);
+      f.setOnSend(async (id) => {
+        f.emit(id, true);
+        const exec = { name: "mcp__company__ee_feishu", agent: { session: { id } }, arguments: { action: "reply", id: 11 } };
+        if (scenario === "approval only") {
+          assert.deepEqual(await f.approve(exec), { kind: "allow" });
+        } else {
+          let executed = false;
+          await f.executeTool(exec, async () => {
+            executed = true;
+            if (scenario === "throw") throw new Error("tool failed");
+            if (scenario === "missing MCP result") return undefined;
+            return { isError: scenario === "MCP error", content: [] };
+          }, { kind: scenario === "deny" || scenario === "ask" ? scenario : "allow" },
+          (result) => scenario === "post-execute failure" ? { isError: true, error: { message: "blocked" }, content: [] } : result);
+          assert.equal(executed, scenario !== "deny" && scenario !== "ask");
+        }
+        f.emit(id, false);
       });
       f.messages.push({ id: 11, text: "reply failed" });
       f.makeRelay().start();

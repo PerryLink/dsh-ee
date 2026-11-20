@@ -3294,14 +3294,11 @@ var FeishuChatRelay = class {
     this.options = options;
     this.file = options.file ?? path3.join(dshHome(), "dsh-ee", "feishu-chat.json");
     this.delay = options.delay ?? ((ms, signal) => sleep(ms, void 0, { signal, ref: false }));
-    ctx.on("tools/pre-execute", async (exec, next) => {
+    ctx.on("tools/result", (exec, result) => {
       const turn = this.active;
-      const matching = turn && exec.name === `mcp__${config.serverName}__ee_feishu` && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id);
-      const result = await next();
-      if (matching && this.active === turn && !this.controller?.signal.aborted && result && !result.isError && !result.error && result.ok !== false && result.kind !== "error" && result.kind !== "ask" && result.kind !== "deny" && (Array.isArray(result.content) || result.kind === "success" || result.ok === true)) {
+      if (turn && !this.controller?.signal.aborted && exec.name === `mcp__${config.serverName}__ee_feishu` && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id) && result?.isError === false && result.value?.isError === false) {
         turn.replied = true;
       }
-      return result;
     });
   }
   controller;
