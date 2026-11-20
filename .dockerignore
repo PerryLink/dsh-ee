@@ -10,3 +10,7 @@ server/.env.local
 server/internal/webui/build/*
 !server/internal/webui/build/.gitignore
 deploy/out
+
+# GitHub README / 发布素材用图（intro*.gif 等，约 22 MB），构建不读：
+# 镜像构建期 web 的 prebuild 只按 scripts/docs/manifest.json 白名单读 Markdown，不读图片。
+docs/images/
