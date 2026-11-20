@@ -826,14 +826,23 @@ func (s *Server) handleRegistryCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
+	authBase, authorization, err := s.upstreamCredentials(r.Context())
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/-/ping", nil)
-	resp, err := s.registryClient().Do(req)
+	resp, err := registry.AuthClient(s.registryClient(), authBase, authorization).Do(req)
 	ms := time.Since(start).Milliseconds()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "latency_ms": ms, "message": err.Error()})
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		writeErrCode(w, http.StatusBadGateway, codeUpstreamAuthFailed, nil, "上游仓库认证失败，请检查令牌、用户名密码及仓库访问权限")
+		return
+	}
 	ok := resp.StatusCode < 400
 	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "latency_ms": ms, "status": resp.StatusCode, "upstream": base})
 }

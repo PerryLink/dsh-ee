@@ -33,9 +33,10 @@ var ErrUpstreamNotFound = errors.New("Upstream has no such package")
 // Upstream 访问上游 npm registry，packument 缓存在磁盘上：TTL 内直接用，过期后带 ETag 重新验证，
 // 上游不可用时退回旧缓存，保证内网安装不因外网抖动失败。
 type Upstream struct {
-	hc  *http.Client
-	dir string
-	ttl time.Duration
+	Credentials func(context.Context) (base, authorization string, err error)
+	hc          *http.Client
+	dir         string
+	ttl         time.Duration
 	// 允许 tarball 地址解析到内网（内部 npm 镜像需要）；默认只允许公网地址，
 	// 防止上游 packument 把服务端当跳板访问内网/云元数据。
 	allowPrivate bool
@@ -143,13 +144,19 @@ func (u *Upstream) fetch(ctx context.Context, base, name, key string, maxAge tim
 	if meta.ETag != "" && meta.Status == http.StatusOK && meta.URL == pkgURL {
 		req.Header.Set("If-None-Match", meta.ETag)
 	}
-	resp, err := u.hc.Do(req)
+	client, err := u.authenticatedClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return u.stale(key, bodyPath, meta, fmt.Errorf("Accessing upstream %s: %w", pkgURL, err))
 	}
 	defer resp.Body.Close()
 
 	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return nil, ErrUpstreamAuth
 	case resp.StatusCode == http.StatusNotModified:
 		meta.FetchedAt = time.Now()
 		u.writeMeta(metaPath, meta)
@@ -487,7 +494,11 @@ func (u *Upstream) FetchTarball(ctx context.Context, blobs *Blobs, rawURL, integ
 	}
 	req.Header.Set("User-Agent", "dsh-ee")
 	// 每一跳重定向都重新校验；默认不跟随到内网。
-	client := *u.hc
+	authClient, err := u.authenticatedClient(ctx)
+	if err != nil {
+		return Digest{}, err
+	}
+	client := *authClient
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("Too many redirects")
@@ -499,6 +510,9 @@ func (u *Upstream) FetchTarball(ctx context.Context, blobs *Blobs, rawURL, integ
 		return Digest{}, fmt.Errorf("Downloading %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return Digest{}, ErrUpstreamAuth
+	}
 	if resp.StatusCode != http.StatusOK {
 		return Digest{}, fmt.Errorf("Downloading %s: upstream returned %d", rawURL, resp.StatusCode)
 	}

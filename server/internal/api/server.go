@@ -348,6 +348,7 @@ func (s *Server) newRegistry() *registry.Service {
 		s.log.Error("npm 源不可用", "err", err)
 		return nil
 	}
+	up.Credentials = s.upstreamCredentials
 	svc := registry.NewService(s.store, blobs, up, s.appSettings, s.log, s.opts.InstanceID)
 	if s.opts.FeedURL != "" {
 		svc.FeedURL = s.opts.FeedURL

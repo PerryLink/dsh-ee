@@ -1,5 +1,5 @@
 import { KeyRound } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "../../lib/store";
 import { formatNumber } from "../../lib/format";
 import type { Settings } from "../../lib/types";
@@ -17,6 +17,16 @@ const upstreamLabel: Record<Settings["upstream"]["registry"], string> = {
   custom: "custom",
 };
 
+const repositoryEndpoints = {
+  npm: "https://npm.corp/",
+  nexus: "https://nexus.corp/repository/npm-group/",
+  artifactory: "https://corp.jfrog.io/artifactory/api/npm/npm-virtual/",
+  gitlab: "https://gitlab.corp/api/v4/projects/<id>/packages/npm/",
+  github: "https://npm.pkg.github.com/",
+  verdaccio: "https://verdaccio.corp/",
+  other: "https://artifacts.corp/npm/",
+};
+
 export default function AdminRegistry() {
   const { t } = useTranslation();
   const { settings: s, updateSettings, baseUrl, notify } = useStore();
@@ -25,7 +35,6 @@ export default function AdminRegistry() {
   const [newScope, setNewScope] = useState("");
 
   const setReg = (patch: Partial<Settings["registry"]>) => updateSettings((c) => ({ ...c, registry: { ...c.registry, ...patch } }));
-  const setUp = (patch: Partial<Settings["upstream"]>) => updateSettings((c) => ({ ...c, upstream: { ...c.upstream, ...patch } }));
 
   const registryUrl = `${baseUrl}/npm/`;
   const indexUrl = `${baseUrl}/index/dsh-index.json`;
@@ -148,29 +157,7 @@ export default function AdminRegistry() {
         <Card className="p-5">
           <h2 className="text-neutral-900 text-[15px] leading-6 font-semibold">{t("registryAdmin.upstream")}</h2>
           <div className="mt-4 space-y-5">
-            <Field label={t("registryAdmin.npmUpstream")} hint={offline ? t("registryAdmin.offlineHint") : undefined}>
-              <div className="flex flex-col gap-2">
-                <select
-                  className={cx(inputBase, "w-56")}
-                  value={s.upstream.registry}
-                  disabled={offline}
-                  onChange={(e) => setUp({ registry: e.target.value as Settings["upstream"]["registry"] })}
-                >
-                  <option value="npmmirror">{t("registryAdmin.npmmirror")}</option>
-                  <option value="npmjs">registry.npmjs.org</option>
-                  <option value="custom">{t("registryAdmin.customNexus")}</option>
-                </select>
-                {s.upstream.registry === "custom" && (
-                  <input
-                    className={cx(inputCls, "font-mono")}
-                    placeholder="https://nexus.acme.internal/repository/npm/"
-                    value={s.upstream.customRegistry}
-                    disabled={offline}
-                    onChange={(e) => setUp({ customRegistry: e.target.value })}
-                  />
-                )}
-              </div>
-            </Field>
+            <UpstreamForm />
             <Field label={t("registryAdmin.outsideScope")} hint={s.registry.proxyMode === "cache" ? t("registryAdmin.cacheHint") : t("registryAdmin.preloadedHint")}>
               <Segmented
                 value={s.registry.proxyMode}
@@ -198,6 +185,69 @@ export default function AdminRegistry() {
 
       <TokensCard requireToken={s.registry.requireToken} onRequireToken={(v) => setReg({ requireToken: v })} />
     </div>
+  );
+}
+
+function UpstreamForm() {
+  const { t } = useTranslation();
+  const { settings, saveUpstream, notify } = useStore();
+  const [draft, setDraft] = useState(settings.upstream);
+  const [secret, setSecret] = useState("");
+  const { busy, run } = useAction();
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (!dirty) setDraft(settings.upstream); }, [settings.upstream, dirty]);
+  const kind = draft.repoKind || "npm";
+  const auth = draft.auth;
+  const offline = settings.upstream.mode === "offline";
+  const custom = draft.registry === "custom";
+  const changed = secret !== "" || JSON.stringify(draft) !== JSON.stringify(settings.upstream);
+  const patch = (value: Partial<Settings["upstream"]>) => { setDirty(true); setDraft((d) => ({ ...d, ...value })); };
+  const needsSecret = custom && auth.type !== "none";
+  const invalid = custom && (!draft.customRegistry.trim() || (needsSecret && !secret && !auth.hasSecret) || (auth.type === "basic" && !auth.username.trim()));
+
+  return (
+    <form className="space-y-5" onSubmit={async (e) => {
+      e.preventDefault();
+      const r = await run(() => saveUpstream({ ...settings.upstream, registry: draft.registry, customRegistry: draft.customRegistry, repoKind: draft.repoKind, auth: { ...auth, secret } }));
+      if (!r.ok) return notify(r.error);
+      setSecret("");
+      setDirty(false);
+      notify(t("registryAdmin.upstreamSaved"));
+    }}>
+      <fieldset disabled={offline || busy} className="space-y-5 disabled:opacity-60">
+        <Field label={t("registryAdmin.npmUpstream")} hint={offline ? t("registryAdmin.offlineHint") : undefined}>
+          <select aria-label={t("registryAdmin.npmUpstream")} className={inputCls} value={draft.registry} onChange={(e) => patch({ registry: e.target.value as typeof draft.registry })}>
+            <option value="npmmirror">{t("registryAdmin.npmmirror")}</option>
+            <option value="npmjs">registry.npmjs.org</option>
+            <option value="custom">{t("registryAdmin.customNexus")}</option>
+          </select>
+        </Field>
+        {custom && <>
+          <Field label={t("registryAdmin.repoKind")}>
+            <select aria-label={t("registryAdmin.repoKind")} className={inputCls} value={kind} onChange={(e) => patch({ repoKind: e.target.value as typeof kind })}>
+              {Object.keys(repositoryEndpoints).map((k) => <option key={k} value={k}>{t(`registryAdmin.repoKinds.${k as keyof typeof repositoryEndpoints}`)}</option>)}
+            </select>
+          </Field>
+          <Field label={t("registryAdmin.registryEndpoint")} hint={<>{t("registryAdmin.endpointHint")} <span className="break-all font-mono">{repositoryEndpoints[kind]}</span><br />{t(`registryAdmin.repoHints.${kind}`)}</>}>
+            <input aria-label={t("registryAdmin.registryEndpoint")} type="url" required className={cx(inputCls, "font-mono")} placeholder={repositoryEndpoints[kind]} value={draft.customRegistry} onChange={(e) => patch({ customRegistry: e.target.value })} />
+          </Field>
+          <Field label={t("registryAdmin.authType")} hint={t("registryAdmin.authOriginHint")}>
+            <select aria-label={t("registryAdmin.authType")} className={inputCls} value={auth.type || "none"} onChange={(e) => { patch({ auth: { ...auth, type: e.target.value as typeof auth.type } }); setSecret(""); }}>
+              <option value="none">{t("registryAdmin.authNone")}</option>
+              <option value="bearer">{t("registryAdmin.authBearer")}</option>
+              <option value="basic">{t("registryAdmin.authBasic")}</option>
+            </select>
+          </Field>
+          {auth.type === "basic" && <Field label={t("registryAdmin.authUsername")}>
+            <input className={inputCls} autoComplete="off" required value={auth.username} onChange={(e) => patch({ auth: { ...auth, username: e.target.value } })} />
+          </Field>}
+          {needsSecret && <Field label={auth.type === "basic" ? t("registryAdmin.authPassword") : t("registryAdmin.authToken")} hint={t("registryAdmin.secretHint")}>
+            <input aria-label={auth.type === "basic" ? t("registryAdmin.authPassword") : t("registryAdmin.authToken")} className={inputCls} type="password" autoComplete="new-password" value={secret} placeholder={auth.hasSecret ? t("registryAdmin.secretSaved") : t("registryAdmin.secretRequired")} onChange={(e) => { setDirty(true); setSecret(e.target.value); }} />
+          </Field>}
+        </>}
+        <Button type="submit" disabled={!changed || invalid}>{busy ? t("registryAdmin.upstreamSaving") : t("registryAdmin.saveUpstream")}</Button>
+      </fieldset>
+    </form>
   );
 }
 

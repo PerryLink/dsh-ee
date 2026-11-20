@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
@@ -137,6 +138,22 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if next.Brand.Theme.Tokens == nil {
 		next.Brand.Theme.Tokens = maps.Clone(cur.Brand.Theme.Tokens)
 	}
+	if next.Upstream.Auth.Type == "none" || next.Upstream.Auth.Type == "" {
+		next.Upstream.Auth.SecretEnc = ""
+	} else if next.Upstream.Auth.Secret != "" {
+		if strings.ContainsAny(next.Upstream.Auth.Secret, "\r\n") {
+			writeErrCode(w, http.StatusBadRequest, codeSettingsInvalidValue, nil, "上游仓库凭据不能包含换行符")
+			return
+		}
+		sealed, err := s.box.Seal([]byte(next.Upstream.Auth.Secret))
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+		next.Upstream.Auth.SecretEnc = base64.StdEncoding.EncodeToString(sealed)
+	}
+	next.Upstream.Auth.Secret = ""
+	next.Upstream.Auth.HasSecret = next.Upstream.Auth.SecretEnc != ""
 	if msg := validateSettings(&next); msg != "" {
 		writeErrCode(w, http.StatusBadRequest, codeSettingsInvalidValue, nil, msg)
 		return
@@ -181,6 +198,21 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 const maxFeedSources = 10
 
 func validateSettings(v *store.AppSettings) string {
+	if !slices.Contains([]string{"", "npm", "nexus", "artifactory", "gitlab", "github", "verdaccio", "other"}, v.Upstream.RepoKind) {
+		return "不支持的上游仓库类型"
+	}
+	auth := v.Upstream.Auth
+	if !slices.Contains([]string{"", "none", "bearer", "basic"}, auth.Type) {
+		return "不支持的上游认证方式"
+	}
+	if v.Upstream.Registry == "custom" && (auth.Type == "bearer" || auth.Type == "basic") {
+		if auth.SecretEnc == "" {
+			return "上游认证需要填写令牌或密码"
+		}
+		if auth.Type == "basic" && (strings.TrimSpace(auth.Username) == "" || strings.Contains(auth.Username, ":")) {
+			return "Basic 认证需要用户名，且用户名不能包含冒号"
+		}
+	}
 	v.OrgName = strings.TrimSpace(v.OrgName)
 	v.BaseURL = strings.TrimRight(strings.TrimSpace(v.BaseURL), "/")
 	if len([]rune(v.OrgName)) > 64 {

@@ -3,6 +3,9 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  upstream: {
+    auth_failed: "अपस्ट्रीम रिपॉज़िटरी प्रमाणीकरण विफल रहा। टोकन, उपयोगकर्ता नाम, पासवर्ड और रिपॉज़िटरी अनुमतियाँ जाँचें।",
+  },
   identity: {
     entrance_disabled: "यह साइन-इन तरीका बंद है और इसे लिंक नहीं किया जा सकता।",
     session_changed: "आपका सत्र बदल गया है। पहचान लिंक करने से पहले दोबारा साइन इन करें।",

@@ -72,6 +72,24 @@ Go 写的 dsh-ee 服务端。目前实现：
 
 ## npm 源
 
+### 企业制品仓库上游
+
+通过 `PUT /api/admin/settings` 设置 `upstream.registry="custom"`、`customRegistry`、`repoKind` 及 `auth`。仓库类型只是界面提示标签，不改变 npm 协议；空值或 `npm` 表示通用 npm 仓库。仍然只有一个 npm 上游，第三方插件目录源不是独立的包下载仓库。
+
+| 仓库 | `customRegistry` 示例 | 认证方式 |
+| --- | --- | --- |
+| Nexus | `https://nexus.corp/repository/npm-group/` | Bearer（启用 npm Bearer Token Realm）或 Basic（用户名 / 密码） |
+| JFrog Artifactory | `https://corp.jfrog.io/artifactory/api/npm/npm-virtual/` | Bearer（访问令牌）或 Basic（用户名 / 访问令牌） |
+| GitLab | `https://gitlab.corp/api/v4/projects/<id>/packages/npm/` 或 `https://gitlab.corp/api/v4/packages/npm/` | Bearer（有读取包权限的个人 / 部署 / CI 令牌，按部署策略授权） |
+| GitHub Packages | `https://npm.pkg.github.com/` | Bearer（具有 `read:packages` 及对应组织 / 仓库权限的 PAT） |
+| Verdaccio / 其他 npm 兼容仓库 | 企业提供的 npm registry 根地址 | 按仓库策略选择 none / bearer / basic |
+
+例如：`{"upstream":{"registry":"custom","customRegistry":"https://nexus.corp/repository/npm-group/","repoKind":"nexus","auth":{"type":"basic","username":"npm-reader","secret":"<密码或令牌>"}}}`。
+`repoKind` 可选 `npm`、`nexus`、`artifactory`、`gitlab`、`github`、`verdaccio`、`other`。认证类型为 `none`、`bearer`、`basic`；Bearer 必须有 secret，Basic 必须有 username 和 secret。地址中禁止嵌入账号密码，生产环境请使用 HTTPS。
+
+凭据用 `DSH_EE_SECRET_KEY` 对应的 AES-256-GCM 主密钥加密存库。GET 和 PUT 响应只返回 `auth.hasSecret`，不返回 secret 或密文；PUT 不传 / 传空 secret 均沿用已存凭据，`type="none"` 清除凭据。审计只记录变更的设置段名。公共预设 npmjs / npmmirror 始终匿名，只有 custom 上游启用认证。
+认证头仅发给所配置地址的同源请求（协议、主机、端口均相同），包括元数据、同源 tarball、连通检查；跨源 tarball、重定向目标和 dshfind / 第三方目录不携带凭据。跨源 tarball 需匿名可读；401/403 表示应检查凭据及仓库权限，不缓存为永久失败。
+
 DSH 的 `dsh plugin add` 在 profile 目录里转发给 pnpm，所以「能力市场」的核心就是一个 npm registry。dsh-ee 自己实现了 npm 协议需要的那部分：
 
 - **packument / tarball**：`GET /npm/<包名>`（支持 `Accept: application/vnd.npm.install-v1+json` 精简文档）、`GET /npm/<包名>/-/<文件>.tgz`。tarball 按 sha512 内容寻址存在 `DSH_EE_DATA_DIR/blobs`。
@@ -327,4 +345,4 @@ curl localhost:8080/v1/chat/completions -H 'Authorization: Bearer sk-ee-…' -H 
 - 共享限流在数据库不可用时退回单实例内存计数：仍然会 429，不会 fail open，也不会把 `/v1`、`/mcp` 整体打成 5xx；代价是多实例下额度暂时放大 N 倍，并会限频写告警日志。为避免无效令牌把限流表刷大，每个实例每个窗口最多为 1 万个 key 建行；其后的陌生 key 共用一个溢出 key（所有实例、所有陌生令牌合计不超过一次正常令牌额度），正常令牌数量远低于这个量级。
 - 多实例部署：周期后台任务（LDAP/飞书/知识源同步、上游检查、接入插件发布、Desktop 版本同步、到期与清理）已用数据库租约选主（`background_leases`，默认开启，见 [docs/operations.md](../docs/operations.md) §9.2），同一任务不会重复执行；但登录限流、上游 packument 的内存缓存、MCP 事件流等仍在单个进程里，多个实例同时启动时数据库迁移由 `migration_lock` 行锁串行化（同一时刻只有一个实例迁移，其余等待），tarball 存在本地磁盘，多实例需要共享存储（NFS 等）或以后改成对象存储。启动时的 `FailRunningJobs` 已按实例（主机名+监听地址）做作业级归属（`sync_jobs.owner`）：管理员手动触发的镜像任务与离线包导入都记在创建它的实例名下，启动时只中断本实例与升级前无归属的 running 任务，不再误伤其它在线实例正在跑的任务；滚动升级期间旧版本实例创建的任务没有归属，仍可能被新实例启动时标中断。
 - 离线包没有签名（导入时只校验每个 tarball 的 sha512）；dshfind 签名种子包对接后再加 ed25519 校验。
-- 上游 registry 只支持匿名访问，不支持需要认证的 Nexus / Artifactory 代理仓库。
+- 上游支持匿名、Bearer 令牌及 Basic 用户名密码认证的 npm 兼容端点；不提供 Maven、PyPI、OCI 等协议适配。配置方式见「企业制品仓库上游」。

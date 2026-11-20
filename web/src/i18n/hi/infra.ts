@@ -4,6 +4,41 @@ import type { Messages } from "../types";
 
 export default {
   "registryAdmin": {
+    "repoKind": "रिपॉज़िटरी प्रकार",
+    "repoKinds": {
+      "npm": "सामान्य npm",
+      "nexus": "Nexus",
+      "artifactory": "JFrog Artifactory",
+      "gitlab": "GitLab Packages",
+      "github": "GitHub Packages",
+      "verdaccio": "Verdaccio",
+      "other": "अन्य"
+    },
+    "registryEndpoint": "npm रिपॉज़िटरी URL",
+    "endpointHint": "एंडपॉइंट उदाहरण:",
+    "repoHints": {
+      "npm": "ज़रूरत के अनुसार अनाम, Bearer या Basic प्रमाणीकरण वाला npm-संगत एंडपॉइंट उपयोग करें।",
+      "nexus": "Basic के साथ npm group, hosted या proxy एंडपॉइंट उपयोग करें, या Bearer के लिए npm Bearer Token Realm चालू करें।",
+      "artifactory": "npm वर्चुअल रिपॉज़िटरी एंडपॉइंट उपयोग करें। Bearer अनुशंसित है; उपयोगकर्ता नाम + एक्सेस टोकन भी मान्य है।",
+      "gitlab": "प्रोजेक्ट एंडपॉइंट या इंस्टेंस का /api/v4/packages/npm/ उपयोग करें। पैकेज पढ़ने की अनुमति वाला Bearer टोकन चुनें।",
+      "github": "read:packages और संगठन / रिपॉज़िटरी की अनुमति वाले PAT के साथ Bearer Token उपयोग करें।",
+      "verdaccio": "सर्वर कॉन्फ़िगरेशन के अनुसार Bearer या Basic के साथ Verdaccio npm एंडपॉइंट उपयोग करें।",
+      "other": "प्लेटफ़ॉर्म का npm-संगत एंडपॉइंट दर्ज करें। Maven, PyPI और OCI प्रोटोकॉल समर्थित नहीं हैं।"
+    },
+    "authType": "प्रमाणीकरण",
+    "authNone": "कोई नहीं",
+    "authBearer": "Bearer Token",
+    "authBasic": "उपयोगकर्ता नाम + पासवर्ड",
+    "authUsername": "उपयोगकर्ता नाम",
+    "authPassword": "पासवर्ड / एक्सेस टोकन",
+    "authToken": "एक्सेस टोकन",
+    "secretSaved": "सहेजा गया; बदलना न हो तो खाली छोड़ें",
+    "secretRequired": "टोकन या पासवर्ड दर्ज करें",
+    "secretHint": "क्रेडेंशियल एन्क्रिप्ट किए जाते हैं और दोबारा नहीं दिखाए जाते। हटाने के लिए कोई नहीं चुनकर सहेजें।",
+    "authOriginHint": "केवल समान ओरिजिन के npm अनुरोधों को भेजा जाता है, अन्य ओरिजिन के tarball, रीडायरेक्ट या प्लगइन कैटलॉग को नहीं।",
+    "saveUpstream": "अपस्ट्रीम कॉन्फ़िगरेशन सहेजें",
+    "upstreamSaving": "सहेजा जा रहा है…",
+    "upstreamSaved": "अपस्ट्रीम कॉन्फ़िगरेशन सहेजा गया",
     "noAddress": "पता नहीं भरा",
     "hosted": "आंतरिक होस्टिंग",
     "hostedRule": "केवल कंपनी के आंतरिक प्रकाशन स्वीकार करता है, कभी सार्वजनिक स्रोत पर वापस नहीं जाता, dependency confusion रोकता है",

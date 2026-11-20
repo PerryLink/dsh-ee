@@ -3,6 +3,9 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  upstream: {
+    auth_failed: "Falló la autenticación del repositorio de origen. Comprueba el token, el usuario, la contraseña y los permisos.",
+  },
   identity: {
     entrance_disabled: "Este método de inicio de sesión está deshabilitado y no se puede vincular.",
     session_changed: "Tu sesión ha cambiado. Vuelve a iniciar sesión antes de vincular la identidad.",

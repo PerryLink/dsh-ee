@@ -3,6 +3,9 @@ import type zhNs from "../zh/api-errors";
 import type { Messages } from "../types";
 
 export default {
+  upstream: {
+    auth_failed: "Falha na autenticação do repositório de origem. Verifique o token, usuário, senha e permissões.",
+  },
   identity: {
     entrance_disabled: "Este método de login está desativado e não pode ser vinculado.",
     session_changed: "Sua sessão mudou. Entre novamente antes de vincular a identidade.",

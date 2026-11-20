@@ -96,6 +96,13 @@ export interface Settings {
     dshfindFeed: boolean;
     registry: "npmjs" | "npmmirror" | "custom";
     customRegistry: string;
+    repoKind: "" | "npm" | "nexus" | "artifactory" | "gitlab" | "github" | "verdaccio" | "other";
+    auth: {
+      type: "none" | "bearer" | "basic";
+      username: string;
+      secret?: string;
+      hasSecret: boolean;
+    };
     autoSync: "auto" | "review" | "off";
     /** dshfind 屏蔽名单：包名、@作用域/*、author:作者 */
     blocklist: string[];

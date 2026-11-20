@@ -33,7 +33,9 @@ sha256sum -c SHA256SUMS
 
 `install.sh` 第一次执行会生成 `.env`（`DSH_EE_SECRET_KEY`、`DSH_EE_BOOTSTRAP_ADMIN_PASSWORD` 等）并打印管理员密码；之后重复执行就是升级。启动后会轮询 `http://127.0.0.1:<端口>/healthz` 等就绪（最长约 16 分钟，OceanBase 首次启动慢）。
 
-**`.env` 必须和数据库一起备份**：`DSH_EE_SECRET_KEY` 丢了，已存的上游模型 key、连接凭据就解不开了。
+企业 npm 上游可接 Nexus、Artifactory、GitLab / GitHub Packages、Verdaccio 等 npm 兼容端点，并使用 Bearer 或 Basic 认证。URL 示例、`upstream.auth` 设置与凭据保留 / 清除规则见 [服务端说明「企业制品仓库上游」](../server/README.md#企业制品仓库上游)。公共预设始终匿名；凭据不发给跨源 tarball 或插件目录源。
+
+**`.env` 必须和数据库一起备份**：`DSH_EE_SECRET_KEY` 丢了，已存的上游模型 key、npm 仓库凭据、连接凭据就解不开了。
 
 ### 2.2 不用安装包：docker compose
 

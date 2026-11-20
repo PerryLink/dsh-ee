@@ -32,8 +32,10 @@ type AppSettings struct {
 		Mode        string `json:"mode"`
 		DshfindFeed bool   `json:"dshfindFeed"`
 		// npmjs / npmmirror / custom
-		Registry       string `json:"registry"`
-		CustomRegistry string `json:"customRegistry"`
+		Registry       string       `json:"registry"`
+		CustomRegistry string       `json:"customRegistry"`
+		RepoKind       string       `json:"repoKind"`
+		Auth           UpstreamAuth `json:"auth"`
 		// 已预载插件出了新版本：auto 自动同步并上架 / review 同步后待审核 / off 不同步
 		AutoSync string `json:"autoSync"`
 		// dshfind 屏蔽名单：包名、@作用域/*、author:<dshfind 作者>。命中的包不出现在可预载列表里，
@@ -123,6 +125,19 @@ type FeedSource struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type UpstreamAuth struct {
+	Type      string `json:"type"`
+	Username  string `json:"username"`
+	Secret    string `json:"secret,omitempty"`
+	HasSecret bool   `json:"hasSecret"`
+	SecretEnc string `json:"-"`
+}
+
+type storedAppSettings struct {
+	*AppSettings
+	UpstreamSecretEnc string `json:"upstreamSecretEnc,omitempty"`
+}
+
 // BrandTheme 是 DSH 界面的配色。Colors 是几个常用位置（主色、侧栏等），
 // 服务端把它们换算成 DSH 的 --dsw-* 设计变量；Tokens 直接写变量，覆盖 Colors 的结果。
 type BrandTheme struct {
@@ -152,6 +167,7 @@ func DefaultSettings() *AppSettings {
 	s.Scoring.AllowEmployeeRating = true
 	s.Scoring.MinPreloadScore = 60
 	s.Upstream.Mode = "online"
+	s.Upstream.Auth.Type = "none"
 	s.Upstream.DshfindFeed = true
 	s.Upstream.Registry = "npmmirror"
 	s.Upstream.AutoSync = "review"
@@ -228,9 +244,13 @@ func (s *Store) GetSettings(ctx context.Context) (*AppSettings, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal([]byte(raw), out); err != nil {
+	stored := storedAppSettings{AppSettings: out}
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
 		return nil, err
 	}
+	out.Upstream.Auth.Secret = ""
+	out.Upstream.Auth.SecretEnc = stored.UpstreamSecretEnc
+	out.Upstream.Auth.HasSecret = stored.UpstreamSecretEnc != ""
 	if out.Registry.ExtraScopes == nil {
 		out.Registry.ExtraScopes = []string{}
 	}
@@ -238,7 +258,10 @@ func (s *Store) GetSettings(ctx context.Context) (*AppSettings, error) {
 }
 
 func (s *Store) SaveSettings(ctx context.Context, v *AppSettings, userID int64) error {
-	b, err := json.Marshal(v)
+	clean := v.Clone()
+	clean.Upstream.Auth.Secret = ""
+	clean.Upstream.Auth.HasSecret = clean.Upstream.Auth.SecretEnc != ""
+	b, err := json.Marshal(storedAppSettings{AppSettings: clean, UpstreamSecretEnc: clean.Upstream.Auth.SecretEnc})
 	if err != nil {
 		return err
 	}

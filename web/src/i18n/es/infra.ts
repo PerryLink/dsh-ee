@@ -4,6 +4,41 @@ import type { Messages } from "../types";
 
 export default {
   "registryAdmin": {
+    "repoKind": "Tipo de repositorio",
+    "repoKinds": {
+      "npm": "npm genérico",
+      "nexus": "Nexus",
+      "artifactory": "JFrog Artifactory",
+      "gitlab": "GitLab Packages",
+      "github": "GitHub Packages",
+      "verdaccio": "Verdaccio",
+      "other": "Otro"
+    },
+    "registryEndpoint": "URL del repositorio npm",
+    "endpointHint": "Ejemplo de endpoint:",
+    "repoHints": {
+      "npm": "Usa un endpoint compatible con npm y autenticación anónima, Bearer o Basic según sea necesario.",
+      "nexus": "Usa un endpoint npm group, hosted o proxy con Basic, o activa npm Bearer Token Realm para Bearer.",
+      "artifactory": "Usa el endpoint npm del repositorio virtual. Se recomienda Bearer; también admite usuario + token de acceso.",
+      "gitlab": "Usa un endpoint de proyecto o /api/v4/packages/npm/ de la instancia. Usa un token Bearer con permiso de lectura de paquetes.",
+      "github": "Usa Bearer Token con un PAT con read:packages y acceso a la organización / repositorio.",
+      "verdaccio": "Usa el endpoint npm de Verdaccio con Bearer o Basic según la configuración del servidor.",
+      "other": "Introduce el endpoint compatible con npm de la plataforma. No se admiten los protocolos Maven, PyPI ni OCI."
+    },
+    "authType": "Autenticación",
+    "authNone": "Ninguna",
+    "authBearer": "Bearer Token",
+    "authBasic": "Usuario + contraseña",
+    "authUsername": "Usuario",
+    "authPassword": "Contraseña / token de acceso",
+    "authToken": "Token de acceso",
+    "secretSaved": "Guardado; deja en blanco para conservarlo",
+    "secretRequired": "Introduce un token o contraseña",
+    "secretHint": "Las credenciales se cifran y no vuelven a mostrarse. Selecciona Ninguna y guarda para borrarlas.",
+    "authOriginHint": "Solo se envían a solicitudes npm del mismo origen, nunca a tarballs, redirecciones ni catálogos de otro origen.",
+    "saveUpstream": "Guardar configuración de origen",
+    "upstreamSaving": "Guardando…",
+    "upstreamSaved": "Configuración de origen guardada",
     "noAddress": "Sin dirección configurada",
     "hosted": "Alojado internamente",
     "hostedRule": "Solo acepta publicaciones de la empresa y nunca recurre al registro público, lo que evita la confusión de dependencias",

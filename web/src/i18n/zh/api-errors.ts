@@ -10,6 +10,9 @@
  * es / pt / hi 等语言包合并后按同一份键补译文。
  */
 export default {
+  upstream: {
+    auth_failed: "上游仓库认证失败，请检查令牌、用户名密码及仓库访问权限",
+  },
   identity: {
     entrance_disabled: "这个登录入口没有开启，不能绑定",
     session_changed: "登录状态变了，请重新登录后再绑定",

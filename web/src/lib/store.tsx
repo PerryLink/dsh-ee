@@ -23,6 +23,8 @@ export const defaultSettings: Settings = {
     dshfindFeed: true,
     registry: "npmmirror",
     customRegistry: "",
+    repoKind: "",
+    auth: { type: "none", username: "", hasSecret: false },
     autoSync: "review",
     blocklist: [],
     sources: [],
@@ -65,6 +67,7 @@ interface Store {
   /** 系统设置（服务端）；修改后约 0.6 秒合并保存。 */
   settings: Settings;
   updateSettings: (patch: (s: Settings) => Settings) => void;
+  saveUpstream: (upstream: Settings["upstream"]) => Promise<void>;
   resetSettings: () => void;
   /** 员工可见的已上架能力（/api/catalog）。 */
   plugins: Plugin[];
@@ -142,6 +145,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const store: Store = {
     settings,
+    saveUpstream: async (upstream) => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      const before = latest.current;
+      const saved = await api.saveSettings({ ...before, upstream });
+      setSettings((current) => current === before ? saved : { ...current, upstream: saved.upstream });
+    },
     updateSettings: (patch) =>
       setSettings((s) => {
         const next = patch(s);
