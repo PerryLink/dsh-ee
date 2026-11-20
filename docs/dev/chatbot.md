@@ -3,8 +3,8 @@ slug: chatbot
 category: harness
 title: "Chatbot 网关选项与透传"
 title_en: "Chatbot gateway options and passthrough"
-summary: "DeepSeek Chatbot 的联网工具、内容安全与会话标题：网关只透传，可按部署注入 safety_check / title，能力在发现文档声明。"
-summary_en: "DeepSeek Chatbot web tools, content safety and conversation titles: the gateway passes them through, can inject safety_check/title defaults, and declares the capability in discovery."
+summary: "联网工具、内容安全与会话标题：网关透传，可按部署注入 safety_check / title。"
+summary_en: "Web tools, content safety and conversation titles: passed through, with optional safety_check/title defaults."
 tags: [Harness, 模型网关, DeepSeek, Chatbot, 联网工具, 内容安全]
 updated_at: 2026-11-14
 status: draft

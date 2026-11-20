@@ -5,7 +5,7 @@ import type { Messages } from "../types";
 export default {
   "devdocs": {
     "title": "Documentación para desarrolladores",
-    "desc": "Puntos de entrada para desarrolladores desde el lado de dsh-ee: plugins de DSH, extensiones de dsh-ee, acceso de clientes, permisos y publicación. Cada página es una guía breve con enlaces oficiales; nunca se copia texto upstream.",
+    "desc": "Guías breves sobre plugins de DSH, extensiones de dsh-ee, acceso de clientes, permisos y publicación.",
     "allCategories": "Todas",
     "categories": {
       "start": "Empezar",
@@ -19,7 +19,7 @@ export default {
     "updated": "Actualizado {{date}}",
     "readMinutes": "Unos {{count}} min",
     "zhOnly": "Contenido en chino",
-    "disclaimer": "Estas páginas son guías del lado de dsh-ee y pueden cambiar con cada versión; los repositorios upstream y sus licencias son la fuente de verdad.",
+    "disclaimer": "Las guías pueden cambiar con cada versión; los repositorios upstream y sus licencias son la fuente de verdad.",
     "backToList": "Toda la documentación para desarrolladores",
     "backToTop": "Volver arriba",
     "goExamples": "Ver ejemplos",
@@ -27,7 +27,7 @@ export default {
     "notFoundHint": "Puede que el enlace haya cambiado; vuelve al índice de documentación para desarrolladores y elige otra página.",
     "toc": "En esta página",
     "anchor": "Ir a esta sección",
-    "searchPlaceholder": "Busca en títulos, resúmenes, etiquetas o texto, p. ej. «permisos», «código de dispositivo»…",
+    "searchPlaceholder": "Busca en la documentación, p. ej. «permisos», «código de dispositivo»…",
     "searchEmpty": "No hay documentos que coincidan",
     "clearSearch": "Limpiar búsqueda",
     "copyLink": "Copiar enlace",

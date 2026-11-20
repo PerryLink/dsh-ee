@@ -122,9 +122,9 @@ export default {
       tokenNamePlaceholder: "e.g. \"My laptop\"",
       tokenOnce: "The full token is shown only this once; the commands below already include it:",
       revokeConfirm: "After revoking \"{{name}}\", computers using it can no longer install from the company registry. Continue?",
-      scriptNpmrc: "Writes the registry, company scopes and your token into the .npmrc in DSH's profile directory (only DSH uses it; ~/.npmrc is left alone — set DSH_EE_GLOBAL_NPMRC=1 before running if you really want it global)",
+      scriptNpmrc: "Writes the registry, company scopes and your token into the .npmrc in DSH's profile directory (~/.npmrc is left alone; set DSH_EE_GLOBAL_NPMRC=1 first to make it global)",
       scriptIndex: "Reminds you to add the index source in DSH → Plugins → Discover:",
-      caDesc: "If dsh-ee uses a company-issued certificate, get the CA certificate from your administrator (save it as ~/.dsh-ee-ca.pem), then run:",
+      caDesc: "Get the CA certificate from your administrator, save it as ~/.dsh-ee-ca.pem, then run:",
     },
     publish: {
       cliDesc: "First create a \"publish\" token in the <link>setup guide</link> and put it in ~/.npmrc, then run this in the plugin directory:",

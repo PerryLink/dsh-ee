@@ -61,7 +61,6 @@ export default function Setup() {
       <Card className="mt-6 p-5 text-sm text-neutral-700">
         <h2 className="mb-2 text-neutral-900 text-[15px] leading-6 font-semibold">{t("setup.deviceLoginTitle")}</h2>
         <p>{t("setup.deviceLoginDesc")}</p>
-        <div className="mt-2 font-mono text-xs text-neutral-600">/ee-login · /ee-status</div>
       </Card>
 
       <div className="mt-6">

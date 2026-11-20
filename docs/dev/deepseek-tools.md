@@ -3,8 +3,8 @@ slug: deepseek-tools
 category: harness
 title: "DeepSeek 工具代理（Files / ASR / TTS / Search / Fetch / OCR）"
 title_en: "DeepSeek tool proxy: Files, ASR, TTS, Search, Fetch, OCR"
-summary: "用同一个企业 Bearer 令牌调用 DeepSeek 的文件、语音、搜索抓取与 OCR 工具，以及 Anthropic 兼容 Files：代理只把请求转发到配置的上游，媒体与识别文本不落盘、不进 token 统计。"
-summary_en: "Call DeepSeek Files, ASR, TTS, Search, Fetch and OCR plus the Anthropic-compatible Files API with the same enterprise Bearer token: the proxy only forwards to the configured upstream, never stores media or transcripts, and does not count these calls as tokens."
+summary: "同一个企业令牌调 DeepSeek 的文件、语音、搜索抓取与 OCR；只转发，不落盘、不计 token。"
+summary_en: "DeepSeek Files, ASR, TTS, Search, Fetch and OCR on the same company token: forwarded only, nothing stored, no tokens counted."
 tags: [Harness, 模型网关, DeepSeek, Files, ASR, TTS, Search, Fetch, OCR, Anthropic]
 updated_at: 2026-11-14
 status: draft

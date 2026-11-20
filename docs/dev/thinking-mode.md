@@ -3,8 +3,8 @@ slug: thinking-mode
 category: harness
 title: "思考模式：thinking / reasoning_effort / reasoning_content"
 title_en: "Thinking mode: thinking / reasoning_effort / reasoning_content"
-summary: "DeepSeek 思考模式在 dsh-ee 网关里是原样透传：开关、思考强度、响应 reasoning_content 与工具轮次的回传要求，以及 /v1/models 的能力声明。"
-summary_en: "Thinking mode through the dsh-ee gateway is pass-through: switches, reasoning effort, reasoning_content, the tool-turn pass-back rule, and capability discovery on /v1/models."
+summary: "思考模式原样透传：开关、强度、reasoning_content 回传与 /v1/models 能力声明。"
+summary_en: "Thinking mode is pass-through: switches, effort, reasoning_content pass-back and /v1/models capabilities."
 tags: [Harness, 思考模式, 模型网关, reasoning_content]
 updated_at: 2026-11-14
 status: draft

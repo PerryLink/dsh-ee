@@ -3,7 +3,7 @@ export default {
   devdocs: {
     // 列表与详情
     title: "开发文档",
-    desc: "dsh-ee 视角的开发入口：DSH 插件、dsh-ee 扩展、客户端接入、权限与发布。每篇只写导读与官方外链，不复制上游正文。",
+    desc: "DSH 插件、dsh-ee 扩展、客户端接入、权限与发布的开发导读。",
     allCategories: "全部",
     categories: {
       start: "开始",
@@ -17,7 +17,7 @@ export default {
     updated: "更新于 {{date}}",
     readMinutes: "约 {{count}} 分钟",
     zhOnly: "正文为中文",
-    disclaimer: "文档为 dsh-ee 视角的导读，会随版本调整；以上游仓库的原文与各自许可为准。",
+    disclaimer: "导读会随版本调整，以上游仓库原文与许可为准。",
     backToList: "全部开发文档",
     backToTop: "回到顶部",
     goExamples: "去看开发样例",
@@ -25,7 +25,7 @@ export default {
     notFoundHint: "链接可能已经调整；回到开发文档目录重新选择。",
     toc: "本页目录",
     anchor: "跳转到这一节",
-    searchPlaceholder: "搜索标题、摘要、标签或正文，例如「权限」「设备码」…",
+    searchPlaceholder: "搜索文档，例如「权限」「设备码」…",
     searchEmpty: "没有匹配的文档",
     clearSearch: "清除搜索",
     copyLink: "复制链接",
