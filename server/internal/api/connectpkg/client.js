@@ -32,6 +32,11 @@ var import_react6 = require("react");
 
 // src/i18n/zh.ts
 var zh = {
+  feishuChat: {
+    prompt: "以下是你本人从飞书发来的消息（消息 id={{id}}）。请完成其中的工作，然后使用 ee_feishu 工具将最终答案发回飞书：action=reply，id={{id}}，text=你的答案。答案请使用简洁的普通 Markdown。\n\n飞书消息：\n{{text}}",
+    handled: "已在电脑上的 DSH 中处理，请打开 DSH 查看详情。",
+    failed: "无法在电脑上的 DSH 中处理这条消息，请打开 DSH 检查后重试。"
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "登录",
@@ -586,6 +591,11 @@ var zh_default = zh;
 
 // src/i18n/en.ts
 var en = {
+  feishuChat: {
+    prompt: "This message came from you via Feishu (message id={{id}}). Do the requested work, then send the final answer back to Feishu with the ee_feishu tool: action=reply, id={{id}}, text=your answer. Use concise, plain Markdown.\n\nFeishu message:\n{{text}}",
+    handled: "Handled in DSH on your computer. Open DSH for details.",
+    failed: "Could not handle this message in DSH on your computer. Open DSH to check and try again."
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "Log in",
@@ -1140,6 +1150,11 @@ var en_default = en;
 
 // src/i18n/es.ts
 var es = {
+  feishuChat: {
+    prompt: "Este mensaje lo enviaste tú desde Feishu (id={{id}}). Realiza el trabajo y envía la respuesta final a Feishu con la herramienta ee_feishu: action=reply, id={{id}}, text=tu respuesta. Usa Markdown sencillo y conciso.\n\nMensaje de Feishu:\n{{text}}",
+    handled: "Procesado en DSH en tu ordenador. Abre DSH para ver los detalles.",
+    failed: "No se pudo procesar este mensaje en DSH en tu ordenador. Abre DSH para revisarlo e inténtalo de nuevo."
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "Iniciar sesión",
@@ -1694,6 +1709,11 @@ var es_default = es;
 
 // src/i18n/pt.ts
 var pt = {
+  feishuChat: {
+    prompt: "Esta mensagem foi enviada por você pelo Feishu (id={{id}}). Faça o trabalho e envie a resposta final ao Feishu com a ferramenta ee_feishu: action=reply, id={{id}}, text=sua resposta. Use Markdown simples e conciso.\n\nMensagem do Feishu:\n{{text}}",
+    handled: "Processado no DSH do seu computador. Abra o DSH para ver os detalhes.",
+    failed: "Não foi possível processar esta mensagem no DSH do seu computador. Abra o DSH para verificar e tente novamente."
+  },
   // Palavras compartilhadas por vários módulos (títulos de view, botões, estado vazio); textos de página ficam no namespace próprio
   common: {
     login: "Entrar",
@@ -2248,6 +2268,11 @@ var pt_default = pt;
 
 // src/i18n/hi.ts
 var hi = {
+  feishuChat: {
+    prompt: "यह संदेश आपने Feishu से भेजा है (id={{id}})। अनुरोधित काम करें, फिर ee_feishu टूल से अंतिम जवाब Feishu पर भेजें: action=reply, id={{id}}, text=आपका जवाब। संक्षिप्त, साधारण Markdown इस्तेमाल करें।\n\nFeishu संदेश:\n{{text}}",
+    handled: "आपके कंप्यूटर के DSH में काम पूरा किया गया। विवरण के लिए DSH खोलें।",
+    failed: "आपके कंप्यूटर के DSH में यह संदेश संभाला नहीं जा सका। DSH खोलकर जाँचें और फिर कोशिश करें।"
+  },
   // words shared by several modules (view titles / buttons / empty states)
   common: {
     login: "साइन इन करें",

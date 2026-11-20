@@ -71,14 +71,18 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	notice := ""
 	userID := int64(0)
+	lang := s.orgLanguage(ctx)
+	if u != nil {
+		lang = s.userLanguage(ctx, u)
+	}
 	if err != nil && !notFound(err) {
 		s.log.Warn("读取飞书聊天用户失败", "err", err)
 		return
 	}
 	if u == nil || u.Disabled || u.AccountType != store.AccountHuman {
-		notice = "请先使用飞书登录 dsh-ee：" + s.publicBase(r)
+		notice = feishu.Text(lang, feishu.MsgChatLogin, map[string]string{"url": s.publicBase(r)})
 	} else if msg.MessageType != "text" || json.Unmarshal([]byte(msg.Content), &content) != nil || strings.TrimSpace(content.Text) == "" {
-		notice = "只支持文字消息"
+		notice = feishu.Text(lang, feishu.MsgChatTextOnly, nil)
 	} else {
 		userID = u.ID
 	}
@@ -94,7 +98,7 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 		online, _ := s.chatPresence(userID, false, true)
 		s.auditAs(r, u, "feishu_chat.received", strconv.FormatInt(userID, 10), nil)
 		if !online {
-			notice = "你的 DSH 当前不在线。请在电脑上打开 DSH，消息会在连接后处理。"
+			notice = feishu.Text(lang, feishu.MsgChatOffline, nil)
 		}
 	}
 	if notice != "" {

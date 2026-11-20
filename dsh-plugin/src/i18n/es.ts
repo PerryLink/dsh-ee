@@ -12,6 +12,11 @@ import type zh from "./zh.js";
 import type { DeepPartial, Messages } from "./types.js";
 
 const es: DeepPartial<Messages<typeof zh>> = {
+  feishuChat: {
+    prompt: "Este mensaje lo enviaste tú desde Feishu (id={{id}}). Realiza el trabajo y envía la respuesta final a Feishu con la herramienta ee_feishu: action=reply, id={{id}}, text=tu respuesta. Usa Markdown sencillo y conciso.\n\nMensaje de Feishu:\n{{text}}",
+    handled: "Procesado en DSH en tu ordenador. Abre DSH para ver los detalles.",
+    failed: "No se pudo procesar este mensaje en DSH en tu ordenador. Abre DSH para revisarlo e inténtalo de nuevo.",
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "Iniciar sesión",

@@ -54,6 +54,11 @@ import path from "node:path";
 
 // src/i18n/zh.ts
 var zh = {
+  feishuChat: {
+    prompt: "以下是你本人从飞书发来的消息（消息 id={{id}}）。请完成其中的工作，然后使用 ee_feishu 工具将最终答案发回飞书：action=reply，id={{id}}，text=你的答案。答案请使用简洁的普通 Markdown。\n\n飞书消息：\n{{text}}",
+    handled: "已在电脑上的 DSH 中处理，请打开 DSH 查看详情。",
+    failed: "无法在电脑上的 DSH 中处理这条消息，请打开 DSH 检查后重试。"
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "登录",
@@ -608,6 +613,11 @@ var zh_default = zh;
 
 // src/i18n/en.ts
 var en = {
+  feishuChat: {
+    prompt: "This message came from you via Feishu (message id={{id}}). Do the requested work, then send the final answer back to Feishu with the ee_feishu tool: action=reply, id={{id}}, text=your answer. Use concise, plain Markdown.\n\nFeishu message:\n{{text}}",
+    handled: "Handled in DSH on your computer. Open DSH for details.",
+    failed: "Could not handle this message in DSH on your computer. Open DSH to check and try again."
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "Log in",
@@ -1162,6 +1172,11 @@ var en_default = en;
 
 // src/i18n/es.ts
 var es = {
+  feishuChat: {
+    prompt: "Este mensaje lo enviaste tú desde Feishu (id={{id}}). Realiza el trabajo y envía la respuesta final a Feishu con la herramienta ee_feishu: action=reply, id={{id}}, text=tu respuesta. Usa Markdown sencillo y conciso.\n\nMensaje de Feishu:\n{{text}}",
+    handled: "Procesado en DSH en tu ordenador. Abre DSH para ver los detalles.",
+    failed: "No se pudo procesar este mensaje en DSH en tu ordenador. Abre DSH para revisarlo e inténtalo de nuevo."
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "Iniciar sesión",
@@ -1716,6 +1731,11 @@ var es_default = es;
 
 // src/i18n/pt.ts
 var pt = {
+  feishuChat: {
+    prompt: "Esta mensagem foi enviada por você pelo Feishu (id={{id}}). Faça o trabalho e envie a resposta final ao Feishu com a ferramenta ee_feishu: action=reply, id={{id}}, text=sua resposta. Use Markdown simples e conciso.\n\nMensagem do Feishu:\n{{text}}",
+    handled: "Processado no DSH do seu computador. Abra o DSH para ver os detalhes.",
+    failed: "Não foi possível processar esta mensagem no DSH do seu computador. Abra o DSH para verificar e tente novamente."
+  },
   // Palavras compartilhadas por vários módulos (títulos de view, botões, estado vazio); textos de página ficam no namespace próprio
   common: {
     login: "Entrar",
@@ -2270,6 +2290,11 @@ var pt_default = pt;
 
 // src/i18n/hi.ts
 var hi = {
+  feishuChat: {
+    prompt: "यह संदेश आपने Feishu से भेजा है (id={{id}})। अनुरोधित काम करें, फिर ee_feishu टूल से अंतिम जवाब Feishu पर भेजें: action=reply, id={{id}}, text=आपका जवाब। संक्षिप्त, साधारण Markdown इस्तेमाल करें।\n\nFeishu संदेश:\n{{text}}",
+    handled: "आपके कंप्यूटर के DSH में काम पूरा किया गया। विवरण के लिए DSH खोलें।",
+    failed: "आपके कंप्यूटर के DSH में यह संदेश संभाला नहीं जा सका। DSH खोलकर जाँचें और फिर कोशिश करें।"
+  },
   // words shared by several modules (view titles / buttons / empty states)
   common: {
     login: "साइन इन करें",
@@ -3113,7 +3138,7 @@ var HttpClient = class {
   constructor(tokens) {
     this.tokens = tokens;
   }
-  async fetch(path9, init = {}, timeoutMs = 3e4) {
+  async fetch(path10, init = {}, timeoutMs = 3e4) {
     const current = await this.tokens.resolve();
     const headers = new Headers(init.headers);
     if (current?.value) headers.set("Authorization", `Bearer ${current.value}`);
@@ -3122,17 +3147,317 @@ var HttpClient = class {
     if (!headers.has("X-DshEE-Host")) headers.set("X-DshEE-Host", dshHost());
     const timeout = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : void 0;
     const signal = init.signal && timeout ? AbortSignal.any([init.signal, timeout]) : timeout ?? init.signal ?? void 0;
-    const response = await fetch(`${config.base}${path9}`, { ...init, headers, signal });
+    const response = await fetch(`${config.base}${path10}`, { ...init, headers, signal });
     if (response.status === 401 && current?.value) {
       const body = await response.clone().json().catch(() => null);
       if (body?.code?.startsWith("token_")) await this.tokens.invalidate(current.value);
     }
     return response;
   }
-  async json(path9, init) {
-    const response = await this.fetch(path9, init);
+  async json(path10, init) {
+    const response = await this.fetch(path10, init);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
+  }
+};
+
+// src/feishu-chat.ts
+import fs2 from "node:fs";
+import path3 from "node:path";
+import { createHash } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+
+// src/host-session.ts
+function currentSessionOf(snapshot) {
+  if (typeof snapshot?.current === "string") return snapshot.current;
+  const rows = Object.values(snapshot?.byId ?? {});
+  return rows.find((row) => (row?.retainedBy?.mainView ?? 0) > 0)?.id ?? "";
+}
+function currentWorkspaceId(ctx) {
+  const items = ctx?.workspaces?.list?.getSnapshot?.()?.items;
+  if (!Array.isArray(items) || items.length === 0) return void 0;
+  const snapshot = ctx.sessions?.list?.getSnapshot?.();
+  const id = currentSessionOf(snapshot);
+  const cwd = snapshot?.byId?.[id]?.cwd;
+  const hit = items.find((w) => id && Array.isArray(w?.sessionIds) && w.sessionIds.includes(id)) ?? items.find((w) => cwd && w?.path === cwd) ?? items[0];
+  return typeof hit?.workspaceId === "string" && hit.workspaceId ? hit.workspaceId : void 0;
+}
+async function createSession(ctx) {
+  let workspaceId = currentWorkspaceId(ctx);
+  if (!workspaceId) {
+    let workspace;
+    if (typeof ctx?.workspaces?.initializeDefault === "function") {
+      workspace = await ctx.workspaces.initializeDefault();
+    } else if (typeof ctx?.workspaces?.create === "function") {
+      const snapshot = ctx.sessions?.list?.getSnapshot?.();
+      const id = currentSessionOf(snapshot);
+      const cwd = snapshot?.byId?.[id]?.cwd;
+      if (!cwd) throw new Error(t("hostSession.noCwd"));
+      workspace = await ctx.workspaces.create({ path: cwd });
+    } else {
+      throw new Error(t("hostSession.createWorkspaceUnsupported"));
+    }
+    workspaceId = typeof workspace?.workspaceId === "string" && workspace.workspaceId ? workspace.workspaceId : void 0;
+  }
+  if (!workspaceId) throw new Error(t("hostSession.noWorkspace"));
+  const ui = typeof ctx?.get === "function" ? ctx.get("uiWorkspace") : void 0;
+  if (typeof ui?.connectWorkspace === "function") return ui.connectWorkspace(workspaceId);
+  if (typeof ctx?.sessions?.create !== "function") throw new Error(t("hostSession.createSessionUnsupported"));
+  return ctx.sessions.create({ workspaceId });
+}
+function checkSendResult(result) {
+  if (result?.kind === "error" || result?.ok === false) {
+    throw new Error(result.text || result.error?.message || result.error?.code || t("hostSession.rejected"));
+  }
+}
+async function sendToSession(ctx, id, text) {
+  const sessions = ctx?.sessions;
+  const send = async (session2) => {
+    if (session2 && typeof ctx?.conversation?.sendSession === "function") {
+      checkSendResult(await ctx.conversation.sendSession(session2, text, [], "queue"));
+      return;
+    }
+    if (session2 && typeof session2.prompt === "function") {
+      checkSendResult(await session2.prompt([{ type: "text", text }], "queue"));
+      return;
+    }
+    throw new Error(t("hostSession.sendUnsupported"));
+  };
+  if (typeof sessions?.using === "function") {
+    await sessions.using(id, { source: "dshEEApps" }, async (ref) => {
+      const binding = await ref.ready;
+      await send(binding.session);
+    });
+    return;
+  }
+  let session;
+  for (let i = 0; i < 10; i++) {
+    session = sessions?.binding?.(id)?.session;
+    if (session) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  await send(session);
+}
+
+// src/session-status.ts
+function createSessionSnapshotAdapter() {
+  const previousRunning = /* @__PURE__ */ new Map();
+  const stopped = /* @__PURE__ */ new Set();
+  return (snapshot, statusSource) => {
+    if (!snapshot || typeof snapshot.current === "string") return snapshot;
+    const statuses = statusSource?.getSnapshot?.();
+    const byId = {};
+    const subagentsByParent = { ...snapshot.subagentsByParent };
+    for (const [id, row] of Object.entries(snapshot.byId ?? {})) {
+      const status = statuses?.get?.(id);
+      const running = status?.running ?? row.running;
+      if (running === true) stopped.delete(id);
+      else if (running === false && previousRunning.get(id) === true) stopped.add(id);
+      if (typeof running === "boolean") previousRunning.set(id, running);
+      byId[id] = {
+        ...row,
+        running,
+        pendingInteraction: status ? status.pendingInteraction : row.pendingInteraction,
+        completed: running !== true && (stopped.has(id) || status?.completionUnread === true || row.completed === true)
+      };
+      const children = snapshot.projectionsBySession?.[id]?.values?.subagentCatalog ?? row.projectionValues?.subagentCatalog;
+      if (Array.isArray(children)) subagentsByParent[id] = children;
+    }
+    if (snapshot.phase === "ready") {
+      for (const id of previousRunning.keys()) if (!byId[id]) {
+        previousRunning.delete(id);
+        stopped.delete(id);
+      }
+    }
+    return { ...snapshot, byId, subagentsByParent };
+  };
+}
+
+// src/feishu-chat.ts
+function abortable(work, signal) {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    work().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+var FeishuChatRelay = class {
+  constructor(ctx, config, tokens, http, options = {}) {
+    this.ctx = ctx;
+    this.config = config;
+    this.tokens = tokens;
+    this.http = http;
+    this.options = options;
+    this.file = options.file ?? path3.join(dshHome(), "dsh-ee", "feishu-chat.json");
+    this.delay = options.delay ?? ((ms, signal) => sleep(ms, void 0, { signal, ref: false }));
+    ctx.on("tools/pre-execute", (exec, next) => {
+      const turn = this.active;
+      if (turn && !this.controller?.signal.aborted && exec.name === `mcp__${config.serverName}__ee_feishu` && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id)) {
+        turn.replied = true;
+      }
+      return next();
+    });
+  }
+  controller;
+  loop;
+  active;
+  file;
+  delay;
+  start() {
+    if (this.loop) return;
+    this.controller = new AbortController();
+    this.loop = this.run(this.controller.signal).catch(() => void 0).finally(() => {
+      this.loop = void 0;
+    });
+  }
+  async stop() {
+    this.controller?.abort();
+    this.active = void 0;
+    await this.loop;
+  }
+  async run(signal) {
+    while (!signal.aborted) {
+      const token = await this.tokens.resolve().catch(() => void 0);
+      if (!token?.value) {
+        await this.delay(1e3, signal);
+        continue;
+      }
+      const auth = new AbortController();
+      const current = AbortSignal.any([signal, auth.signal]);
+      const base = this.config.base;
+      let checking = false;
+      const watch = setInterval(async () => {
+        if (checking) return;
+        checking = true;
+        try {
+          if ((await this.tokens.resolve())?.value !== token.value || this.config.base !== base) auth.abort();
+        } catch {
+          auth.abort();
+        } finally {
+          checking = false;
+        }
+      }, this.options.intervalMs ?? 1e3);
+      watch.unref();
+      try {
+        const scope = createHash("sha256").update(base + "\n" + token.value).digest("hex");
+        await this.poll(scope, current);
+      } catch {
+        if (!current.aborted) await this.delay(1e3, signal);
+      } finally {
+        clearInterval(watch);
+        this.active = void 0;
+      }
+    }
+  }
+  async poll(scope, signal) {
+    let backoff = 1e3;
+    while (!signal.aborted) {
+      try {
+        const response = await this.http.fetch("/api/me/feishu-chat/next?wait=25", { signal });
+        if (response.status === 204) {
+          backoff = 1e3;
+          continue;
+        }
+        if (!response.ok) {
+          await this.delay(response.status === 404 ? 6e4 : backoff, signal);
+          backoff = Math.min(backoff * 2, 6e4);
+          continue;
+        }
+        const message = await response.json();
+        await this.assertScope(scope);
+        if (!Number.isSafeInteger(message.id) || message.id <= 0 || typeof message.text !== "string") throw new Error("Invalid Feishu message");
+        backoff = 1e3;
+        await this.deliver(scope, message, signal);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        await this.delay(backoff, signal);
+        backoff = Math.min(backoff * 2, 6e4);
+      }
+    }
+  }
+  async assertScope(scope) {
+    const token = await this.tokens.resolve();
+    if (!token?.value || createHash("sha256").update(this.config.base + "\n" + token.value).digest("hex") !== scope) throw new Error("Feishu login changed");
+  }
+  async session(scope) {
+    let saved;
+    try {
+      saved = JSON.parse(fs2.readFileSync(this.file, "utf8"));
+    } catch {
+    }
+    const snapshot = this.ctx.sessions?.list?.getSnapshot?.();
+    if (saved?.scope === scope && typeof saved.sessionId === "string" && snapshot?.byId?.[saved.sessionId]) return saved.sessionId;
+    const sessionId = await createSession(this.ctx);
+    fs2.mkdirSync(path3.dirname(this.file), { recursive: true, mode: 448 });
+    const temp = `${this.file}.${process.pid}.tmp`;
+    try {
+      fs2.writeFileSync(temp, JSON.stringify({ scope, sessionId }), { mode: 384 });
+      fs2.renameSync(temp, this.file);
+    } finally {
+      fs2.rmSync(temp, { force: true });
+    }
+    return sessionId;
+  }
+  async deliver(scope, message, signal) {
+    let fallback = t("feishuChat.handled");
+    let dispose = () => {
+    };
+    try {
+      const sessionId = await abortable(() => this.session(scope), signal);
+      signal.throwIfAborted();
+      this.active = { id: message.id, sessionId, replied: false };
+      const adapt = createSessionSnapshotAdapter();
+      const statuses = this.ctx.get("uiSession")?.sessionStatus;
+      const rowNow = () => adapt(this.ctx.sessions?.list?.getSnapshot?.(), statuses)?.byId?.[sessionId];
+      while (rowNow()?.running === true) await this.delay(200, signal);
+      let running = false;
+      let complete = false;
+      let previouslyCompleted = !!rowNow()?.completed;
+      const check = () => {
+        const row = rowNow();
+        if (row?.running === true) running = true;
+        if (running && row?.running === false || row?.completed === true && !previouslyCompleted) complete = true;
+        previouslyCompleted = row?.completed === true;
+      };
+      const off = [this.ctx.sessions?.list?.subscribe?.(check), statuses?.subscribe?.(check)];
+      dispose = () => {
+        for (const fn of off) if (typeof fn === "function") fn();
+      };
+      check();
+      await this.assertScope(scope);
+      await abortable(() => sendToSession(this.ctx, sessionId, t("feishuChat.prompt", { id: message.id, text: message.text })), signal);
+      const deadline = Date.now() + 6e4;
+      while (!complete) {
+        signal.throwIfAborted();
+        check();
+        if (!running && Date.now() > deadline) throw new Error("Feishu session did not start");
+        if (!complete) await this.delay(200, signal);
+      }
+    } catch (error) {
+      if (signal.aborted) throw error;
+      fallback = t("feishuChat.failed");
+    } finally {
+      dispose();
+    }
+    try {
+      signal.throwIfAborted();
+      await this.assertScope(scope);
+      if (!this.active?.replied) {
+        const response = await this.http.fetch(`/api/me/feishu-chat/${message.id}/reply`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: fallback }),
+          signal
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      }
+    } finally {
+      this.active = void 0;
+    }
   }
 };
 
@@ -3441,9 +3766,9 @@ function appWebUrl(base, app) {
 }
 
 // src/write-log.ts
-import fs2 from "node:fs";
-import path3 from "node:path";
-import { createHash } from "node:crypto";
+import fs3 from "node:fs";
+import path4 from "node:path";
+import { createHash as createHash2 } from "node:crypto";
 var MAX_PER_SESSION = 200;
 function writeOf(tool, args) {
   if (!tool || tool.annotations?.readOnlyHint === true) return void 0;
@@ -3476,18 +3801,18 @@ function writesBetween(records, from, to) {
 }
 var safeName = /^[A-Za-z0-9_-]{1,80}$/;
 var WriteLog = class {
-  constructor(dir = path3.join(dshHome(), "dsh-ee", "writes")) {
+  constructor(dir = path4.join(dshHome(), "dsh-ee", "writes")) {
     this.dir = dir;
   }
   sequence = 0;
   file(sessionId) {
     if (typeof sessionId !== "string" || !sessionId) throw new Error(t("writeLog.invalidSessionId"));
-    const name2 = safeName.test(sessionId) ? sessionId : createHash("sha256").update(sessionId).digest("hex").slice(0, 32);
-    return path3.join(this.dir, `${name2}.json`);
+    const name2 = safeName.test(sessionId) ? sessionId : createHash2("sha256").update(sessionId).digest("hex").slice(0, 32);
+    return path4.join(this.dir, `${name2}.json`);
   }
   read(sessionId) {
     try {
-      const value = JSON.parse(fs2.readFileSync(this.file(sessionId), "utf8"));
+      const value = JSON.parse(fs3.readFileSync(this.file(sessionId), "utf8"));
       if (value?.sessionId !== sessionId || !Array.isArray(value?.writes)) return [];
       return value.writes;
     } catch {
@@ -3497,13 +3822,13 @@ var WriteLog = class {
   record(sessionId, item) {
     const writes = [...this.read(sessionId), item].slice(-MAX_PER_SESSION);
     const file = this.file(sessionId);
-    fs2.mkdirSync(this.dir, { recursive: true, mode: 448 });
+    fs3.mkdirSync(this.dir, { recursive: true, mode: 448 });
     const temp = `${file}.${process.pid}.${++this.sequence}.tmp`;
     try {
-      fs2.writeFileSync(temp, JSON.stringify({ sessionId, writes }) + "\n", { mode: 384 });
-      fs2.renameSync(temp, file);
+      fs3.writeFileSync(temp, JSON.stringify({ sessionId, writes }) + "\n", { mode: 384 });
+      fs3.renameSync(temp, file);
     } finally {
-      if (fs2.existsSync(temp)) fs2.unlinkSync(temp);
+      if (fs3.existsSync(temp)) fs3.unlinkSync(temp);
     }
   }
   between(sessionId, from, to) {
@@ -6103,10 +6428,10 @@ async function readEnterpriseOverview(config, http, bridge) {
 }
 
 // src/server-settings.ts
-import fs3 from "node:fs";
-import path4 from "node:path";
+import fs4 from "node:fs";
+import path5 from "node:path";
 function serverSettingsPath() {
-  return path4.join(dshHome(), "dsh-ee", "server.json");
+  return path5.join(dshHome(), "dsh-ee", "server.json");
 }
 function normalizeBase(input) {
   const raw = String(input ?? "").trim().replace(/\/+$/, "");
@@ -6120,7 +6445,7 @@ function normalizeBase(input) {
 }
 function readBaseOverride() {
   try {
-    const data = JSON.parse(fs3.readFileSync(serverSettingsPath(), "utf8"));
+    const data = JSON.parse(fs4.readFileSync(serverSettingsPath(), "utf8"));
     return normalizeBase(data.base);
   } catch {
     return void 0;
@@ -6129,11 +6454,11 @@ function readBaseOverride() {
 function writeBaseOverride(base) {
   const file = serverSettingsPath();
   if (!base) {
-    fs3.rmSync(file, { force: true });
+    fs4.rmSync(file, { force: true });
     return;
   }
-  fs3.mkdirSync(path4.dirname(file), { recursive: true, mode: 448 });
-  fs3.writeFileSync(file, `${JSON.stringify({ base }, null, 2)}
+  fs4.mkdirSync(path5.dirname(file), { recursive: true, mode: 448 });
+  fs4.writeFileSync(file, `${JSON.stringify({ base }, null, 2)}
 `, { mode: 384 });
 }
 function reason(error) {
@@ -6251,9 +6576,9 @@ async function updateConnect(ctx, config, http) {
 }
 
 // src/upload.ts
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 import os3 from "node:os";
-import path5 from "node:path";
+import path6 from "node:path";
 var MAX_BYTES = 100 * 1024 * 1024;
 function fail(text) {
   return { content: [{ type: "text", text }], isError: true };
@@ -6261,11 +6586,11 @@ function fail(text) {
 async function uploadPackage(http, args) {
   const raw = String(args.path ?? "").trim();
   if (!raw) return fail(t("upload.missingPath"));
-  const file = path5.resolve(raw.startsWith("~") ? path5.join(os3.homedir(), raw.slice(1)) : raw);
+  const file = path6.resolve(raw.startsWith("~") ? path6.join(os3.homedir(), raw.slice(1)) : raw);
   if (!/\.(tgz|tar\.gz)$/i.test(file)) return fail(t("upload.notTarball"));
   let stat;
   try {
-    stat = fs4.statSync(file);
+    stat = fs5.statSync(file);
   } catch {
     return fail(t("upload.fileNotFound", { file }));
   }
@@ -6276,7 +6601,7 @@ async function uploadPackage(http, args) {
     response = await http.fetch("/api/agent/packages", {
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
-      body: fs4.readFileSync(file)
+      body: fs5.readFileSync(file)
     }, 0);
   } catch (error) {
     if (error?.name === "TimeoutError") return fail(t("upload.timeout"));
@@ -6288,10 +6613,10 @@ async function uploadPackage(http, args) {
 }
 
 // src/app-bindings.ts
-import fs5 from "node:fs";
-import path6 from "node:path";
+import fs6 from "node:fs";
+import path7 from "node:path";
 var AppBindings = class {
-  constructor(file = path6.join(dshHome(), "dsh-ee", "apps.json")) {
+  constructor(file = path7.join(dshHome(), "dsh-ee", "apps.json")) {
     this.file = file;
   }
   sequence = 0;
@@ -6319,9 +6644,9 @@ var AppBindings = class {
   }
   read() {
     this.warningMessage = "";
-    if (!fs5.existsSync(this.file)) return { version: 1, bindings: {} };
+    if (!fs6.existsSync(this.file)) return { version: 1, bindings: {} };
     try {
-      const value = JSON.parse(fs5.readFileSync(this.file, "utf8"));
+      const value = JSON.parse(fs6.readFileSync(this.file, "utf8"));
       if (value?.version !== 1 || !value.bindings || typeof value.bindings !== "object" || Array.isArray(value.bindings)) throw new Error("invalid");
       const bindings = {};
       for (const [name2, binding] of Object.entries(value.bindings)) {
@@ -6336,15 +6661,15 @@ var AppBindings = class {
     }
   }
   write(bindings) {
-    fs5.mkdirSync(path6.dirname(this.file), { recursive: true, mode: 448 });
+    fs6.mkdirSync(path7.dirname(this.file), { recursive: true, mode: 448 });
     const temp = `${this.file}.${process.pid}.${++this.sequence}.tmp`;
     try {
-      fs5.writeFileSync(temp, JSON.stringify({ version: 1, bindings }, null, 2) + "\n", { mode: 384 });
-      fs5.renameSync(temp, this.file);
-      fs5.chmodSync(this.file, 384);
+      fs6.writeFileSync(temp, JSON.stringify({ version: 1, bindings }, null, 2) + "\n", { mode: 384 });
+      fs6.renameSync(temp, this.file);
+      fs6.chmodSync(this.file, 384);
       this.warningMessage = "";
     } finally {
-      if (fs5.existsSync(temp)) fs5.unlinkSync(temp);
+      if (fs6.existsSync(temp)) fs6.unlinkSync(temp);
     }
   }
 };
@@ -6389,9 +6714,9 @@ async function exchangeWebLink(base, http, url) {
 }
 
 // src/workbench-host.ts
-import fs6 from "node:fs";
-import path7 from "node:path";
-import { createHash as createHash2 } from "node:crypto";
+import fs7 from "node:fs";
+import path8 from "node:path";
+import { createHash as createHash3 } from "node:crypto";
 
 // src/workbench.ts
 var checklistKey = (pane, widget) => `${pane}:${widget}`;
@@ -6559,21 +6884,21 @@ var safeName2 = /^[A-Za-z0-9_-]{1,80}$/;
 function sessionFile(dir, app, sessionId) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(app) || app.length > 48) throw new Error(t("workbenchHost.invalidAppName"));
   if (typeof sessionId !== "string" || !sessionId) throw new Error(t("workbenchHost.invalidSessionId"));
-  const session = safeName2.test(sessionId) ? sessionId : createHash2("sha256").update(sessionId).digest("hex").slice(0, 32);
-  return path7.join(dir, `${app}--${session}.json`);
+  const session = safeName2.test(sessionId) ? sessionId : createHash3("sha256").update(sessionId).digest("hex").slice(0, 32);
+  return path8.join(dir, `${app}--${session}.json`);
 }
 function writeAtomic(dir, file, value, sequence) {
-  fs6.mkdirSync(dir, { recursive: true, mode: 448 });
+  fs7.mkdirSync(dir, { recursive: true, mode: 448 });
   const temp = `${file}.${process.pid}.${sequence}.tmp`;
   try {
-    fs6.writeFileSync(temp, JSON.stringify(value) + "\n", { mode: 384 });
-    fs6.renameSync(temp, file);
+    fs7.writeFileSync(temp, JSON.stringify(value) + "\n", { mode: 384 });
+    fs7.renameSync(temp, file);
   } finally {
-    if (fs6.existsSync(temp)) fs6.unlinkSync(temp);
+    if (fs7.existsSync(temp)) fs7.unlinkSync(temp);
   }
 }
 var BoardStore = class {
-  constructor(dir = path7.join(dshHome(), "dsh-ee", "boards")) {
+  constructor(dir = path8.join(dshHome(), "dsh-ee", "boards")) {
     this.dir = dir;
   }
   sequence = 0;
@@ -6582,7 +6907,7 @@ var BoardStore = class {
   }
   read(app, sessionId) {
     try {
-      const value = JSON.parse(fs6.readFileSync(this.file(app, sessionId), "utf8"));
+      const value = JSON.parse(fs7.readFileSync(this.file(app, sessionId), "utf8"));
       if (value?.app !== app || value?.sessionId !== sessionId || !Array.isArray(value?.blocks)) return void 0;
       return value;
     } catch {
@@ -6598,13 +6923,13 @@ var BoardStore = class {
 };
 var maxChecked = 100;
 var ChecklistStore = class {
-  constructor(dir = path7.join(dshHome(), "dsh-ee", "checklists")) {
+  constructor(dir = path8.join(dshHome(), "dsh-ee", "checklists")) {
     this.dir = dir;
   }
   sequence = 0;
   read(app, sessionId) {
     try {
-      const value = JSON.parse(fs6.readFileSync(sessionFile(this.dir, app, sessionId), "utf8"));
+      const value = JSON.parse(fs7.readFileSync(sessionFile(this.dir, app, sessionId), "utf8"));
       if (value?.app !== app || value?.sessionId !== sessionId || typeof value?.lists !== "object" || !value.lists) return void 0;
       return value;
     } catch {
@@ -6730,14 +7055,14 @@ function registerWorkbenchTool(ctx, deps) {
 }
 
 // src/local-mcp.ts
-import fs7 from "node:fs";
-import path8 from "node:path";
+import fs8 from "node:fs";
+import path9 from "node:path";
 var PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 var VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]*$/;
 var EXTENSION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,60}$/;
 var SERVER_NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
 function localMcpStorePath() {
-  return path8.join(dshHome(), "dsh-ee", "local-mcp.json");
+  return path9.join(dshHome(), "dsh-ee", "local-mcp.json");
 }
 function parsePackageSpec(raw) {
   const text = String(raw ?? "").trim();
@@ -6816,18 +7141,18 @@ function validExtension(value) {
 }
 function readLocalExtensions(file = localMcpStorePath()) {
   try {
-    const data = JSON.parse(fs7.readFileSync(file, "utf8"));
+    const data = JSON.parse(fs8.readFileSync(file, "utf8"));
     return Array.isArray(data.extensions) ? data.extensions.filter(validExtension) : [];
   } catch {
     return [];
   }
 }
 function writeLocalExtensions(extensions, file = localMcpStorePath()) {
-  fs7.mkdirSync(path8.dirname(file), { recursive: true, mode: 448 });
+  fs8.mkdirSync(path9.dirname(file), { recursive: true, mode: 448 });
   const tmp = `${file}.tmp`;
-  fs7.writeFileSync(tmp, `${JSON.stringify({ version: 1, extensions }, null, 2)}
+  fs8.writeFileSync(tmp, `${JSON.stringify({ version: 1, extensions }, null, 2)}
 `, { mode: 384 });
-  fs7.renameSync(tmp, file);
+  fs8.renameSync(tmp, file);
 }
 function parseLocalCommand(rawInput) {
   const tokens = String(rawInput ?? "").trim().split(/\s+/).filter(Boolean);
@@ -7092,6 +7417,7 @@ function apply(ctx, input) {
   });
   bridge.registerLocal("ee_plugins.upload", (args) => uploadPackage(http, args));
   registerApproval(ctx, bridge);
+  const feishuChat = new FeishuChatRelay(ctx, config, tokens, http);
   ctx.effect(async () => {
     await tokens.importPending().catch(() => void 0);
     const current = await tokens.resolve();
@@ -7184,8 +7510,10 @@ function apply(ctx, input) {
     });
     await skillsReady;
     await bridge.start();
+    feishuChat.start();
     await localMcp.start().catch(() => void 0);
     return () => {
+      void feishuChat.stop();
       localMcp.stop();
       disposeWorkbenchTool();
       bridge.stop();

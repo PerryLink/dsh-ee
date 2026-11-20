@@ -119,6 +119,25 @@ func TestFeishuBotChat(t *testing.T) {
 	notice("只支持文字消息")
 	post(event("first", "ou-chat-user", "text"), 200)
 	notice("当前不在线")
+	setFeishuTestOrgLanguage(t, admin, "es")
+	post(event("unknown-es", "ou-unknown", "text"), 200)
+	notice("Primero inicia sesión")
+	lang := "en"
+	if err := st.UpdateUser(ctx, u.ID, store.UserPatch{Language: &lang}); err != nil {
+		t.Fatal(err)
+	}
+	post(event("image-en", "ou-chat-user", "image"), 200)
+	notice("Only text messages")
+	post(event("offline-en", "ou-chat-user", "text"), 200)
+	notice("Your DSH is offline")
+	if _, err := st.DB().ExecContext(ctx, `UPDATE feishu_chat_messages SET status='expired' WHERE message_id='offline-en'`); err != nil {
+		t.Fatal(err)
+	}
+	lang = ""
+	if err := st.UpdateUser(ctx, u.ID, store.UserPatch{Language: &lang}); err != nil {
+		t.Fatal(err)
+	}
+	setFeishuTestOrgLanguage(t, admin, "zh")
 	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, other)
 	expect(t, "isolation", code, 204, body)
 	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, bearer)
