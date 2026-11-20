@@ -123,9 +123,9 @@ export default {
       "tokenNamePlaceholder": "p. ej. «Mi portátil»",
       "tokenOnce": "El token completo se muestra solo esta vez; el comando de abajo ya está rellenado automáticamente:",
       "revokeConfirm": "Al revocar «{{name}}», el equipo que lo usa no podrá instalar desde el origen de la empresa de inmediato. ¿Continuar?",
-      "scriptNpmrc": "Escribe el registry, el scope de la empresa y su token en el .npmrc del directorio de perfil de DSH (solo afecta a DSH, no modifica ~/.npmrc; si de verdad necesita que sea global, defina DSH_EE_GLOBAL_NPMRC=1 antes de ejecutar)",
+      "scriptNpmrc": "Escribe el registry, el scope de la empresa y su token en el .npmrc del directorio de perfil de DSH (sin tocar ~/.npmrc; defina antes DSH_EE_GLOBAL_NPMRC=1 para que sea global)",
       "scriptIndex": "Le indica que añada el origen del índice en DSH → página de plugins → Discover:",
-      "caDesc": "Si dsh-ee usa un certificado autofirmado de la empresa, pida el certificado de CA al administrador (guárdelo como ~/.dsh-ee-ca.pem) y ejecute:"
+      "caDesc": "Pida el certificado CA al administrador, guárdelo como ~/.dsh-ee-ca.pem y ejecute:"
     },
     "publish": {
       "cliDesc": "Genere primero un token «publicable» en la <link>guía de integración</link> y escríbalo en ~/.npmrc; después, en el directorio del plugin, ejecute:",

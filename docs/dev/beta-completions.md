@@ -3,8 +3,8 @@ slug: beta-completions
 category: harness
 title: "DeepSeek FIM / 前缀续写 beta 透传"
 title_en: "DeepSeek FIM / chat-prefix beta passthrough"
-summary: "dsh-ee 把 DeepSeek 的两个 beta 能力（FIM 补全、Chat Prefix 续写）挂到 /beta/* 透传：复用同一个员工令牌、模型权限、额度与限流，仅转发给一个 vendor=deepseek 的上游。"
-summary_en: "dsh-ee exposes DeepSeek's two beta endpoints (FIM completion and chat-prefix completion) under /beta/*: same employee token, model permission, quota and rate limit, forwarded to one vendor=deepseek upstream only."
+summary: "FIM 补全与 Chat Prefix 续写挂在 /beta/* 透传，沿用同一令牌、模型权限、额度与限流。"
+summary_en: "FIM and chat-prefix completion passed through under /beta/*, with the same token, model permission, quota and rate limit."
 tags: [Harness, 模型网关, DeepSeek, FIM, 流式]
 updated_at: 2026-11-14
 status: draft

@@ -3,8 +3,8 @@ slug: responses-api
 category: harness
 title: "OpenAI Responses API 兼容"
 title_en: "OpenAI Responses API compatibility"
-summary: "把 Codex / OpenAI Agents SDK 等 Responses 客户端接到 dsh-ee：POST /v1/responses 的请求映射、输出 item、SSE 事件、错误与 v0 边界。"
-summary_en: "Connect Responses-style clients (Codex, OpenAI Agents SDK) to dsh-ee: request mapping, output items, SSE events, errors and v0 limits of POST /v1/responses."
+summary: "Codex / OpenAI Agents SDK 接 POST /v1/responses：请求映射、输出、SSE、错误与 v0 边界。"
+summary_en: "Codex / OpenAI Agents SDK on POST /v1/responses: request mapping, output items, SSE, errors and v0 limits."
 tags: [Harness, Responses, Codex, 模型网关, 流式]
 updated_at: 2026-11-14
 status: draft

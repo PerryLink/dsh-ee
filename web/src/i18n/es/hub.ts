@@ -507,17 +507,17 @@ export default {
   },
   "setupConnect": {
     "title": "Conectar DSH",
-    "desc": "Un solo comando: escribe el origen npm y el token en el .npmrc propio de DSH (no modifica ~/.npmrc ni afecta a su npm local), inicia sesión e instala el plugin de integración {{pkg}}. Después, lo que active en el Centro de capacidades se sincroniza automáticamente.",
-    "notReady": "El administrador aún no ha publicado el plugin de integración de DSH; ejecute primero el script para escribir el origen npm y vuelva a ejecutarlo cuando se publique.",
+    "desc": "Un comando escribe el origen npm y el token en el .npmrc propio de DSH (sin tocar ~/.npmrc) e instala el plugin de integración {{pkg}}. Después, lo que active en el Centro de capacidades se sincroniza automáticamente.",
+    "notReady": "El plugin de integración aún no está publicado: ejecute el script ahora para configurar el origen npm y otra vez cuando se publique.",
     "ready": "El plugin de integración {{pkg}}@{{version}} está publicado",
-    "needs": "Requiere Node.js, pnpm y DSH instalados en el equipo (o npx disponible).",
+    "needs": "Requiere Node.js, pnpm y DSH (o npx).",
     "manual": "Integración manual",
     "manualEnv": "1. Escriba el token de integración en el .env de DSH (~/.dsh/.env de forma predeterminada):",
     "manualAdd": "2. Instale el plugin de integración:",
     "manualRestart": "3. Reinicie DSH (dsh web).",
-    "tokenNote": "El token de integración es el token de npm generado abajo; se usa a la vez para el origen npm, los modelos, las habilidades y los sistemas de la empresa.",
+    "tokenNote": "El token de integración es el token de instalación de arriba; también sirve para modelos, habilidades y sistemas de la empresa.",
     "tarballTitle": "¿Prefiere no usar la terminal?",
-    "tarballDesc": "En la página de plugins de DSH, pulse «Añadir plugin» y pegue la dirección de abajo para instalarlo; tras reiniciar DSH, escriba /ee-login en el chat para iniciar sesión y el plugin de integración configurará el origen npm de la empresa por sí solo."
+    "tarballDesc": "En la página de plugins de DSH, pulse «Añadir plugin» y pegue la dirección de abajo. Reinicie DSH y escriba /ee-login para iniciar sesión; el origen npm de la empresa se configura solo."
   },
   "reviewAssets": {
     "plugins": "Plugins",

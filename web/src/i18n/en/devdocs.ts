@@ -5,7 +5,7 @@ import type { Messages } from "../types";
 export default {
   devdocs: {
     title: "Developer docs",
-    desc: "Developer entry points from the dsh-ee side: DSH plugins, dsh-ee extensions, client access, permissions and publishing. Each page is a short guide with official links; upstream text is never copied.",
+    desc: "Short guides to DSH plugins, dsh-ee extensions, client access, permissions and publishing.",
     allCategories: "All",
     categories: {
       start: "Start",
@@ -19,7 +19,7 @@ export default {
     updated: "Updated {{date}}",
     readMinutes: "About {{count}} min",
     zhOnly: "Body in Chinese",
-    disclaimer: "These pages are dsh-ee-side guides and may change with each release; the upstream repositories and their licenses are the source of truth.",
+    disclaimer: "Guides may change between releases; the upstream repositories and their licenses are the source of truth.",
     backToList: "All developer docs",
     backToTop: "Back to top",
     goExamples: "Browse examples",
@@ -27,7 +27,7 @@ export default {
     notFoundHint: "The link may have changed; go back to the developer docs index and pick another page.",
     toc: "On this page",
     anchor: "Jump to this section",
-    searchPlaceholder: "Search titles, summaries, tags or body text, e.g. “permissions”, “device code”…",
+    searchPlaceholder: "Search docs, e.g. “permissions”, “device code”…",
     searchEmpty: "No matching documents",
     clearSearch: "Clear search",
     copyLink: "Copy link",

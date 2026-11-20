@@ -123,9 +123,9 @@ export default {
       tokenNamePlaceholder: "ex.: “Meu notebook”",
       tokenOnce: "O token completo é exibido apenas uma vez; os comandos abaixo já o incluem:",
       revokeConfirm: "Após revogar “{{name}}”, os computadores que o usam não poderão mais instalar do registry corporativo. Confirmar?",
-      scriptNpmrc: "Grava o registry, os escopos corporativos e seu token no .npmrc do diretório de perfil do DSH (apenas o DSH o usa; o ~/.npmrc não é alterado — defina DSH_EE_GLOBAL_NPMRC=1 antes de executar se você realmente quiser o efeito global)",
+      scriptNpmrc: "Grava o registry, os escopos corporativos e seu token no .npmrc do diretório de perfil do DSH (sem alterar o ~/.npmrc; defina DSH_EE_GLOBAL_NPMRC=1 antes para efeito global)",
       scriptIndex: "Lembra você de adicionar a fonte de índice em DSH → Plugins → Discover:",
-      caDesc: "Se o dsh-ee usa um certificado autoassinado da empresa, peça o certificado CA ao administrador (salve como ~/.dsh-ee-ca.pem) e execute:",
+      caDesc: "Peça o certificado CA ao administrador, salve como ~/.dsh-ee-ca.pem e execute:",
     },
     publish: {
       cliDesc: "Primeiro crie um token de publicação no <link>guia de integração</link> e coloque-o em ~/.npmrc; depois execute no diretório do plugin:",
