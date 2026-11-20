@@ -119,7 +119,7 @@ export default {
     publish: "Publish connect plugin",
     publishing: "Publishing…",
     agentTitle: "Let the agent in DSH finish the setup",
-    agentDesc: "Enter keys here, then send the prompt to DSH. Sign in and enable admin mode; each Agent change needs your confirmation.",
+    agentDesc: "Enter keys here, sign in to DSH, enable admin mode and send the prompt; confirm every change.",
     agentNeed: "Enter keys here first: {{steps}}",
     agentStart: "Create prompt",
     published: "Connect plugin {{version}} published",

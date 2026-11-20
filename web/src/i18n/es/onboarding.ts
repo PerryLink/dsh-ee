@@ -120,7 +120,7 @@ export default {
     "publish": "Publicar plugin de conexión",
     "publishing": "Publicando…",
     "agentTitle": "Deja que el agente de DSH termine la configuración",
-    "agentDesc": "Introduce las claves aquí y envía el mensaje a DSH. Inicia sesión y activa el modo administrador; debes confirmar cada cambio del agente.",
+    "agentDesc": "Introduce las claves aquí, entra en DSH, activa el modo administrador y envía el mensaje; confirma cada cambio.",
     "agentNeed": "Introduce primero las claves aquí: {{steps}}",
     "agentStart": "Crear prompt",
     "published": "Plugin de conexión {{version}} publicado",

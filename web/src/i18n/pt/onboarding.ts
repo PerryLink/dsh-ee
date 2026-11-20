@@ -120,7 +120,7 @@ export default {
     publish: "Publicar plugin de conexão",
     publishing: "Publicando…",
     agentTitle: "Deixe o Agent do DSH concluir a configuração",
-    agentDesc: "Informe as chaves aqui e envie o prompt ao DSH. Entre e ative o modo administrador; cada alteração do agente exige sua confirmação.",
+    agentDesc: "Informe as chaves aqui, entre no DSH, ative o modo administrador e envie o prompt; confirme cada alteração.",
     agentNeed: "Informe primeiro as chaves aqui: {{steps}}",
     agentStart: "Gerar prompt",
     published: "Plugin de conexão {{version}} publicado",

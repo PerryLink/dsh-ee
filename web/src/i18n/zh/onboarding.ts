@@ -116,7 +116,7 @@ export default {
     publish: "发布接入插件",
     publishing: "发布中…",
     agentTitle: "交给 DSH 里的 Agent 配完",
-    agentDesc: "先在网页填好密钥，再把提示词发给 DSH。登录并开启管理模式后，Agent 按清单配置，每次改动须你确认。",
+    agentDesc: "先在网页填密钥，再登录 DSH、开启管理模式并发送提示词；每次改动须确认。",
     agentNeed: "先在网页填写密钥：{{steps}}",
     agentStart: "生成提示词",
     published: "接入插件 {{version}} 已发布",
