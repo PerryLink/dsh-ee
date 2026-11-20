@@ -3,7 +3,18 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  llm: {
+    base_url_invalid: "बेस URL एक http(s) पता होना चाहिए, जैसे https://api.deepseek.com",
+    name_key_required: "नाम (अधिकतम 64 अक्षर) और API key ज़रूरी हैं।",
+    vendor_invalid: "वेंडर में केवल छोटे अक्षर, अंक और - हो सकते हैं।",
+    model_invalid: "अमान्य मॉडल नाम ({{model}})।",
+    name_exists: "यह नाम पहले से मौजूद है।",
+  },
   auth: {
+    init_done: "सेटअप पहले ही हो चुका है। कृपया साइन इन करें।",
+    init_locked: "बहुत बार गलत सेटअप कोड; यह कोड रद्द हो गया। सर्वर रीस्टार्ट करें और लॉग से नया कोड लें।",
+    init_bad_code: "गलत सेटअप कोड। सर्वर लॉग देखें।",
+    bad_username: "यूज़रनेम में केवल छोटे अक्षर, अंक और . _ - हों, 2 से 64 अक्षर।",
     login_required: "Please sign in first.",
     session_expired: "Your session has expired. Please sign in again.",
     bad_credentials: "Incorrect username or password.",
@@ -12,8 +23,8 @@ export default {
     forbidden: "You don't have permission to perform this action.",
     bad_old_password: "Your current password is incorrect.",
     password_managed_externally: "This account's password is managed by your company directory or SSO. Change it in your company's account system.",
-    weak_password: "Password must be at least {{min}} characters.",
-    password_too_long: "Password must be at most {{max}} bytes.",
+    weak_password: "पासवर्ड कम से कम {{min}} अक्षरों का होना चाहिए।",
+    password_too_long: "पासवर्ड {{max}} बाइट से ज़्यादा नहीं हो सकता।",
     too_many_attempts: "Too many failed attempts. Try again in {{minutes}} minutes.",
     ip_rate_limited: "Too many failed sign-in attempts. Try again later.",
   },

@@ -152,25 +152,25 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	base, ok := validBaseURL(req.BaseURL)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "base_url 必须是 http(s) 地址，例如 https://api.deepseek.com")
+		writeErrCode(w, http.StatusBadRequest, codeLLMBaseURLInvalid, nil, "base_url 必须是 http(s) 地址，例如 https://api.deepseek.com")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || len([]rune(req.Name)) > 64 || req.APIKey == "" {
-		writeErr(w, http.StatusBadRequest, "name（不超过 64 个字符）和 api_key 不能为空")
+		writeErrCode(w, http.StatusBadRequest, codeLLMNameKeyRequired, nil, "name（不超过 64 个字符）和 api_key 不能为空")
 		return
 	}
 	if req.Vendor == "" {
 		req.Vendor = "custom"
 	}
 	if !vendorRe.MatchString(req.Vendor) {
-		writeErr(w, http.StatusBadRequest, "vendor 只能包含小写字母、数字和 -")
+		writeErrCode(w, http.StatusBadRequest, codeLLMVendorInvalid, nil, "vendor 只能包含小写字母、数字和 -")
 		return
 	}
 	models := cleanModels(req.Models)
 	for _, m := range models {
 		if !modelNameRe.MatchString(m) {
-			writeErr(w, http.StatusBadRequest, "模型名不合法："+m)
+			writeErrCode(w, http.StatusBadRequest, codeLLMModelInvalid, map[string]any{"model": m}, "模型名不合法："+m)
 			return
 		}
 	}
@@ -191,7 +191,7 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.CreateProvider(r.Context(), p); err != nil {
 		if errors.Is(err, store.ErrDuplicate) {
-			writeErr(w, http.StatusConflict, "名称已存在")
+			writeErrCode(w, http.StatusConflict, codeLLMNameExists, nil, "名称已存在")
 			return
 		}
 		s.internalErr(w, r, err)
@@ -246,7 +246,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 	baseURLChanged := false
 	if req.Vendor != nil {
 		if !vendorRe.MatchString(*req.Vendor) {
-			writeErr(w, http.StatusBadRequest, "vendor 只能包含小写字母、数字和 -")
+			writeErrCode(w, http.StatusBadRequest, codeLLMVendorInvalid, nil, "vendor 只能包含小写字母、数字和 -")
 			return
 		}
 		p.Vendor = req.Vendor
@@ -625,8 +625,8 @@ func (s *Server) handleCreateModels(w http.ResponseWriter, r *http.Request) {
 		if m.Name == "" {
 			m.Name = m.UpstreamModel
 		}
-		if !modelNameRe.MatchString(m.UpstreamModel) || !modelNameRe.MatchString(m.Name) {
-			writeErr(w, http.StatusBadRequest, "模型名不合法："+m.UpstreamModel)
+		if bad, ok := firstInvalidModelName(m.UpstreamModel, m.Name); !ok {
+			writeErrCode(w, http.StatusBadRequest, codeLLMModelInvalid, map[string]any{"model": bad}, "模型名不合法："+bad)
 			return
 		}
 		if err := s.store.CreateModel(r.Context(), m); err != nil {
@@ -754,4 +754,14 @@ func (s *Server) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 	s.audit(r, auditModelChange, target, map[string]any{"op": "delete", "id": id})
 	s.kickConnect()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// firstInvalidModelName 返回第一个不合法的模型名；都合法时 ok 为 true。
+func firstInvalidModelName(names ...string) (bad string, ok bool) {
+	for _, n := range names {
+		if !modelNameRe.MatchString(n) {
+			return n, false
+		}
+	}
+	return "", true
 }

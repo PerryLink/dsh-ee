@@ -3,6 +3,86 @@ import type { Messages } from "../types";
 
 export default {
   onboarding: {
+    listSep: ", ",
+    steps: {
+      base_url: {
+        title: "Access URL",
+        hint: "The address employee computers use to reach dsh-ee; their DSH and npm connect back through it.",
+        detail: {
+          from_settings: "{{url}} (from system settings)",
+          from_flag: "{{url}} (from the DSH_EE_PUBLIC_URL startup setting)",
+        },
+      },
+      provider: {
+        title: "Model provider",
+        hint: "Connect a model provider. You need an upstream API key.",
+        hints: {
+          unhealthy: "Re-check the provider; if its API key is wrong, fix it under Model access.",
+        },
+        detail: {
+          enabled: "{{enabled}} enabled provider(s)",
+          unhealthy: "{{enabled}} enabled provider(s), {{unhealthy}} failing recent checks",
+        },
+      },
+      models: {
+        title: "Public models",
+        hint: "List the models employees can use under a provider.",
+      },
+      default_model: {
+        title: "Default model",
+        hint: "Pick one of the listed models as the employees' default.",
+        hints: {
+          not_listed: "Change the default to one of the listed models.",
+        },
+        detail: {
+          not_listed: "Default model {{model}} is not among the listed models",
+        },
+      },
+      quota: {
+        title: "Employee quota",
+        hint: "Give employees a monthly quota. New accounts start at 0 and can't call models.",
+        detail: {
+          has_quota: "{{ok}} account(s) have a quota",
+          has_quota_zero: "{{ok}} account(s) have a quota, {{zero}} still at 0 (new accounts can't call models)",
+          none_assigned: "{{humans}} employee account(s), none with a quota yet",
+        },
+      },
+      ldap: {
+        title: "LDAP / AD sign-in",
+        hint: "Optional. Connect your LDAP / AD so employees sign in with company accounts.",
+      },
+      roles: {
+        title: "Departments and roles",
+        hint: "Optional. Create departments and roles to grant access by department.",
+        detail: {
+          summary: "{{roles}} custom role(s), {{depts}} department(s)",
+        },
+      },
+      connections: {
+        title: "Company connections",
+        hint: "Optional. Connect company systems (needs upstream credentials) so employees can use them in DSH.",
+        detail: {
+          count: "{{count}} connection(s)",
+        },
+      },
+      demo: {
+        title: "Demo company",
+        detail: {
+          imported: "Demo scenario imported (demo company or small team): knowledge base, apps, experts, demo accounts and 30 days of usage data. You can clear it in one click before going live.",
+        },
+      },
+      connect: {
+        title: "DSH connect plugin",
+        hint: "Publish the DSH connect plugin for employees. Republish after changing the access URL or default model.",
+        hints: {
+          disabled: "Turn DSH connect back on in settings, then publish.",
+        },
+        detail: {
+          disabled: "DSH connect is turned off",
+          unpublished: "Not published yet",
+        },
+      },
+    },
     title: "First-time setup guide",
     desc: "Complete the required configuration in order. Finished steps are skipped automatically.",
     kicker: "WELCOME TO DSH-EE",

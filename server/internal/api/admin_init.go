@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -78,11 +79,11 @@ func (s *Server) handleInitAdmin(w http.ResponseWriter, r *http.Request) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if s.opts.InitCode == "" || st.done {
-		writeErr(w, http.StatusNotFound, "已经初始化过了，请直接登录")
+		writeErrCode(w, http.StatusNotFound, codeAuthInitDone, nil, "已经初始化过了，请直接登录")
 		return
 	}
 	if st.fails >= initCodeMaxFails {
-		writeErr(w, http.StatusTooManyRequests, "初始化码错误次数过多，已作废；请重启服务，从日志里拿新的初始化码")
+		writeErrCode(w, http.StatusTooManyRequests, codeAuthInitLocked, nil, "初始化码错误次数过多，已作废；请重启服务，从日志里拿新的初始化码")
 		return
 	}
 	n, err := s.store.CountUsers(r.Context())
@@ -92,26 +93,30 @@ func (s *Server) handleInitAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	if n > 0 {
 		st.done = true
-		writeErr(w, http.StatusNotFound, "已经初始化过了，请直接登录")
+		writeErrCode(w, http.StatusNotFound, codeAuthInitDone, nil, "已经初始化过了，请直接登录")
 		return
 	}
 	want := normalizeInitCode(s.opts.InitCode)
 	if subtle.ConstantTimeCompare([]byte(normalizeInitCode(req.Code)), []byte(want)) != 1 {
 		st.fails++
 		s.auditAs(r, nil, auditLoginFailed, "", map[string]any{"via": "init_admin"})
-		writeErr(w, http.StatusForbidden, "初始化码不对，请到服务端日志里查看")
+		writeErrCode(w, http.StatusForbidden, codeAuthInitBadCode, nil, "初始化码不对，请到服务端日志里查看")
 		return
 	}
 	username := strings.ToLower(strings.TrimSpace(req.Username))
 	if !usernameRe.MatchString(username) {
-		writeErr(w, http.StatusBadRequest, "用户名只能用小写字母、数字和 . _ -，2 到 64 个字符")
+		writeErrCode(w, http.StatusBadRequest, codeAuthBadUsername, nil, "用户名只能用小写字母、数字和 . _ -，2 到 64 个字符")
 		return
 	}
 	// 不跟随请求取消：建用户与授角色不在一个事务里，中途断开会留下没有角色的第一个用户，网页初始化也随之关闭。
 	u, err := createSuperAdmin(context.WithoutCancel(r.Context()), s.store, username, req.Password)
 	if err != nil {
-		if ve, ok := err.(validationError); ok {
-			writeErr(w, http.StatusBadRequest, string(ve))
+		switch {
+		case errors.Is(err, errWeakPassword):
+			writeErrCode(w, http.StatusBadRequest, codeAuthWeakPassword, map[string]any{"min": minPasswordLen}, string(errWeakPassword))
+			return
+		case errors.Is(err, errLongPassword):
+			writeErrCode(w, http.StatusBadRequest, codeAuthPasswordTooLong, map[string]any{"max": maxPasswordLen}, string(errLongPassword))
 			return
 		}
 		s.internalErr(w, r, err)

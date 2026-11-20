@@ -1,7 +1,23 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Bot, Check, CheckCircle2, ArrowRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { api, type Model, type Provider, type SetupStatus, type User } from "../lib/api";
+import i18n from "../i18n";
+import { api, type Model, type Provider, type SetupStatus, type SetupStep, type User } from "../lib/api";
+
+// 步骤文案按 id 走多语言；语言包里没有的回退服务端中文（Agent 读的也是那份）。
+const stepText = (step: SetupStep, part: string, params?: Record<string, string | number>) => {
+  const key = `onboarding.steps.${step.id}.${part}`;
+  return i18n.exists(key) ? (i18n.t(key as never, params as never) as unknown as string) : undefined;
+};
+const stepTitle = (step: SetupStep) => stepText(step, "title") ?? step.title;
+const stepDetail = (step: SetupStep) => (step.detail_key && stepText(step, `detail.${step.detail_key}`, step.detail_params)) || step.detail || "";
+const stepDesc = (step: SetupStep, demoDesc: string) => {
+  if (step.id === "demo" && !step.done) return demoDesc;
+  if (step.done) return stepDetail(step);
+  // 同一步在不同状态下下一步不同（比如供应商检测不通要重测而不是新建），按 detail_key 取对应提示
+  const hint = (step.detail_key && stepText(step, `hints.${step.detail_key}`)) || stepText(step, "hint") || step.how;
+  return [stepDetail(step), hint].filter(Boolean).join(" ");
+};
 import type { Settings } from "../lib/types";
 import { useAction, useApi } from "../lib/use-api";
 import { useStore } from "../lib/store";
@@ -98,7 +114,7 @@ function ConfigDialog({ step, onClose, onSaved, settings, providers, models, use
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{step.title}</DialogTitle>
+          <DialogTitle>{stepTitle(step)}</DialogTitle>
           <DialogDescription>{t("onboarding.dialogDesc")}</DialogDescription>
         </DialogHeader>
         <form id="onboarding-config" onSubmit={save} className="space-y-4">
@@ -255,12 +271,12 @@ export default function Onboarding({ status, reload }: { status: SetupStatus; re
               <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
                 <div>
                   <div className="flex flex-wrap items-center gap-2.5">
-                    <h2 className="text-lg font-semibold tracking-tight text-neutral-900">{step.title}</h2>
+                    <h2 className="text-lg font-semibold tracking-tight text-neutral-900">{stepTitle(step)}</h2>
                     {step.optional && <Badge>{t("onboarding.optional")}</Badge>}
                     {step.done && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">{t("onboarding.done")}</span>}
                     {current && <span className="text-xs font-semibold text-brand-600 dark:text-brand-300">{t("onboarding.next")}</span>}
                   </div>
-                  {(step.detail || step.how) && <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">{step.id === "demo" && !step.done ? t("demo.desc") : step.done ? step.detail : step.how || step.detail}</p>}
+                  {stepDesc(step, t("demo.desc")) && <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">{stepDesc(step, t("demo.desc"))}</p>}
                   {/* 没导入时入口在顶部的醒目卡片里；导入后这里给下一步和清除 */}
                   {step.id === "demo" && step.done && !demoHero && <DemoImportStep done onImported={reload} />}
                 </div>
@@ -333,7 +349,7 @@ function AgentSetup({ status, reload }: { status: SetupStatus; reload: () => voi
             {t("onboarding.agentTitle")}
           </div>
           <p className="mt-2 text-sm leading-6 text-neutral-500">{t("onboarding.agentDesc")}</p>
-          {!open && missing.length > 0 && <p className="mt-2 text-sm text-neutral-600">{t("onboarding.agentNeed", { steps: missing.map((step) => step.title).join("、") })}</p>}
+          {!open && missing.length > 0 && <p className="mt-2 text-sm text-neutral-600">{t("onboarding.agentNeed", { steps: missing.map(stepTitle).join(t("onboarding.listSep")) })}</p>}
         </div>
         {!open && (
           <Button disabled={busy || missing.length > 0} onClick={() => void start()}>

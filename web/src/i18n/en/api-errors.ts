@@ -3,7 +3,18 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  llm: {
+    base_url_invalid: "The base URL must be an http(s) address, e.g. https://api.deepseek.com",
+    name_key_required: "Name (up to 64 characters) and API key are required.",
+    vendor_invalid: "Vendor may only contain lowercase letters, digits and -.",
+    model_invalid: "Invalid model name \"{{model}}\".",
+    name_exists: "That name is already taken.",
+  },
   auth: {
+    init_done: "Setup is already done. Please sign in.",
+    init_locked: "Too many wrong setup codes; this code is now void. Restart the server and use the new code from its log.",
+    init_bad_code: "Wrong setup code. Check the server log.",
+    bad_username: "Usernames use lowercase letters, digits and . _ -, 2 to 64 characters.",
     login_required: "Please sign in first.",
     session_expired: "Your session has expired. Please sign in again.",
     bad_credentials: "Incorrect username or password.",
