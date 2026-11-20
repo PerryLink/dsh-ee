@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -463,5 +465,35 @@ func TestDeepSeekToolsAllowEmployeeConfig(t *testing.T) {
 	t.Setenv("DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE", "maybe")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DSH_EE_DEEPSEEK_TOOLS_ALLOW_EMPLOYEE") {
 		t.Fatalf("非法值应报错，得到 %v", err)
+	}
+}
+
+func TestSecretKeyGeneratedInDataDir(t *testing.T) {
+	t.Setenv("DSH_EE_DSN", "root:@tcp(127.0.0.1:4000)/dsh_ee")
+	t.Setenv("DSH_EE_SECRET_KEY", "")
+	dir := t.TempDir()
+	t.Setenv("DSH_EE_DATA_DIR", dir)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.SecretKeyCreated || len(c.SecretKey) != 32 || c.SecretKeyFile != filepath.Join(dir, SecretKeyFileName) {
+		t.Fatalf("应在数据目录生成主密钥：created=%v len=%d file=%s", c.SecretKeyCreated, len(c.SecretKey), c.SecretKeyFile)
+	}
+	if fi, err := os.Stat(c.SecretKeyFile); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("密钥文件应为 0600：%v %v", fi, err)
+	}
+	again, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.SecretKeyCreated || string(again.SecretKey) != string(c.SecretKey) {
+		t.Fatal("再次启动应读回同一把主密钥")
+	}
+	if err := os.WriteFile(c.SecretKeyFile, []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("密钥文件损坏时应拒绝启动，而不是覆盖")
 	}
 }

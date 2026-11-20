@@ -1867,6 +1867,9 @@ export const api = {
   demoLogin: (username: string) => request<Me>("POST", "/api/auth/demo-login", { username }),
   login: (username: string, password: string) =>
     request<User>("POST", "/api/auth/login", { username, password }, { silent401: true }),
+  /** 首次初始化：凭服务端日志里的初始化码创建第一个管理员，成功后直接登录。 */
+  initAdmin: (code: string, username: string, password: string) =>
+    request<Me>("POST", "/api/auth/init-admin", { code, username, password }, { silent401: true }),
   logout: () => request<void>("POST", "/api/auth/logout"),
   me: () => request<Me>("GET", "/api/auth/me", undefined, { silent401: true }),
   /** 保存个人界面偏好（目前只有语言）；language 空串表示跟随组织默认。 */
@@ -1976,7 +1979,7 @@ export const api = {
   revokeTokens: (input: { ids?: string[]; user_id?: number; client_name?: string; department?: string }) =>
     request<{ revoked: number }>("POST", "/api/admin/tokens/revoke", input),
 
-  authMethods: () => request<{ ldap: boolean; oidc: { name: string } | null; demo: DemoSite | null }>("GET", "/api/auth/methods", undefined, { silent401: true }),
+  authMethods: () => request<{ ldap: boolean; oidc: { name: string } | null; demo: DemoSite | null; init_admin?: boolean }>("GET", "/api/auth/methods", undefined, { silent401: true }),
   oidc: () => request<OidcView>("GET", "/api/admin/auth/oidc"),
   saveOidc: (c: OidcInput) => request<OidcView>("PUT", "/api/admin/auth/oidc", c),
   testOidc: (c: OidcInput) => request<OidcTestResult>("POST", "/api/admin/auth/oidc/test", c),

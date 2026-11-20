@@ -12,6 +12,7 @@ import { DemoResetCountdown } from "../components/demo-reset";
 import { DemoConnectDsh, DemoPersonas } from "../components/demo-site";
 import type { DemoPersona } from "../lib/api";
 import { useTranslation } from "react-i18next";
+import InitAdmin from "./init-admin";
 
 /** 只允许站内相对路径，防止 next 参数被拿来做开放重定向。 */
 function safeNext(raw: string | null) {
@@ -80,6 +81,8 @@ export default function Login() {
   const scenarioIds = [...new Set(allPersonas.map((p) => p.scenario ?? "xinghe"))];
   const scenario = scenarioIds.includes(demoScenario) ? demoScenario : (scenarioIds[0] ?? "xinghe");
   const personas = allPersonas.filter((p) => (p.scenario ?? "xinghe") === scenario);
+
+  if (methods.data?.init_admin && !user) return <InitAdmin onDone={() => navigate("/", { replace: true })} />;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

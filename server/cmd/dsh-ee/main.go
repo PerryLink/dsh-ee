@@ -64,6 +64,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if cfg.SecretKeyCreated {
+		log.Warn("没有设置 DSH_EE_SECRET_KEY，已生成主密钥；请把它和数据库一起备份，丢了就解不开已保存的凭据", "file", cfg.SecretKeyFile)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -95,10 +98,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	initCode := ""
 	if created {
 		log.Info("已创建初始管理员", "username", cfg.BootstrapAdmin)
 	} else if n, _ := st.CountUsers(ctx); n == 0 {
-		log.Warn("还没有任何用户：设置 DSH_EE_BOOTSTRAP_ADMIN_PASSWORD 后重启以创建管理员")
+		initCode = api.NewInitCode()
+		log.Warn("还没有管理员：用浏览器打开 dsh-ee，凭初始化码创建第一个管理员", "init_code", initCode)
+		fmt.Fprintf(os.Stderr, "\n  dsh-ee 首次初始化码：%s\n  用浏览器打开 dsh-ee，按提示创建管理员。\n\n", initCode)
 	}
 	// 库里的设置（例如手工改库写进的非法嵌入来源）在启动时就校验；不合法直接拒绝启动。
 	if err := api.ValidateStoredSettings(ctx, st); err != nil {
@@ -160,6 +166,7 @@ func run(log *slog.Logger) error {
 		CookieSecure:   cfg.CookieSecure,
 		SessionTTL:     cfg.SessionTTL,
 		Version:        version,
+		InitCode:       initCode,
 		Web:            webui.Handler(),
 		DataDir:        cfg.DataDir,
 		PublicURL:      cfg.PublicURL,

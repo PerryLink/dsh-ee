@@ -113,22 +113,30 @@ func Bootstrap(ctx context.Context, st *store.Store, username, password string) 
 	if password == "" {
 		return false, nil
 	}
-	hash, err := HashPassword(password)
-	if err != nil {
-		return false, err
-	}
-	super, err := st.GetRoleByCode(ctx, rbac.RoleSuper)
-	if err != nil {
-		return false, fmt.Errorf("找不到超级管理员角色: %w", err)
-	}
-	u := &store.User{Username: username, DisplayName: "管理员", PasswordHash: hash}
-	if err := st.CreateUser(ctx, u); err != nil {
-		return false, err
-	}
-	if err := st.SetUserRoles(ctx, u.ID, []int64{super.ID}); err != nil {
+	if _, err := createSuperAdmin(ctx, st, username, password); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// createSuperAdmin 建一个本地超级管理员。启动时的 DSH_EE_BOOTSTRAP_ADMIN_PASSWORD 与网页上的首次初始化共用。
+func createSuperAdmin(ctx context.Context, st *store.Store, username, password string) (*store.User, error) {
+	hash, err := HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	super, err := st.GetRoleByCode(ctx, rbac.RoleSuper)
+	if err != nil {
+		return nil, fmt.Errorf("找不到超级管理员角色: %w", err)
+	}
+	u := &store.User{Username: username, DisplayName: "管理员", PasswordHash: hash}
+	if err := st.CreateUser(ctx, u); err != nil {
+		return nil, err
+	}
+	if err := st.SetUserRoles(ctx, u.ID, []int64{super.ID}); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 // ---- 登录限流：同一用户名 15 分钟内连续失败 5 次即锁定 15 分钟 ----

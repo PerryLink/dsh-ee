@@ -117,7 +117,17 @@ dsh-ee is **one binary**: the web UI is embedded, and a single port serves the U
 
 ## Quick start
 
-### Offline bundle (recommended)
+### One-command install (online)
+
+The machine needs Docker, Docker Compose v2 and access to GitHub and GHCR:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh
+```
+
+This creates `./dsh-ee/`, pulls the latest release image, generates `.env` (master key and initial admin password), starts dsh-ee with a single-node TiDB, and prints the admin password. Pass `sh -s -- oceanbase` or `sh -s -- external` to pick the database, and `DSH_EE_VERSION=v0.2.0` to pin a version. To upgrade, run `./install.sh` again in `./dsh-ee/`. **Back up `.env` together with the database.**
+
+### Offline bundle
 
 The target machine only needs Docker and Docker Compose v2. No internet access is required.
 
@@ -138,16 +148,16 @@ Build a bundle yourself with `make bundle VERSION=v0.1.0 ARCH=amd64` (or `ARCH=a
 
 Release tags automatically publish multi-platform images (linux/amd64 and linux/arm64) to GHCR.
 Use a full version such as `v0.2.0`; stable releases also update `0.2` and `latest`, while prereleases do not.
-After the first push, a maintainer must set the GHCR package to **public** once to allow anonymous pulls.
-Offline bundles are still built manually.
+The images can be pulled anonymously. The one-command install above uses them; to run one directly against an existing database:
 
 ```bash
-cd deploy
-cp ../server/.env.example .env   # set DSH_EE_SECRET_KEY (openssl rand -base64 32) etc.
-docker pull ghcr.io/hikariming/dsh-ee:v0.2.0
-# Add DSH_EE_IMAGE=ghcr.io/hikariming/dsh-ee:v0.2.0 to .env
-docker compose -f compose.yml -f compose.tidb.yml up -d
+docker run -d --name dsh-ee -p 8080:8080 -v dsh-ee-data:/data \
+  -e DSH_EE_DSN='root:@tcp(tidb-host:4000)/dsh_ee' \
+  ghcr.io/hikariming/dsh-ee:v0.2.0
+docker logs dsh-ee 2>&1 | grep init_code   # setup code for the first admin
 ```
+
+With no master key and no admin password set, dsh-ee generates the master key into its data directory (`/data/secret.key`; back it up with the database) and prints a one-time setup code to its log. Open the web UI and enter that code to create the first administrator.
 
 For a local development image, use `docker build -t dsh-ee:latest ..` and omit `DSH_EE_IMAGE`.
 
@@ -155,10 +165,8 @@ For a local development image, use `docker build -t dsh-ee:latest ..` and omit `
 
 ```bash
 make build                       # → dist/dsh-ee (web UI embedded)
-DSH_EE_DSN='root:@tcp(127.0.0.1:4000)/dsh_ee' \
-DSH_EE_SECRET_KEY="$(openssl rand -base64 32)" \
-DSH_EE_BOOTSTRAP_ADMIN_PASSWORD='change-me-please' \
-./dist/dsh-ee
+DSH_EE_DSN='root:@tcp(127.0.0.1:4000)/dsh_ee' ./dist/dsh-ee
+# then open http://127.0.0.1:8080 and create the admin with the setup code from the log
 ```
 
 A systemd unit is provided in [`deploy/systemd`](./deploy/systemd). HTTPS, reverse proxies and the data hub database are covered in [deploy/README.md](./deploy/README.md) (Chinese).
@@ -179,7 +187,7 @@ Confirm the device code in the browser, and DSH is connected to the company's ca
 | Variable | Description |
 |---|---|
 | `DSH_EE_DSN` | **Required.** MySQL-protocol DSN; the database is created if missing |
-| `DSH_EE_SECRET_KEY` | **Required.** 32-byte base64 master key used to encrypt upstream credentials |
+| `DSH_EE_SECRET_KEY` | 32-byte base64 master key used to encrypt upstream credentials. If unset, one is generated into `<DSH_EE_DATA_DIR>/secret.key`; back it up with the database |
 | `DSH_EE_ADDR` | Listen address, default `127.0.0.1:8080` |
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | Admin created when the user table is empty (default user `admin`) |
 | `DSH_EE_PUBLIC_URL` | Public URL, e.g. `https://dsh.example.internal`; npm tarball URLs are generated from it |

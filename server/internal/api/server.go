@@ -36,6 +36,8 @@ type Options struct {
 	Upstream *http.Client
 	// 构建版本，/healthz 返回。
 	Version string
+	// 首次初始化码：库里还没有用户时，凭它在网页上创建第一个管理员。为空表示不开放网页初始化。
+	InitCode string
 	// 嵌入的前端；为空时只提供接口（测试、或前端单独部署）。
 	Web http.Handler
 	// npm 源的数据目录（tarball、上游缓存）；为空时用临时目录（测试）。
@@ -156,6 +158,7 @@ type Options struct {
 }
 
 type Server struct {
+	initAdmin       initAdminState
 	store           *store.Store
 	box             *secret.Box
 	opts            Options

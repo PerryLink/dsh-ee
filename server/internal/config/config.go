@@ -2,6 +2,7 @@
 package config
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +26,9 @@ type Config struct {
 	DSN string
 	// 加密上游 API key 的 32 字节主密钥。
 	SecretKey []byte
+	// 没有设置 DSH_EE_SECRET_KEY 时，主密钥放在数据目录里的这个文件；SecretKeyCreated 表示这次启动刚生成。
+	SecretKeyFile    string
+	SecretKeyCreated bool
 	// 会话 cookie 是否加 Secure。不显式设置时跟随 DSH_EE_PUBLIC_URL：
 	// 对外地址是 https 就默认开启；显式 DSH_EE_COOKIE_SECURE 覆盖这个默认。
 	CookieSecure bool
@@ -191,15 +196,20 @@ func Load() (*Config, error) {
 	default:
 		c.DataDSN = v
 	}
-	raw := os.Getenv("DSH_EE_SECRET_KEY")
-	if raw == "" {
-		return nil, errors.New("缺少 DSH_EE_SECRET_KEY（32 字节 base64），可用 openssl rand -base64 32 生成")
+	if raw := os.Getenv("DSH_EE_SECRET_KEY"); raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil || len(key) != 32 {
+			return nil, errors.New("DSH_EE_SECRET_KEY 必须是 32 字节的 base64")
+		}
+		c.SecretKey = key
+	} else {
+		c.SecretKeyFile = filepath.Join(c.DataDir, SecretKeyFileName)
+		key, created, err := LoadOrCreateKeyFile(c.SecretKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("没有设置 DSH_EE_SECRET_KEY，读取或生成 %s 失败: %w", c.SecretKeyFile, err)
+		}
+		c.SecretKey, c.SecretKeyCreated = key, created
 	}
-	key, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil || len(key) != 32 {
-		return nil, errors.New("DSH_EE_SECRET_KEY 必须是 32 字节的 base64")
-	}
-	c.SecretKey = key
 	c.ExtensionTrustedKeys = strings.TrimSpace(os.Getenv("DSH_EE_EXTENSION_TRUSTED_KEYS"))
 	if v := os.Getenv("DSH_EE_EXTENSION_REQUIRE_SIGNATURE"); v != "" {
 		b, err := strconv.ParseBool(strings.TrimSpace(v))
@@ -501,4 +511,53 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// SecretKeyFileName 是没有设置 DSH_EE_SECRET_KEY 时，数据目录里保存主密钥的文件名。
+const SecretKeyFileName = "secret.key"
+
+// LoadOrCreateKeyFile 读取 path 里的 32 字节主密钥（base64）；文件不存在时生成一把并以 0600 写入。
+// 返回的 created 表示这次是新生成的。文件存在但内容不合法时报错，不覆盖，避免丢掉已加密的数据。
+func LoadOrCreateKeyFile(path string) (key []byte, created bool, err error) {
+	if b, err := os.ReadFile(path); err == nil {
+		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b)))
+		if err != nil || len(key) != 32 {
+			return nil, false, fmt.Errorf("%s 不是 32 字节的 base64", path)
+		}
+		return key, false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, false, err
+	}
+	key = make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, false, err
+	}
+	// 先写临时文件再硬链接到目标：目标文件一出现就是完整的；多个实例同时首次启动时只有一个链接成功，其余读它那把。
+	tmp, err := os.CreateTemp(filepath.Dir(path), SecretKeyFileName+".tmp-*")
+	if err != nil {
+		return nil, false, err
+	}
+	defer os.Remove(tmp.Name())
+	_, werr := tmp.WriteString(base64.StdEncoding.EncodeToString(key) + "\n")
+	if werr == nil {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o600)
+	}
+	if werr != nil {
+		return nil, false, werr
+	}
+	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+		return LoadOrCreateKeyFile(path)
+	} else if err != nil {
+		return nil, false, err
+	}
+	return key, true, nil
 }

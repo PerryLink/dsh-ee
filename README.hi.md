@@ -131,10 +131,7 @@ sha256sum -c SHA256SUMS
 ### Docker Compose
 
 ```bash
-cd deploy
-cp ../server/.env.example .env   # DSH_EE_SECRET_KEY (openssl rand -base64 32) आदि सेट करें
-docker build -t dsh-ee:latest ..
-docker compose -f compose.yml -f compose.tidb.yml up -d
+curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh
 ```
 
 ### Docker के बिना

@@ -105,6 +105,7 @@ func (s *Server) routes() []route {
 		pub("GET /demo/itsm/categories", s.handleDemoTicketCategories),
 
 		pub("GET /api/auth/methods", s.handleAuthMethods),
+		pub("POST /api/auth/init-admin", s.handleInitAdmin),
 		pub("GET /api/auth/oidc/start", s.handleOIDCStart),
 		pub("GET /api/auth/oidc/callback", s.handleOIDCCallback),
 		pub("POST /api/auth/feishu/card", s.handleFeishuCard),

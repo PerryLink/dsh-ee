@@ -49,6 +49,19 @@ export default {
       }
     }
   },
+  "initAdmin": {
+    "title": "एडमिन खाता बनाएं",
+    "subtitle": "यह नया dsh-ee है, इसमें अभी कोई खाता नहीं है। पहला एडमिनिस्ट्रेटर बनाएं।",
+    "code": "सेटअप कोड",
+    "codeHint": "सर्वर लॉग में मिलेगा: docker compose logs dsh-ee | grep init_code",
+    "username": "एडमिन यूज़रनेम",
+    "password": "पासवर्ड",
+    "passwordHint": "कम से कम 10 अक्षर",
+    "confirm": "पासवर्ड दोबारा लिखें",
+    "mismatch": "दोनों पासवर्ड मेल नहीं खाते",
+    "submit": "बनाएं और साइन इन करें",
+    "submitting": "बना रहे हैं…"
+  },
   "account": {
     "title": "खाता",
     "logout": "साइन आउट करें",

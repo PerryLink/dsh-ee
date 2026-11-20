@@ -114,7 +114,17 @@ dsh-ee 是**一个文件**：前端嵌在 Go 二进制里，同一个端口提�
 
 ## 快速开始
 
-### 离线安装包（推荐）
+### 一条命令在线安装
+
+机器需要 docker、docker compose v2，并能访问 GitHub 与 GHCR：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh
+```
+
+它会建 `./dsh-ee/` 目录，拉取最新发布的镜像，生成 `.env`（主密钥与初始管理员密码），用单机 TiDB 启动 dsh-ee，并打印管理员密码。选数据库用 `sh -s -- oceanbase` 或 `sh -s -- external`，固定版本用 `DSH_EE_VERSION=v0.2.0`。升级时在 `./dsh-ee/` 里再执行一次 `./install.sh`。**`.env` 要和数据库一起备份。**
+
+### 离线安装包
 
 目标机器只需要 docker 与 docker compose v2，不需要外网。
 
@@ -134,16 +144,16 @@ sha256sum -c SHA256SUMS
 ### docker compose
 
 发布 tag 自动把 linux/amd64 与 linux/arm64 镜像推送到 GHCR。建议固定完整版本（如 `v0.2.0`）；
-稳定版另更新 `0.2` 与 `latest`，预发布不更新浮动标签。首次推送后维护者须把 GHCR 包设为 **public** 一次，
-才支持匿名拉取。离线安装包仍手工构建。
+稳定版另更新 `0.2` 与 `latest`，预发布不更新浮动标签。镜像可以匿名拉取。上面的一条命令安装用的就是它；已有数据库时也可以直接跑：
 
 ```bash
-cd deploy
-cp ../server/.env.example .env   # 填 DSH_EE_SECRET_KEY（openssl rand -base64 32）等
-docker pull ghcr.io/hikariming/dsh-ee:v0.2.0
-# 在 .env 中加入 DSH_EE_IMAGE=ghcr.io/hikariming/dsh-ee:v0.2.0
-docker compose -f compose.yml -f compose.tidb.yml up -d
+docker run -d --name dsh-ee -p 8080:8080 -v dsh-ee-data:/data \
+  -e DSH_EE_DSN='root:@tcp(tidb-host:4000)/dsh_ee' \
+  ghcr.io/hikariming/dsh-ee:v0.2.0
+docker logs dsh-ee 2>&1 | grep 初始化码   # 创建第一个管理员用的初始化码
 ```
+
+没设主密钥和管理员密码时，dsh-ee 会把主密钥生成到数据目录（`/data/secret.key`，要和数据库一起备份），并在日志里打印一次性的初始化码。用浏览器打开 dsh-ee，填初始化码创建第一个管理员。
 
 本地开发仍可用 `docker build -t dsh-ee:latest ..`，不设置 `DSH_EE_IMAGE` 即使用本地镜像。
 
@@ -151,10 +161,8 @@ docker compose -f compose.yml -f compose.tidb.yml up -d
 
 ```bash
 make build                       # 产物 dist/dsh-ee，已嵌好前端
-DSH_EE_DSN='root:@tcp(127.0.0.1:4000)/dsh_ee' \
-DSH_EE_SECRET_KEY="$(openssl rand -base64 32)" \
-DSH_EE_BOOTSTRAP_ADMIN_PASSWORD='请改成至少十个字符的密码' \
-./dist/dsh-ee
+DSH_EE_DSN='root:@tcp(127.0.0.1:4000)/dsh_ee' ./dist/dsh-ee
+# 然后打开 http://127.0.0.1:8080，用日志里的初始化码创建管理员
 ```
 
 systemd 单元在 [`deploy/systemd`](./deploy/systemd)。HTTPS、反向代理、正式环境数据库与数据中台的配置见 [deploy/README.md](./deploy/README.md)。
@@ -179,7 +187,7 @@ irm https://<dsh-ee>/setup.ps1 | iex          # Windows
 | 环境变量 | 说明 |
 |---|---|
 | `DSH_EE_DSN` | **必填**。MySQL 协议 DSN；库不存在时会尝试创建 |
-| `DSH_EE_SECRET_KEY` | **必填**。32 字节 base64 主密钥，加密上游凭据 |
+| `DSH_EE_SECRET_KEY` | 32 字节 base64 主密钥，加密上游凭据。不设时自动生成到 `<DSH_EE_DATA_DIR>/secret.key`，要和数据库一起备份 |
 | `DSH_EE_ADDR` | 监听地址，默认 `127.0.0.1:8080` |
 | `DSH_EE_BOOTSTRAP_ADMIN` / `_PASSWORD` | 用户表为空时创建的管理员，默认用户名 `admin` |
 | `DSH_EE_PUBLIC_URL` | 对外地址，如 `https://dsh.example.internal`；npm 的 tarball 地址按它生成 |

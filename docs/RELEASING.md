@@ -95,8 +95,7 @@ workflow 只用仓库内置的 `GITHUB_TOKEN`（`contents: write`），不需要
 
 每次发布都有完整版本标签（如 `v0.2.0`）；只有稳定版更新 `0.2` 与 `latest`，`-rc` / `-beta` / `-alpha`
 等预发布不更新浮动标签。SemVer 若有 `+build` 元数据，Docker 标签用 `_build`（Docker 不接受 `+`）。
-生产环境建议固定完整版本。**第一次推送后，维护者须在 GitHub Packages 中把 GHCR 包设为 public 一次**，
-匿名用户才能拉取；后续发布无需重复设置。
+生产环境建议固定完整版本。GHCR 包已设为 public，匿名用户可以直接拉取。
 
 已存在的 tag 可在合并 workflow 后补发，例如 v0.2.0：
 
@@ -159,7 +158,7 @@ make bundle VERSION=v0.2.0 ARCH=arm64
       `docs-versions-<tag>.tar.gz`
 - [ ] 下载二进制与 docs 快照包复核：`sha256sum -c SHA256SUMS`，`./dsh-ee-<tag>-linux-amd64 version` 输出等于 tag
 - [ ] release notes 已补齐行为变化/升级步骤/回滚说明/已知限制；弃用项按 VERSIONING §4 标注
-- [ ] image workflow 成功，GHCR 完整版本的 amd64 / arm64 可拉取；首次发布已将包设为 public
+- [ ] image workflow 成功，GHCR 完整版本的 amd64 / arm64 可匿名拉取
 - [ ] 稳定版有 minor / latest 标签，预发布不更新浮动标签；需要时手工补发离线包，与 tag 同 commit，分发物已归档
 - [ ] 部署验证至少覆盖：`/healthz`、`/readyz`、登录、`/v1/models` 或模型网关、npm 源（见
       [operations.md](./operations.md) §8）
@@ -193,7 +192,7 @@ docs 版本快照是归档物：历史目录不动；要重算索引只能重新
 | docs 快照 `--check` 失败 | 快照被手改 / 索引与目录不一致 | 用 `version-snapshot.mjs --tag <tag>` 重新生成（必要时 `--force`），再提交 |
 | artifact 上传失败 | 权限/大小/action 版本问题 | 看 job 日志；`dist/` 被 `.gitignore` 忽略不影响上传 |
 | GHCR push 被拒绝 | 包写权限或包与仓库关联不正确 | 确认 `packages: write` 与包的 Actions 访问权限，查看 image job 日志 |
-| 匿名 `docker pull` 被拒绝 | 包仍为 private | 首次 push 后在 GitHub Packages 把包设为 public |
+| 匿名 `docker pull` 被拒绝 | 包被改回了 private | 在 GitHub Packages 把包设为 public |
 
 ## 10. 相关文档
 

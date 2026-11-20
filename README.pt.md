@@ -131,10 +131,7 @@ Para montar seu próprio pacote, use `make bundle VERSION=v0.1.0 ARCH=amd64` (ou
 ### Docker Compose
 
 ```bash
-cd deploy
-cp ../server/.env.example .env   # defina DSH_EE_SECRET_KEY (openssl rand -base64 32) etc.
-docker build -t dsh-ee:latest ..
-docker compose -f compose.yml -f compose.tidb.yml up -d
+curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh
 ```
 
 ### Sem Docker

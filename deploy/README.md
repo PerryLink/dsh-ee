@@ -2,7 +2,27 @@
 
 dsh-ee 是一个文件：前端嵌在 Go 二进制里，同一个端口提供界面、接口（`/api`、`/v1`）、npm 源（`/npm/`）与 DSH 插件索引（`/index/dsh-index.json`）。只依赖一个 MySQL 协议的数据库（OceanBase MySQL 模式或 TiDB）和一个数据目录（npm 包的 tarball）。
 
-## 用离线安装包（推荐给试点客户）
+## 一条命令在线安装
+
+机器能访问 GitHub 与 GHCR 时最省事，只需要 docker 与 docker compose v2：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh                  # dsh-ee + 单机 TiDB
+curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh -s -- oceanbase  # 或 external
+```
+
+脚本在当前目录下建 `dsh-ee/`（`DSH_EE_DIR` 可改），下载该版本的 compose 文件，拉取 `ghcr.io/hikariming/dsh-ee:<版本>`，生成 `.env` 并启动，最后打印访问地址与管理员密码。可选环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `DSH_EE_VERSION` | 安装的版本，默认最新发布，如 `v0.2.0` |
+| `DSH_EE_IMAGE` | 换镜像，例如内网镜像仓库里的副本 |
+| `DSH_EE_PORT` | 宿主机端口，默认 8080 |
+| `TIDB_REGISTRY` | TiDB 镜像来源，默认 Docker Hub 的 `pingcap`，拉不动时可换镜像站 |
+
+升级：在 `dsh-ee/` 里执行 `./install.sh`（或 `DSH_EE_VERSION=v0.x.y ./install.sh`），会下载新版本的 compose 文件、拉新镜像、重建容器，`.env` 与数据不动。
+
+## 用离线安装包（推荐给内网环境）
 
 安装包 `dsh-ee-<版本>-linux-<amd64|arm64>.tar.gz` 里有 dsh-ee 与数据库的镜像、compose 文件、安装脚本、静态二进制与 systemd 单元。目标机器只需要 docker 与 docker compose v2，不需要外网。
 
@@ -101,19 +121,19 @@ systemctl enable --now dsh-ee
 
 每次 push 发布 tag，image workflow 校验 tag 在主干上后，自动构建并推送 linux/amd64 与 linux/arm64 镜像。
 完整版本标签如 `v0.2.0`；稳定版另更新 `0.2` 与 `latest`，预发布（rc / beta / alpha 等）不更新浮动标签。
-**首次推送后维护者必须在 GitHub Packages 把包设为 public 一次**，之后才支持匿名拉取。
+镜像可以匿名拉取，上面的[一条命令在线安装](#一条命令在线安装)用的就是它。已有数据库时也可以只跑一个容器，只需要 DSN：
 
 ```bash
-cd deploy
-cp ../server/.env.example .env   # 填主密钥、管理员密码、DSN 等；已有 .env 不要覆盖
-docker pull ghcr.io/hikariming/dsh-ee:v0.2.0
-# 在 .env 中加入（升级时改这一行，保留其它配置）：
-# DSH_EE_IMAGE=ghcr.io/hikariming/dsh-ee:v0.2.0
-docker compose -f compose.yml -f compose.tidb.yml up -d
+docker run -d --name dsh-ee -p 8080:8080 -v dsh-ee-data:/data \
+  -e DSH_EE_DSN='root:@tcp(tidb-host:4000)/dsh_ee' \
+  ghcr.io/hikariming/dsh-ee:v0.2.0
+docker logs dsh-ee 2>&1 | grep 初始化码
 ```
 
-Compose 会按主机架构选择镜像。正式环境建议固定完整版本，不使用 `latest`；换外部数据库时只用 `compose.yml`，
-并设置 `DSH_EE_DSN`。在线部署直接用 Compose，不运行离线包的 `install.sh`（它会把镜像名重设为本地镜像）。
+没设 `DSH_EE_SECRET_KEY` 时，dsh-ee 把主密钥生成到数据目录的 `secret.key`（这里是 `dsh-ee-data` 卷里的 `/data/secret.key`），**要和数据库一起备份**。
+没有任何用户、也没设 `DSH_EE_BOOTSTRAP_ADMIN_PASSWORD` 时，启动日志会打印一次性的初始化码；用浏览器打开 dsh-ee，登录页会变成「创建管理员」，填初始化码即可。初始化码只在这次进程里有效，重启会换新的；首次初始化时请只起一个实例。
+
+Compose 会按主机架构选择镜像。正式环境建议固定完整版本，不使用 `latest`。
 已存在的 tag 可手动触发 image workflow 补发，见 [发布流程](../docs/RELEASING.md) §4。
 
 ## 自己打安装包

@@ -49,6 +49,19 @@ export default {
       }
     }
   },
+  "initAdmin": {
+    "title": "Crear la cuenta de administrador",
+    "subtitle": "Este dsh-ee es nuevo y aún no tiene cuentas. Crea el primer administrador.",
+    "code": "Código de configuración",
+    "codeHint": "Está en el registro del servidor: docker compose logs dsh-ee | grep init_code",
+    "username": "Usuario administrador",
+    "password": "Contraseña",
+    "passwordHint": "Al menos 10 caracteres",
+    "confirm": "Repite la contraseña",
+    "mismatch": "Las contraseñas no coinciden",
+    "submit": "Crear e iniciar sesión",
+    "submitting": "Creando…"
+  },
   "account": {
     "title": "Cuenta",
     "logout": "Cerrar sesión",
