@@ -114,6 +114,20 @@ func TestFeishuBotChat(t *testing.T) {
 			t.Fatal("no Feishu reply")
 		}
 	}
+	for _, table := range []string{"users", "feishu_chat_messages"} {
+		t.Run("retry on "+table+" failure", func(t *testing.T) {
+			if _, err := st.DB().ExecContext(ctx, "RENAME TABLE "+table+" TO "+table+"_unavailable"); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if _, err := st.DB().ExecContext(ctx, "RENAME TABLE "+table+"_unavailable TO "+table); err != nil {
+					t.Fatal(err)
+				}
+			}()
+			n, b := c.do("POST", "/api/auth/feishu/event", event("storage-failure", "ou-chat-user", "text"), nil)
+			expect(t, "retryable storage failure", n, 500, b)
+		})
+	}
 	code, body = c.do("POST", "/api/auth/feishu/event", map[string]string{"type": "url_verification", "token": feishuTestToken, "challenge": "challenge-1"}, nil)
 	if code != 200 || !strings.Contains(string(body), "challenge-1") {
 		t.Fatalf("challenge %d %s", code, body)

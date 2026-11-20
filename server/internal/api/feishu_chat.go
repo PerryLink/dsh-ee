@@ -58,7 +58,8 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 	if cb == nil {
 		return
 	}
-	defer writeJSON(w, http.StatusOK, map[string]any{})
+	status := http.StatusOK
+	defer func() { writeJSON(w, status, map[string]any{}) }()
 	if cb.Header.EventType != "im.message.receive_v1" || cb.Event.Message.ChatType != "p2p" || cb.Event.Message.MessageID == "" {
 		return
 	}
@@ -77,6 +78,7 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil && !notFound(err) {
 		s.log.Warn("读取飞书聊天用户失败", "err", err)
+		status = http.StatusInternalServerError
 		return
 	}
 	if u == nil || u.Disabled || u.AccountType != store.AccountHuman {
@@ -89,6 +91,7 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 	inserted, err := s.store.EnqueueFeishuChat(ctx, userID, msg.MessageID, msg.ChatID, content.Text)
 	if err != nil {
 		s.log.Warn("保存飞书聊天消息失败", "err", err)
+		status = http.StatusInternalServerError
 		return
 	}
 	if !inserted {
