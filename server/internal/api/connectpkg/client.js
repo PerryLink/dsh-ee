@@ -32,6 +32,11 @@ var import_react6 = require("react");
 
 // src/i18n/zh.ts
 var zh = {
+  dingTalkChat: {
+    prompt: "以下是你本人从钉钉发来的消息（消息 id={{id}}）。处理完成后请用 ee_dingtalk 回复：action=reply，id={{id}}，text=你的答案。请用简洁的纯文本。\n\n钉钉消息：\n{{text}}",
+    handled: "已在你电脑的 DSH 中处理，模型未发送文字回复。",
+    failed: "DSH 未能处理这条消息，请检查电脑上的 DSH 后重试。"
+  },
   feishuChat: {
     prompt: "以下是你本人从飞书发来的消息（消息 id={{id}}）。请完成其中的工作，然后使用 ee_feishu 工具将最终答案发回飞书：action=reply，id={{id}}，text=你的答案。答案请使用简洁的普通 Markdown。\n\n飞书消息：\n{{text}}",
     handled: "已在电脑上的 DSH 中处理，请打开 DSH 查看详情。",
@@ -591,6 +596,11 @@ var zh_default = zh;
 
 // src/i18n/en.ts
 var en = {
+  dingTalkChat: {
+    prompt: "This message came from you via DingTalk (message id={{id}}). Do the requested work, then send the answer back using ee_dingtalk: action=reply, id={{id}}, text=your answer. Use concise plain text.\n\nDingTalk message:\n{{text}}",
+    handled: "Handled in DSH on your computer. No answer was sent by the model.",
+    failed: "DSH could not handle your message. Check DSH on your computer and retry."
+  },
   feishuChat: {
     prompt: "This message came from you via Feishu (message id={{id}}). Do the requested work, then send the final answer back to Feishu with the ee_feishu tool: action=reply, id={{id}}, text=your answer. Use concise, plain Markdown.\n\nFeishu message:\n{{text}}",
     handled: "Handled in DSH on your computer. Open DSH for details.",
@@ -1150,6 +1160,11 @@ var en_default = en;
 
 // src/i18n/es.ts
 var es = {
+  dingTalkChat: {
+    prompt: "Tú enviaste este mensaje desde DingTalk (id={{id}}). Haz el trabajo y responde con ee_dingtalk: action=reply, id={{id}}, text=tu respuesta. Usa texto sencillo y conciso.\n\nMensaje:\n{{text}}",
+    handled: "DSH procesó tu mensaje. El modelo no envió respuesta.",
+    failed: "DSH no pudo procesar tu mensaje. Revisa DSH en tu ordenador y vuelve a intentarlo."
+  },
   feishuChat: {
     prompt: "Este mensaje lo enviaste tú desde Feishu (id={{id}}). Realiza el trabajo y envía la respuesta final a Feishu con la herramienta ee_feishu: action=reply, id={{id}}, text=tu respuesta. Usa Markdown sencillo y conciso.\n\nMensaje de Feishu:\n{{text}}",
     handled: "Procesado en DSH en tu ordenador. Abre DSH para ver los detalles.",
@@ -1709,6 +1724,11 @@ var es_default = es;
 
 // src/i18n/pt.ts
 var pt = {
+  dingTalkChat: {
+    prompt: "Você enviou esta mensagem pelo DingTalk (id={{id}}). Faça o trabalho e responda com ee_dingtalk: action=reply, id={{id}}, text=sua resposta. Use texto simples e conciso.\n\nMensagem:\n{{text}}",
+    handled: "O DSH processou a mensagem. O modelo não enviou uma resposta.",
+    failed: "O DSH não conseguiu processar sua mensagem. Verifique o DSH no computador e tente novamente."
+  },
   feishuChat: {
     prompt: "Esta mensagem foi enviada por você pelo Feishu (id={{id}}). Faça o trabalho e envie a resposta final ao Feishu com a ferramenta ee_feishu: action=reply, id={{id}}, text=sua resposta. Use Markdown simples e conciso.\n\nMensagem do Feishu:\n{{text}}",
     handled: "Processado no DSH do seu computador. Abra o DSH para ver os detalhes.",
@@ -2268,6 +2288,11 @@ var pt_default = pt;
 
 // src/i18n/hi.ts
 var hi = {
+  dingTalkChat: {
+    prompt: "यह संदेश आपने DingTalk से भेजा है (id={{id}})। काम पूरा करके ee_dingtalk से जवाब दें: action=reply, id={{id}}, text=आपका जवाब। सरल, संक्षिप्त टेक्स्ट में जवाब दें।\n\nसंदेश:\n{{text}}",
+    handled: "DSH ने संदेश पर काम किया। मॉडल ने जवाब नहीं भेजा।",
+    failed: "DSH संदेश पर काम नहीं कर सका। अपने कंप्यूटर पर DSH देखकर फिर कोशिश करें।"
+  },
   feishuChat: {
     prompt: "यह संदेश आपने Feishu से भेजा है (id={{id}})। अनुरोधित काम करें, फिर ee_feishu टूल से अंतिम जवाब Feishu पर भेजें: action=reply, id={{id}}, text=आपका जवाब। संक्षिप्त, साधारण Markdown इस्तेमाल करें।\n\nFeishu संदेश:\n{{text}}",
     handled: "आपके कंप्यूटर के DSH में काम पूरा किया गया। विवरण के लिए DSH खोलें।",

@@ -10,6 +10,13 @@
  * es / pt / hi 等语言包合并后按同一份键补译文。
  */
 export default {
+  dingtalk_chat: {
+    disabled: "钉钉机器人未开启",
+    unbound: "请先用钉钉登录并连接 DSH",
+    empty: "回复不能为空",
+    missing: "消息不存在或已过期",
+    send: "钉钉回复发送失败，请稍后重试",
+  },
   feishu_chat: {
     disabled: "飞书机器人未开启",
     empty: "回复不能为空",

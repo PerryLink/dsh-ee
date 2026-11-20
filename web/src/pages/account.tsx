@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useAction } from "../lib/use-api";
+import { useAction, useApi } from "../lib/use-api";
 import { ErrorNote } from "../components/api-ui";
 import { Button, Card, Field, inputCls, PageHeader, PasswordInput } from "../components/ui";
 import { LangSwitch } from "../components/lang-switch";
@@ -42,6 +42,23 @@ function Shortcuts() {
         {row(t("account.shortcuts.connect"), connect, <Link to="/get-started" className={linkCls}>{t("account.shortcuts.getStarted")}</Link>)}
         {develop.length > 0 && row(t("account.shortcuts.develop"), develop)}
       </div>
+    </Card>
+  );
+}
+
+function DingTalkConnection() {
+  const { t } = useTranslation();
+  const { data } = useApi(api.dingTalkChatStatus);
+  if (!data?.available) return null;
+  return (
+    <Card className="mt-4 p-5" data-dingtalk-connection="">
+      <h2 className="text-[15px] font-semibold leading-6 text-neutral-900">{t("oidcAdmin.dingTalkConnection")}</h2>
+      <p className="mt-1 text-sm text-neutral-600">
+        {t(data.bound ? "oidcAdmin.dingTalkBound" : "oidcAdmin.dingTalkUnbound")}
+      </p>
+      <p className="mt-1 text-sm text-neutral-600">
+        {t(!data.enabled ? "oidcAdmin.dingTalkDisabled" : data.online ? "oidcAdmin.dingTalkOnline" : "oidcAdmin.dingTalkOffline")}
+      </p>
     </Card>
   );
 }
@@ -179,6 +196,7 @@ export default function Account() {
         </div>
       </Card>
 
+      <DingTalkConnection />
       <Shortcuts />
 
       {user.auth_source !== "local" ? (

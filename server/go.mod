@@ -7,6 +7,7 @@ require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8
 	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/go-sql-driver/mysql v1.10.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/jimlambrt/gldap v0.1.14
 	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/xuri/excelize/v2 v2.11.1

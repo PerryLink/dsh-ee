@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { FeishuChatRelay } from "../src/feishu-chat.js";
+import { BotChatRelay, type BotProvider } from "../src/bot-chat.js";
 import { normalizeConfig } from "../src/config.js";
 import { setLang } from "../src/i18n/index.js";
 
@@ -20,7 +20,7 @@ function pending(signal: AbortSignal): Promise<never> {
   });
 }
 
-function fixture(t: any) {
+function fixture(t: any, provider: BotProvider = "feishu") {
   setLang("en");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "feishu-chat-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -89,8 +89,8 @@ function fixture(t: any) {
   };
   const tokens = { resolve: async () => token ? { value: token, source: "test" } : undefined };
   const makeRelay = (delay?: (ms: number, signal: AbortSignal) => Promise<void>) => {
-    const relay = new FeishuChatRelay(ctx, config, tokens, http, {
-      file: path.join(dir, "feishu-chat.json"), intervalMs: 5,
+    const relay = new BotChatRelay(ctx, config, tokens, http, provider, {
+      file: path.join(dir, `${provider}-chat.json`), intervalMs: 5,
       delay: delay ?? ((_ms, signal) => sleep(2, undefined, { signal })),
     });
     t.after(() => relay.stop());
@@ -124,6 +124,26 @@ test("delivers sequentially into one session and posts localized fallback after 
   f.makeRelay().start();
   await until(() => f.replies.length === 4);
   assert.equal(f.created(), 2);
+});
+
+test("DingTalk messages use a DingTalk session, reply tool and fallback route", async (t) => {
+  const f = fixture(t, "dingtalk");
+  f.setOnSend(async (id, text) => {
+    f.emit(id, true);
+    if (text.includes("id=43")) {
+      const exec = { name: "mcp__company__ee_dingtalk", agent: { session: { id } }, arguments: { action: "reply", id: 43 } };
+      await f.executeTool(exec, async () => ({ isError: false, content: [{ type: "text", text: '{"ok":true}' }] }));
+    }
+    f.emit(id, false);
+  });
+  f.messages.push({ id: 42, text: "private DingTalk request" }, { id: 43, text: "model reply" });
+  f.makeRelay().start();
+  await until(() => f.calls.filter((url) => url === "/api/me/dingtalk-chat/next?wait=25").length >= 3);
+  assert.equal(f.calls[0], "/api/me/dingtalk-chat/next?wait=25");
+  assert.match(f.sent[0].text, /ee_dingtalk.*action=reply, id=42.*private DingTalk request/s);
+  assert.deepEqual(f.replies.map((reply) => reply.url), ["/api/me/dingtalk-chat/42/reply"]);
+  assert.ok(fs.existsSync(path.join(f.dir, "dingtalk-chat.json")));
+  assert.ok(!fs.existsSync(path.join(f.dir, "feishu-chat.json")));
 });
 
 test("only a successful final result for the matching tool, session, action and message suppresses fallback", async (t) => {

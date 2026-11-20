@@ -54,6 +54,11 @@ import path from "node:path";
 
 // src/i18n/zh.ts
 var zh = {
+  dingTalkChat: {
+    prompt: "以下是你本人从钉钉发来的消息（消息 id={{id}}）。处理完成后请用 ee_dingtalk 回复：action=reply，id={{id}}，text=你的答案。请用简洁的纯文本。\n\n钉钉消息：\n{{text}}",
+    handled: "已在你电脑的 DSH 中处理，模型未发送文字回复。",
+    failed: "DSH 未能处理这条消息，请检查电脑上的 DSH 后重试。"
+  },
   feishuChat: {
     prompt: "以下是你本人从飞书发来的消息（消息 id={{id}}）。请完成其中的工作，然后使用 ee_feishu 工具将最终答案发回飞书：action=reply，id={{id}}，text=你的答案。答案请使用简洁的普通 Markdown。\n\n飞书消息：\n{{text}}",
     handled: "已在电脑上的 DSH 中处理，请打开 DSH 查看详情。",
@@ -613,6 +618,11 @@ var zh_default = zh;
 
 // src/i18n/en.ts
 var en = {
+  dingTalkChat: {
+    prompt: "This message came from you via DingTalk (message id={{id}}). Do the requested work, then send the answer back using ee_dingtalk: action=reply, id={{id}}, text=your answer. Use concise plain text.\n\nDingTalk message:\n{{text}}",
+    handled: "Handled in DSH on your computer. No answer was sent by the model.",
+    failed: "DSH could not handle your message. Check DSH on your computer and retry."
+  },
   feishuChat: {
     prompt: "This message came from you via Feishu (message id={{id}}). Do the requested work, then send the final answer back to Feishu with the ee_feishu tool: action=reply, id={{id}}, text=your answer. Use concise, plain Markdown.\n\nFeishu message:\n{{text}}",
     handled: "Handled in DSH on your computer. Open DSH for details.",
@@ -1172,6 +1182,11 @@ var en_default = en;
 
 // src/i18n/es.ts
 var es = {
+  dingTalkChat: {
+    prompt: "Tú enviaste este mensaje desde DingTalk (id={{id}}). Haz el trabajo y responde con ee_dingtalk: action=reply, id={{id}}, text=tu respuesta. Usa texto sencillo y conciso.\n\nMensaje:\n{{text}}",
+    handled: "DSH procesó tu mensaje. El modelo no envió respuesta.",
+    failed: "DSH no pudo procesar tu mensaje. Revisa DSH en tu ordenador y vuelve a intentarlo."
+  },
   feishuChat: {
     prompt: "Este mensaje lo enviaste tú desde Feishu (id={{id}}). Realiza el trabajo y envía la respuesta final a Feishu con la herramienta ee_feishu: action=reply, id={{id}}, text=tu respuesta. Usa Markdown sencillo y conciso.\n\nMensaje de Feishu:\n{{text}}",
     handled: "Procesado en DSH en tu ordenador. Abre DSH para ver los detalles.",
@@ -1731,6 +1746,11 @@ var es_default = es;
 
 // src/i18n/pt.ts
 var pt = {
+  dingTalkChat: {
+    prompt: "Você enviou esta mensagem pelo DingTalk (id={{id}}). Faça o trabalho e responda com ee_dingtalk: action=reply, id={{id}}, text=sua resposta. Use texto simples e conciso.\n\nMensagem:\n{{text}}",
+    handled: "O DSH processou a mensagem. O modelo não enviou uma resposta.",
+    failed: "O DSH não conseguiu processar sua mensagem. Verifique o DSH no computador e tente novamente."
+  },
   feishuChat: {
     prompt: "Esta mensagem foi enviada por você pelo Feishu (id={{id}}). Faça o trabalho e envie a resposta final ao Feishu com a ferramenta ee_feishu: action=reply, id={{id}}, text=sua resposta. Use Markdown simples e conciso.\n\nMensagem do Feishu:\n{{text}}",
     handled: "Processado no DSH do seu computador. Abra o DSH para ver os detalhes.",
@@ -2290,6 +2310,11 @@ var pt_default = pt;
 
 // src/i18n/hi.ts
 var hi = {
+  dingTalkChat: {
+    prompt: "यह संदेश आपने DingTalk से भेजा है (id={{id}})। काम पूरा करके ee_dingtalk से जवाब दें: action=reply, id={{id}}, text=आपका जवाब। सरल, संक्षिप्त टेक्स्ट में जवाब दें।\n\nसंदेश:\n{{text}}",
+    handled: "DSH ने संदेश पर काम किया। मॉडल ने जवाब नहीं भेजा।",
+    failed: "DSH संदेश पर काम नहीं कर सका। अपने कंप्यूटर पर DSH देखकर फिर कोशिश करें।"
+  },
   feishuChat: {
     prompt: "यह संदेश आपने Feishu से भेजा है (id={{id}})। अनुरोधित काम करें, फिर ee_feishu टूल से अंतिम जवाब Feishu पर भेजें: action=reply, id={{id}}, text=आपका जवाब। संक्षिप्त, साधारण Markdown इस्तेमाल करें।\n\nFeishu संदेश:\n{{text}}",
     handled: "आपके कंप्यूटर के DSH में काम पूरा किया गया। विवरण के लिए DSH खोलें।",
@@ -3161,7 +3186,7 @@ var HttpClient = class {
   }
 };
 
-// src/feishu-chat.ts
+// src/bot-chat.ts
 import fs2 from "node:fs";
 import path3 from "node:path";
 import { createHash } from "node:crypto";
@@ -3273,7 +3298,7 @@ function createSessionSnapshotAdapter() {
   };
 }
 
-// src/feishu-chat.ts
+// src/bot-chat.ts
 function abortable(work, signal) {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -3285,18 +3310,19 @@ function abortable(work, signal) {
     work().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
-var FeishuChatRelay = class {
-  constructor(ctx, config, tokens, http, options = {}) {
+var BotChatRelay = class {
+  constructor(ctx, config, tokens, http, provider, options = {}) {
     this.ctx = ctx;
     this.config = config;
     this.tokens = tokens;
     this.http = http;
+    this.provider = provider;
     this.options = options;
-    this.file = options.file ?? path3.join(dshHome(), "dsh-ee", "feishu-chat.json");
+    this.file = options.file ?? path3.join(dshHome(), "dsh-ee", `${provider}-chat.json`);
     this.delay = options.delay ?? ((ms, signal) => sleep(ms, void 0, { signal, ref: false }));
     ctx.on("tools/result", (exec, result) => {
       const turn = this.active;
-      if (turn && !this.controller?.signal.aborted && exec.name === `mcp__${config.serverName}__ee_feishu` && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id) && result?.isError === false && result.value?.isError === false) {
+      if (turn && !this.controller?.signal.aborted && exec.name === `mcp__${config.serverName}__ee_${provider}` && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id) && result?.isError === false && result.value?.isError === false) {
         turn.replied = true;
       }
     });
@@ -3356,7 +3382,7 @@ var FeishuChatRelay = class {
     let backoff = 1e3;
     while (!signal.aborted) {
       try {
-        const response = await this.http.fetch("/api/me/feishu-chat/next?wait=25", { signal });
+        const response = await this.http.fetch(`/api/me/${this.provider}-chat/next?wait=25`, { signal });
         if (response.status === 204) {
           backoff = 1e3;
           continue;
@@ -3368,7 +3394,7 @@ var FeishuChatRelay = class {
         }
         const message = await response.json();
         await this.assertScope(scope);
-        if (!Number.isSafeInteger(message.id) || message.id <= 0 || typeof message.text !== "string") throw new Error("Invalid Feishu message");
+        if (!Number.isSafeInteger(message.id) || message.id <= 0 || typeof message.text !== "string") throw new Error("Invalid bot message");
         backoff = 1e3;
         await this.deliver(scope, message, signal);
       } catch (error) {
@@ -3380,7 +3406,7 @@ var FeishuChatRelay = class {
   }
   async assertScope(scope) {
     const token = await this.tokens.resolve();
-    if (!token?.value || createHash("sha256").update(this.config.base + "\n" + token.value).digest("hex") !== scope) throw new Error("Feishu login changed");
+    if (!token?.value || createHash("sha256").update(this.config.base + "\n" + token.value).digest("hex") !== scope) throw new Error("Bot login changed");
   }
   async session(scope) {
     let saved;
@@ -3402,7 +3428,8 @@ var FeishuChatRelay = class {
     return sessionId;
   }
   async deliver(scope, message, signal) {
-    let fallback = t("feishuChat.handled");
+    const messages = this.provider === "dingtalk" ? "dingTalkChat" : "feishuChat";
+    let fallback = t(`${messages}.handled`);
     let dispose = () => {
     };
     try {
@@ -3428,17 +3455,17 @@ var FeishuChatRelay = class {
       };
       check();
       await this.assertScope(scope);
-      await abortable(() => sendToSession(this.ctx, sessionId, t("feishuChat.prompt", { id: message.id, text: message.text })), signal);
+      await abortable(() => sendToSession(this.ctx, sessionId, t(`${messages}.prompt`, { id: message.id, text: message.text })), signal);
       const deadline = Date.now() + 6e4;
       while (!complete) {
         signal.throwIfAborted();
         check();
-        if (!running && Date.now() > deadline) throw new Error("Feishu session did not start");
+        if (!running && Date.now() > deadline) throw new Error("Bot session did not start");
         if (!complete) await this.delay(200, signal);
       }
     } catch (error) {
       if (signal.aborted) throw error;
-      fallback = t("feishuChat.failed");
+      fallback = t(`${messages}.failed`);
     } finally {
       dispose();
     }
@@ -3446,7 +3473,7 @@ var FeishuChatRelay = class {
       signal.throwIfAborted();
       await this.assertScope(scope);
       if (!this.active?.replied) {
-        const response = await this.http.fetch(`/api/me/feishu-chat/${message.id}/reply`, {
+        const response = await this.http.fetch(`/api/me/${this.provider}-chat/${message.id}/reply`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ text: fallback }),
@@ -3934,7 +3961,8 @@ var McpBridge = class {
   }
   /** 这次调用该不该先让用户批准；只读的返回 undefined。 */
   approval(fullName, args) {
-    if (this.serverNames.get(fullName) === "ee_feishu" && args?.action === "reply") return void 0;
+    const serverName = this.serverNames.get(fullName);
+    if ((serverName === "ee_feishu" || serverName === "ee_dingtalk") && args?.action === "reply") return void 0;
     const metas = this.metas.get(fullName);
     const meta = metas?.[String(args?.action)];
     if (!meta) return void 0;
@@ -7417,7 +7445,8 @@ function apply(ctx, input) {
   });
   bridge.registerLocal("ee_plugins.upload", (args) => uploadPackage(http, args));
   registerApproval(ctx, bridge);
-  const feishuChat = new FeishuChatRelay(ctx, config, tokens, http);
+  const feishuChat = new BotChatRelay(ctx, config, tokens, http, "feishu");
+  const dingTalkChat = new BotChatRelay(ctx, config, tokens, http, "dingtalk");
   ctx.effect(async () => {
     await tokens.importPending().catch(() => void 0);
     const current = await tokens.resolve();
@@ -7511,9 +7540,11 @@ function apply(ctx, input) {
     await skillsReady;
     await bridge.start();
     feishuChat.start();
+    dingTalkChat.start();
     await localMcp.start().catch(() => void 0);
     return () => {
       void feishuChat.stop();
+      void dingTalkChat.stop();
       localMcp.stop();
       disposeWorkbenchTool();
       bridge.stop();

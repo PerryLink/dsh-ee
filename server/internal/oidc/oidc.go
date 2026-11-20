@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hikariming/dsh-ee/server/internal/dingtalk"
 )
 
 // Config 是管理员在系统设置里填的内容。ClientSecret 不参与 JSON，由调用方加密保存。
@@ -66,6 +68,8 @@ type Config struct {
 	FeishuVerificationToken string `json:"feishuVerificationToken,omitempty"`
 	// 飞书后台同一页的 Encrypt Key（可选）。填了，回调就按加密的收；不参与 JSON，由调用方加密保存。
 	FeishuEncryptKey string `json:"-"`
+	DingTalkCorpID   string `json:"dingTalkCorpId,omitempty"`
+	DingTalkBot      bool   `json:"dingTalkBot"`
 }
 
 type RoleMapping struct {
@@ -108,6 +112,22 @@ func (c *Config) Validate() string {
 	}
 	if c.UsernameClaim == "" {
 		c.UsernameClaim = "preferred_username"
+	}
+	c.DingTalkCorpID = strings.TrimSpace(c.DingTalkCorpID)
+	if c.Preset == dingtalk.Preset {
+		c.Issuer = dingtalk.Issuer
+		if !c.Enabled {
+			return ""
+		}
+		if c.ClientID == "" || c.ClientSecret == "" {
+			return "钉钉 Client ID 与 Client Secret 必填"
+		}
+		if c.DingTalkCorpID == "" || len(c.DingTalkCorpID) > 128 || strings.ContainsAny(c.DingTalkCorpID, ": \t\r\n") {
+			return "请填写钉钉企业 CorpId"
+		}
+		if c.RequireEmailVerified {
+			return "钉钉不提供已验证邮箱声明，不能用于要求已验证邮箱的登录设置"
+		}
 	}
 	if !c.Enabled && c.Issuer == "" {
 		return ""
