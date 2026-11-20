@@ -127,7 +127,8 @@ export class McpBridge {
 
   /** 这次调用该不该先让用户批准；只读的返回 undefined。 */
   approval(fullName: string, args: any): { effect: "write" | "danger"; zh: string; en: string; preview?: string } | undefined {
-    if (this.serverNames.get(fullName) === "ee_feishu" && args?.action === "reply") return undefined;
+    const serverName = this.serverNames.get(fullName);
+    if ((serverName === "ee_feishu" || serverName === "ee_dingtalk") && args?.action === "reply") return undefined;
     const metas = this.metas.get(fullName);
     const meta = metas?.[String(args?.action)];
     if (!meta) return undefined;

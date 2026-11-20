@@ -113,6 +113,9 @@ func (s *Server) routes() []route {
 		prmt("GET /api/me/feishu-chat", s.handleFeishuChatStatus),
 		agt("GET /api/me/feishu-chat/next", s.handleFeishuChatNext),
 		agt("POST /api/me/feishu-chat/{id}/reply", s.handleFeishuChatReply),
+		prmt("GET /api/me/dingtalk-chat", s.handleDingTalkChatStatus),
+		agt("GET /api/me/dingtalk-chat/next", s.handleDingTalkChatNext),
+		agt("POST /api/me/dingtalk-chat/{id}/reply", s.handleDingTalkChatReply),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
 		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
 		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),

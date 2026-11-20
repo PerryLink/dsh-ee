@@ -3,6 +3,13 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  dingtalk_chat: {
+    disabled: "DingTalk बॉट बंद है।",
+    unbound: "पहले DingTalk से साइन इन करें और DSH जोड़ें।",
+    empty: "जवाब लिखना ज़रूरी है।",
+    missing: "संदेश मिला नहीं या उसकी समय सीमा समाप्त हो गई।",
+    send: "जवाब नहीं भेजा जा सका। बाद में फिर कोशिश करें।",
+  },
   feishu_chat: {
     disabled: "Feishu बॉट बंद है।",
     empty: "जवाब खाली नहीं हो सकता।",

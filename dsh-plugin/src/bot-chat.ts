@@ -27,19 +27,21 @@ function abortable<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-export class FeishuChatRelay {
+export type BotProvider = "feishu" | "dingtalk";
+
+export class BotChatRelay {
   private controller?: AbortController;
   private loop?: Promise<void>;
   private active?: ActiveTurn;
   private readonly file: string;
   private readonly delay: (ms: number, signal: AbortSignal) => Promise<void>;
 
-  constructor(private ctx: DshContext, private config: PluginConfig, private tokens: Pick<TokenManager, "resolve">, private http: Pick<HttpClient, "fetch">, private options: Options = {}) {
-    this.file = options.file ?? path.join(dshHome(), "dsh-ee", "feishu-chat.json");
+  constructor(private ctx: DshContext, private config: PluginConfig, private tokens: Pick<TokenManager, "resolve">, private http: Pick<HttpClient, "fetch">, private provider: BotProvider, private options: Options = {}) {
+    this.file = options.file ?? path.join(dshHome(), "dsh-ee", `${provider}-chat.json`);
     this.delay = options.delay ?? ((ms, signal) => sleep(ms, undefined, { signal, ref: false }));
     ctx.on("tools/result", (exec: any, result: any) => {
       const turn = this.active;
-      if (turn && !this.controller?.signal.aborted && exec.name === `mcp__${config.serverName}__ee_feishu`
+      if (turn && !this.controller?.signal.aborted && exec.name === `mcp__${config.serverName}__ee_${provider}`
         && exec.agent?.session?.id === turn.sessionId && exec.arguments?.action === "reply" && String(exec.arguments?.id) === String(turn.id)
         && result?.isError === false && result.value?.isError === false) {
         turn.replied = true;
@@ -92,7 +94,7 @@ export class FeishuChatRelay {
     let backoff = 1000;
     while (!signal.aborted) {
       try {
-        const response = await this.http.fetch("/api/me/feishu-chat/next?wait=25", { signal });
+        const response = await this.http.fetch(`/api/me/${this.provider}-chat/next?wait=25`, { signal });
         if (response.status === 204) { backoff = 1000; continue; }
         if (!response.ok) {
           await this.delay(response.status === 404 ? 60_000 : backoff, signal);
@@ -101,7 +103,7 @@ export class FeishuChatRelay {
         }
         const message = await response.json() as Message;
         await this.assertScope(scope);
-        if (!Number.isSafeInteger(message.id) || message.id <= 0 || typeof message.text !== "string") throw new Error("Invalid Feishu message");
+        if (!Number.isSafeInteger(message.id) || message.id <= 0 || typeof message.text !== "string") throw new Error("Invalid bot message");
         backoff = 1000;
         await this.deliver(scope, message, signal);
       } catch (error) {
@@ -114,7 +116,7 @@ export class FeishuChatRelay {
 
   private async assertScope(scope: string): Promise<void> {
     const token = await this.tokens.resolve();
-    if (!token?.value || createHash("sha256").update(this.config.base + "\n" + token.value).digest("hex") !== scope) throw new Error("Feishu login changed");
+    if (!token?.value || createHash("sha256").update(this.config.base + "\n" + token.value).digest("hex") !== scope) throw new Error("Bot login changed");
   }
 
   private async session(scope: string): Promise<string> {
@@ -133,7 +135,8 @@ export class FeishuChatRelay {
   }
 
   private async deliver(scope: string, message: Message, signal: AbortSignal): Promise<void> {
-    let fallback = t("feishuChat.handled");
+    const messages = this.provider === "dingtalk" ? "dingTalkChat" : "feishuChat";
+    let fallback = t(`${messages}.handled`);
     let dispose = () => {};
     try {
       const sessionId = await abortable(() => this.session(scope), signal);
@@ -156,23 +159,23 @@ export class FeishuChatRelay {
       dispose = () => { for (const fn of off) if (typeof fn === "function") fn(); };
       check();
       await this.assertScope(scope);
-      await abortable(() => sendToSession(this.ctx, sessionId, t("feishuChat.prompt", { id: message.id, text: message.text })), signal);
+      await abortable(() => sendToSession(this.ctx, sessionId, t(`${messages}.prompt`, { id: message.id, text: message.text })), signal);
       const deadline = Date.now() + 60_000;
       while (!complete) {
         signal.throwIfAborted();
         check();
-        if (!running && Date.now() > deadline) throw new Error("Feishu session did not start");
+        if (!running && Date.now() > deadline) throw new Error("Bot session did not start");
         if (!complete) await this.delay(200, signal);
       }
     } catch (error) {
       if (signal.aborted) throw error;
-      fallback = t("feishuChat.failed");
+      fallback = t(`${messages}.failed`);
     } finally { dispose(); }
     try {
       signal.throwIfAborted();
       await this.assertScope(scope);
       if (!this.active?.replied) {
-        const response = await this.http.fetch(`/api/me/feishu-chat/${message.id}/reply`, {
+        const response = await this.http.fetch(`/api/me/${this.provider}-chat/${message.id}/reply`, {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: fallback }), signal,
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);

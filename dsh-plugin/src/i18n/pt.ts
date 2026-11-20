@@ -13,6 +13,11 @@ import type zh from "./zh.js";
 import type { DeepPartial, Messages } from "./types.js";
 
 const pt: DeepPartial<Messages<typeof zh>> = {
+  dingTalkChat: {
+    prompt: "Você enviou esta mensagem pelo DingTalk (id={{id}}). Faça o trabalho e responda com ee_dingtalk: action=reply, id={{id}}, text=sua resposta. Use texto simples e conciso.\n\nMensagem:\n{{text}}",
+    handled: "O DSH processou a mensagem. O modelo não enviou uma resposta.",
+    failed: "O DSH não conseguiu processar sua mensagem. Verifique o DSH no computador e tente novamente.",
+  },
   feishuChat: {
     prompt: "Esta mensagem foi enviada por você pelo Feishu (id={{id}}). Faça o trabalho e envie a resposta final ao Feishu com a ferramenta ee_feishu: action=reply, id={{id}}, text=sua resposta. Use Markdown simples e conciso.\n\nMensagem do Feishu:\n{{text}}",
     handled: "Processado no DSH do seu computador. Abra o DSH para ver os detalhes.",

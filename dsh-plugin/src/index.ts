@@ -1,7 +1,7 @@
 import { normalizeConfig } from "./config.js";
 import { TokenManager } from "./token.js";
 import { HttpClient } from "./http.js";
-import { FeishuChatRelay } from "./feishu-chat.js";
+import { BotChatRelay } from "./bot-chat.js";
 import { registerCommands } from "./commands.js";
 import { registerSkills } from "./skills.js";
 import { McpBridge } from "./bridge.js";
@@ -55,7 +55,8 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
   });
   bridge.registerLocal("ee_plugins.upload", (args) => uploadPackage(http, args));
   registerApproval(ctx, bridge);
-  const feishuChat = new FeishuChatRelay(ctx, config, tokens, http);
+  const feishuChat = new BotChatRelay(ctx, config, tokens, http, "feishu");
+  const dingTalkChat = new BotChatRelay(ctx, config, tokens, http, "dingtalk");
 
   ctx.effect(async () => {
     await tokens.importPending().catch(() => undefined);
@@ -153,10 +154,12 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
     await skillsReady;
     await bridge.start();
     feishuChat.start();
+    dingTalkChat.start();
     // 按员工确认过的记录恢复本机扩展的 MCP 注册；没有 mcpManager 的 DSH 上什么也不做
     await localMcp.start().catch(() => undefined);
     return () => {
       void feishuChat.stop();
+      void dingTalkChat.stop();
       localMcp.stop();
       disposeWorkbenchTool();
       bridge.stop();

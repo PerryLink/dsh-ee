@@ -7,6 +7,11 @@ import type zh from "./zh.js";
 import type { Messages } from "./types.js";
 
 const en = {
+  dingTalkChat: {
+    prompt: "This message came from you via DingTalk (message id={{id}}). Do the requested work, then send the answer back using ee_dingtalk: action=reply, id={{id}}, text=your answer. Use concise plain text.\n\nDingTalk message:\n{{text}}",
+    handled: "Handled in DSH on your computer. No answer was sent by the model.",
+    failed: "DSH could not handle your message. Check DSH on your computer and retry.",
+  },
   feishuChat: {
     prompt: "This message came from you via Feishu (message id={{id}}). Do the requested work, then send the final answer back to Feishu with the ee_feishu tool: action=reply, id={{id}}, text=your answer. Use concise, plain Markdown.\n\nFeishu message:\n{{text}}",
     handled: "Handled in DSH on your computer. Open DSH for details.",

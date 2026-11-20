@@ -4,6 +4,11 @@
  * 日志、命令名、URL、JSON、包名、环境变量不翻译。
  */
 const zh = {
+  dingTalkChat: {
+    prompt: "以下是你本人从钉钉发来的消息（消息 id={{id}}）。处理完成后请用 ee_dingtalk 回复：action=reply，id={{id}}，text=你的答案。请用简洁的纯文本。\n\n钉钉消息：\n{{text}}",
+    handled: "已在你电脑的 DSH 中处理，模型未发送文字回复。",
+    failed: "DSH 未能处理这条消息，请检查电脑上的 DSH 后重试。",
+  },
   feishuChat: {
     prompt: "以下是你本人从飞书发来的消息（消息 id={{id}}）。请完成其中的工作，然后使用 ee_feishu 工具将最终答案发回飞书：action=reply，id={{id}}，text=你的答案。答案请使用简洁的普通 Markdown。\n\n飞书消息：\n{{text}}",
     handled: "已在电脑上的 DSH 中处理，请打开 DSH 查看详情。",

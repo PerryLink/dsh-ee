@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hikariming/dsh-ee/server/internal/dingtalk"
 	"github.com/hikariming/dsh-ee/server/internal/kb"
 	"github.com/hikariming/dsh-ee/server/internal/lease"
 	"github.com/hikariming/dsh-ee/server/internal/oidc"
@@ -64,7 +65,8 @@ type Options struct {
 	// dshfind 插件目录地址；为空时用默认的 api.dshfind.com。
 	FeedURL string
 	// 访问 OIDC 身份提供方的客户端；测试里可替换。
-	OIDCClient *http.Client
+	OIDCClient         *http.Client
+	DingTalkStreamDial dingtalk.DialStream
 	// 数据中台（datahub.go）；为空表示没开，DataHubErr 说明原因
 	DataHub    *datahub.Hub
 	DataHubErr string
@@ -160,6 +162,9 @@ type Options struct {
 type Server struct {
 	feishuChatMu       sync.Mutex
 	feishuChatPresence map[int64]*feishuChatPresence
+	dingTalkState      dingTalkChatState
+	dingTalkClientMu   sync.Mutex
+	dingTalkAPIClient  *dingtalk.Client
 
 	initAdmin       initAdminState
 	store           *store.Store
@@ -604,6 +609,7 @@ func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
 func (s *Server) RunBackground(ctx context.Context) {
 	go s.runLDAPSync(ctx)
 	go s.runFeishuSync(ctx)
+	go s.runDingTalkChat(ctx)
 	go s.runExtHealth(ctx)
 	go s.runKBSourceSync(ctx)
 	go s.runElevationExpiry(ctx)
