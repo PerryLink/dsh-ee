@@ -954,17 +954,15 @@ func (s *Server) handleHubNewVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// 范围申请还在审核时，按申请的范围判断：否则「现在只有自己能用」的新版本免审上线，
-	// 范围一批准，没人审过的内容就直接推给了申请的那些人
-	reviewScope := a.Scope
-	if a.PendingScope != nil {
-		reviewScope = *a.PendingScope
-	}
-	status, err := s.initialStatus(r, a.Kind, reviewScope)
-	if err != nil {
-		s.internalErr(w, r, err)
-		return
-	}
-	ver, err := s.store.AddAssetVersion(r.Context(), a.ID, raw, status, v.user.ID)
+	// 范围一批准，没人审过的内容就直接推给了申请的那些人。
+	// 判断放在资产行锁里做（用锁内读到的范围），不用上面读到的 a：负责人同时提交范围申请
+	// 和新版本时，锁外快照里还没有申请，新版本会免审上线，而批准申请时并不看线上是哪个版本。
+	ver, status, err := s.store.AddAssetVersionWith(r.Context(), a.ID, raw, v.user.ID, func(scope store.Scope, pending *store.Scope) (string, error) {
+		if pending != nil {
+			scope = *pending
+		}
+		return s.initialStatus(r, a.Kind, scope)
+	})
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
