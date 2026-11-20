@@ -102,8 +102,7 @@ export function EmbedSettings() {
   return (
     <div className="space-y-5">
       <Notice>
-        <p className="text-sm leading-6">{t("settingsAdmin.embed.desc")}</p>
-        <p className="mt-1 text-xs leading-5 text-neutral-500">{t("settingsAdmin.embed.saveHint")}</p>
+        <p className="text-xs leading-5 text-neutral-500">{t("settingsAdmin.embed.saveHint")}</p>
       </Notice>
 
       <ToggleRow
