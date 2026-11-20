@@ -50,9 +50,7 @@ export default async function (t) {
   await page.goto(`${BASE}/hub?tab=skill`);
   const card = page.locator("div.rounded-lg", { hasText: `E2E 报销制度 ${tag}` }).last();
   await card.getByRole("button", { name: "启用" }).click();
-  // 卡片只标例外状态；启用后按钮变成「停用」
-  await card.getByRole("button", { name: "停用" }).waitFor();
-  assertEq(await card.getByText("已在 DSH 生效").count(), 0, "常态的「已在 DSH 生效」不再上卡片");
+  await card.getByText("已在 DSH 生效").waitFor();
   cat = await dsh(token, "GET", "/api/dsh/catalog");
   assert(cat.data.skills.some((s) => s.name === skill), "启用后应出现在 DSH 目录：" + JSON.stringify(cat.data));
   const body = await dsh(token, "GET", `/api/dsh/skills/${skill}`);

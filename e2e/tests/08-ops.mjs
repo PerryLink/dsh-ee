@@ -44,6 +44,7 @@ export default async function (t) {
   assertEq((await api(emp, "GET", "/api/admin/auth/ldap")).status, 403, "员工读 LDAP 配置");
   await emp.goto(`${BASE}/workbench`);
   await emp.getByRole("heading", { name: "在用的应用" }).waitFor();
+  await emp.waitForLoadState("networkidle");
   // 空卡、值为 0 的指标、开发卡都不占位
   assertEq(await emp.getByRole("heading", { name: "装过的能力" }).count(), 0, "没装过能力时不显示空卡");
   assertEq(await emp.getByText("我的密钥", { exact: true }).count(), 0, "0 个密钥不显示指标");

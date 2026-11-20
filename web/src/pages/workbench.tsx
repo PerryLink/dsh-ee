@@ -115,7 +115,7 @@ export default function Workbench() {
       <AccessRequestsCard className="mt-4" />
 
       {/* 开发双卡：文档与样例的发现入口（位置在权限申请卡之后） */}
-      {can("extensions.develop") && <DevCards className="mt-4" />}
+      {(can("extensions.develop") || can("plugins.manage")) && <DevCards className="mt-4" />}
 
       <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <Card>
