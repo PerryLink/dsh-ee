@@ -2314,3 +2314,19 @@ export function formatTime(iso: string | null) {
   if (!iso) return "—";
   return formatDateTime(iso);
 }
+
+/**
+ * 门户上「下载 DSH x.y.z」和插件详情里「企业推荐版本」用的那一个推荐版本。
+ * 推荐是每个平台（mac-arm64 / mac-x64 / win-x64）各一个，各平台的版本号可能不同：
+ * 优先取访问者自己系统的平台，认不出系统时取发布最晚的那个，不再随便取列表里第一个。
+ */
+export function recommendedDshRelease(releases: DshRelease[] | undefined): DshRelease | undefined {
+  const recommended = (releases ?? []).filter((r) => r.recommended);
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  const prefix = /Mac/i.test(ua) ? "mac-" : /Win/i.test(ua) ? "win-" : "";
+  const own = prefix ? recommended.filter((r) => r.target.startsWith(prefix)) : [];
+  return (own.length ? own : recommended).reduce<DshRelease | undefined>(
+    (best, r) => (!best || Date.parse(r.released_at) > Date.parse(best.released_at) ? r : best),
+    undefined,
+  );
+}

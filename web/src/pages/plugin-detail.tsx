@@ -2,7 +2,7 @@ import { useParams } from "react-router";
 import { ArrowLeft, Building2, CheckCircle2, ExternalLink, SearchX } from "lucide-react";
 import { categoryLabel } from "../lib/catalog";
 import { formatNumber } from "../lib/format";
-import { api, formatBytes, formatTime, toPlugin } from "../lib/api";
+import { api, formatBytes, formatTime, recommendedDshRelease, toPlugin } from "../lib/api";
 import { useApi } from "../lib/use-api";
 import { pluginAddCommand } from "../lib/install";
 import { useScoring } from "../lib/store";
@@ -47,7 +47,7 @@ function Loader({ name }: { name: string }) {
       {d && (
         <Detail
           d={d}
-          core={releaseData.data?.releases.find((r) => r.recommended)?.version}
+          core={recommendedDshRelease(releaseData.data?.releases)?.version}
           scoringUpstream={scoring.upstream}
           profile={connect.data?.profile}
         />

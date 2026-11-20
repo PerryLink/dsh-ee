@@ -5,7 +5,7 @@ import { categoryIds, categoryLabel, kindOf } from "../lib/catalog";
 import type { PluginKind } from "../lib/types";
 import { useScoring, useStore } from "../lib/store";
 import { useAuth } from "../lib/auth";
-import { api, type AssetKind, type HubAsset } from "../lib/api";
+import { api, recommendedDshRelease, type AssetKind, type HubAsset } from "../lib/api";
 import { useAction, useApi } from "../lib/use-api";
 import { ASSET_KINDS, KIND_ICONS } from "../lib/hub";
 import { PluginCard } from "../components/plugin-card";
@@ -220,7 +220,7 @@ export default function Hub() {
   const releaseData = useApi(api.dshReleases);
   const assets = hub.data?.assets ?? [];
   const [banner, setBanner] = useState(() => localStorage.getItem(BANNER_KEY) !== "off");
-  const recommendedCore = releaseData.data?.releases.find((r) => r.recommended);
+  const recommendedCore = recommendedDshRelease(releaseData.data?.releases);
   const count = (k: Tab) => (k === "all" ? assets.length + plugins.length : k === "plugin" ? plugins.length : assets.filter((a) => a.kind === k).length);
   const setTab = (k: Tab) => setParams(k === "all" ? {} : { tab: k }, { replace: true });
 

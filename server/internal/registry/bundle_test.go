@@ -377,3 +377,79 @@ func TestBundleExportSinceUsesLocalPublishTime(t *testing.T) {
 		t.Fatalf("增量包应只有上次导出之后上架的 since-a@1.1.0：%v", got)
 	}
 }
+
+// published_at 只在第一次上架时写入：下架 → 全量导出（不含它）→ 恢复之后，增量包要靠
+// reviewed_at 把它带上，否则离线环境永远收不到恢复的版本。
+func TestBundleExportSinceIncludesRestored(t *testing.T) {
+	svc := newDBBundleService(t)
+	ctx := context.Background()
+	if err := svc.store.EnsureUpstreamPackage(ctx, &store.NpmPackage{Name: "since-r"}); err != nil {
+		t.Fatal(err)
+	}
+	lastYear := time.Now().UTC().Truncate(time.Millisecond).AddDate(-1, 0, 0)
+	for _, version := range []string{"1.0.0", "1.1.0"} {
+		raw := tgz(t, map[string]string{"package/package.json": `{"name":"since-r","version":"` + version + `"}`})
+		d, err := svc.blobs.Put(bytes.NewReader(raw), int64(len(raw))+1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := &store.NpmVersion{Name: "since-r", Version: version, Manifest: json.RawMessage(`{"name":"since-r","version":"` + version + `"}`),
+			Integrity: d.Integrity, Shasum: d.Shasum, Size: d.Size, BlobKey: d.Key, Status: store.StatusPublished, CreatedAt: lastYear, PublishedAt: &lastYear}
+		if err := svc.store.InsertMirroredVersion(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	export := func(since *time.Time) BundleManifest {
+		t.Helper()
+		var buf bytes.Buffer
+		if _, err := svc.ExportBundle(ctx, &buf, since); err != nil {
+			t.Fatal(err)
+		}
+		tr := tar.NewReader(&buf)
+		if _, err := tr.Next(); err != nil {
+			t.Fatal(err)
+		}
+		var man BundleManifest
+		if err := json.NewDecoder(tr).Decode(&man); err != nil {
+			t.Fatal(err)
+		}
+		return man
+	}
+	versionsOf := func(man BundleManifest) []string {
+		var got []string
+		for _, p := range man.Packages {
+			if p.Name != "since-r" {
+				continue
+			}
+			for _, v := range p.Versions {
+				got = append(got, v.Version)
+			}
+		}
+		sort.Strings(got)
+		return got
+	}
+
+	if _, err := svc.Review(ctx, 1, "since-r", "1.1.0", "unpublish", "有问题"); err != nil {
+		t.Fatal(err)
+	}
+	full := export(nil)
+	if got := versionsOf(full); len(got) != 1 || got[0] != "1.0.0" {
+		t.Fatalf("全量包不应含已下架的 1.1.0：%v", got)
+	}
+	// reviewed_at 按毫秒存，隔开一点免得和全量包的时间落在同一毫秒里
+	time.Sleep(5 * time.Millisecond)
+	if _, err := svc.Review(ctx, 1, "since-r", "1.1.0", "restore", ""); err != nil {
+		t.Fatal(err)
+	}
+	v, err := svc.store.GetVersion(ctx, "since-r", "1.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.PublishedAt == nil || !v.PublishedAt.Equal(lastYear) {
+		t.Fatalf("恢复不应改动 published_at：%v", v.PublishedAt)
+	}
+	since := full.CreatedAt
+	if got := versionsOf(export(&since)); len(got) != 1 || got[0] != "1.1.0" {
+		t.Fatalf("增量包应只含全量导出之后恢复的 1.1.0：%v", got)
+	}
+}
