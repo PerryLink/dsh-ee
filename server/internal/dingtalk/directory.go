@@ -123,7 +123,7 @@ func (c *Client) oapiCall(ctx context.Context, step, path string, in, result any
 		if err != nil {
 			return fmt.Errorf("%s: invalid response", step)
 		}
-		return &APIError{Step: step, Code: code, Msg: clip(env.Msg, 200)}
+		return &APIError{Step: step, Code: code, Msg: clip(strings.ReplaceAll(env.Msg, token, "[redacted]"), 200)}
 	}
 	if err := json.Unmarshal(env.Result, result); err != nil {
 		return fmt.Errorf("%s: invalid response", step)
@@ -168,8 +168,11 @@ func (c *Client) Directory(ctx context.Context) (*Directory, error) {
 				seenUsers[u.UserID] = true
 				out.Users = append(out.Users, u)
 			}
-			if !page.HasMore || page.Next <= cursor {
+			if !page.HasMore {
 				break
+			}
+			if page.Next <= cursor {
+				return nil, fmt.Errorf("DingTalk department members: invalid pagination cursor for department %d", dept)
 			}
 			cursor = page.Next
 		}
@@ -195,6 +198,9 @@ func (c *Client) Lookup(ctx context.Context, userID string) (*User, error) {
 	var u User
 	if err := c.oapiCall(ctx, "DingTalk member lookup", "/topapi/v2/user/get", map[string]string{"userid": userID}, &u); err != nil {
 		return nil, err
+	}
+	if u.UserID != userID || userID == "" {
+		return nil, errors.New("DingTalk member lookup: response did not match requested staff ID")
 	}
 	return &u, nil
 }

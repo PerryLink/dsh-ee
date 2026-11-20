@@ -57,7 +57,7 @@ func TestDirectoryPagesDepartmentsAndConfirmsLeavers(t *testing.T) {
 		case "11/0":
 			fmt.Fprint(w, `{"errcode":0,"result":{"has_more":false,"list":[{"userid":"u1","name":"柏博","dept_id_list":[10,11]}]}}`)
 		case "20/0":
-			fmt.Fprint(w, `{"errcode":60011,"errmsg":"没有调用该接口的权限"}`)
+			fmt.Fprint(w, `{"errcode":60011,"errmsg":"没有调用该接口的权限: app-token"}`)
 		default:
 			fmt.Fprint(w, `{"errcode":0,"result":{"has_more":false,"list":[]}}`)
 		}
@@ -97,8 +97,31 @@ func TestDirectoryPagesDepartmentsAndConfirmsLeavers(t *testing.T) {
 	if got, err := c.UserState(ctx, "broken"); err == nil || got == UserGone {
 		t.Fatalf("未知错误应原样返回：%d %v", got, err)
 	}
+	if _, err := c.Lookup(ctx, "wrong-user"); err == nil {
+		t.Fatal("成员详情返回另一人的 userId 时不能用来关联身份")
+	}
 	if tokens != 1 {
 		t.Fatalf("应用 token 应缓存复用：取了 %d 次", tokens)
+	}
+}
+
+func TestDirectoryRejectsNonAdvancingCursor(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1.0/oauth2/accessToken", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"accessToken":"app-token","expireIn":7200}`)
+	})
+	mux.HandleFunc("POST /topapi/v2/user/list", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"errcode":0,"result":{"has_more":true,"next_cursor":0,"list":[{"userid":"u1"}]}}`)
+	})
+	mux.HandleFunc("POST /topapi/v2/department/listsub", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"errcode":0,"result":[]}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	target, _ := url.Parse(srv.URL)
+	c := &Client{HTTP: &http.Client{Transport: rewrite{target}}, ID: "app", Secret: "app-secret"}
+	if dir, err := c.Directory(context.Background()); dir != nil || err == nil || !strings.Contains(err.Error(), "pagination cursor") {
+		t.Fatalf("游标不前进时不能返回部分通讯录：%+v %v", dir, err)
 	}
 }
 
