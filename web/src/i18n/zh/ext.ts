@@ -85,6 +85,7 @@ export default {
     desc: "同步目录字段；勾选「以同步为准」会覆盖手工值。",
     source: "来源",
     sourceFeishu: "飞书 / Feishu",
+    sourceDingTalk: "钉钉 / DingTalk",
     attr: "目录里的属性",
     attrHint: "LDAP 写属性名（title、employeeType…）；飞书写 job_title、city、employee_no、employee_type，或自定义字段的 id（C-…）",
     field: "用户字段",

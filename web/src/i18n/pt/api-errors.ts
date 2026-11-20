@@ -3,6 +3,17 @@ import type zhNs from "../zh/api-errors";
 import type { Messages } from "../types";
 
 export default {
+  identity: {
+    entrance_disabled: "Este método de login está desativado e não pode ser vinculado.",
+    session_changed: "Sua sessão mudou. Entre novamente antes de vincular a identidade.",
+    provider_invalid: "Só é possível vincular identidades do Feishu e do DingTalk.",
+    account_ineligible: "Somente contas de funcionários criadas pelo login único da empresa podem vincular identidades do Feishu ou do DingTalk.",
+    home_provider: "Esta conta já usa este provedor para entrar. Não é possível vincular outra identidade dele.",
+    home_elsewhere: "Esta identidade é usada para entrar em outra conta do dsh-ee. Fale com um administrador para solicitar a fusão das contas.",
+    linked_elsewhere: "Esta identidade pertence a outra conta do dsh-ee. Se ainda estiver vinculada a ela, desvincule-a nessa conta primeiro; caso contrário, fale com um administrador.",
+    already_linked: "Esta conta já tem uma identidade vinculada a este provedor. Desvincule-a antes de trocar.",
+    unlink_missing: "Não há nenhuma identidade vinculada para desvincular.",
+  },
   dingtalk_chat: {
     disabled: "O bot do DingTalk está desativado.",
     unbound: "Entre com DingTalk e conecte o DSH primeiro.",

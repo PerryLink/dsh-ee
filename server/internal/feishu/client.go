@@ -135,14 +135,18 @@ type Department struct {
 }
 
 type User struct {
-	OpenID        string   `json:"open_id"`
-	Name          string   `json:"name"`
-	Email         string   `json:"email"`
-	EmployeeNo    string   `json:"employee_no"`
-	DepartmentIDs []string `json:"department_ids"`
-	JobTitle      string   `json:"job_title,omitempty"`
-	City          string   `json:"city,omitempty"`
-	EmployeeType  int      `json:"employee_type,omitempty"`
+	OpenID string `json:"open_id"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	// 手机号是飞书账号的登录号码（带国际区号，需要「获取用户手机号」权限）；
+	// enterprise_email 是企业分配的邮箱。两者用来安全地关联同一个人的钉钉身份。
+	Mobile          string   `json:"mobile,omitempty"`
+	EnterpriseEmail string   `json:"enterprise_email,omitempty"`
+	EmployeeNo      string   `json:"employee_no"`
+	DepartmentIDs   []string `json:"department_ids"`
+	JobTitle        string   `json:"job_title,omitempty"`
+	City            string   `json:"city,omitempty"`
+	EmployeeType    int      `json:"employee_type,omitempty"`
 	// 企业在飞书管理后台加的自定义字段（应用要有读取权限）
 	CustomAttrs []struct {
 		ID    string `json:"id"`
@@ -228,6 +232,39 @@ func (c *Client) UserState(ctx context.Context, openID string) (UserState, error
 		return UserGone, nil
 	}
 	return UserActive, nil
+}
+
+// VerifiedMobile 返回带国际区号的手机号（+8613800000000）；没有区号的不算。
+func (u User) VerifiedMobile() string {
+	raw := strings.TrimSpace(u.Mobile)
+	if !strings.HasPrefix(raw, "+") {
+		return ""
+	}
+	number := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, raw)
+	if number == "" {
+		return ""
+	}
+	return "+" + number
+}
+
+// Lookup 单独查一名员工的资料。
+func (c *Client) Lookup(ctx context.Context, openID string) (*User, error) {
+	token, err := c.tenantToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		User User `json:"user"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/open-apis/contact/v3/users/"+url.PathEscape(openID)+"?user_id_type=open_id", nil, &out, token); err != nil {
+		return nil, err
+	}
+	return &out.User, nil
 }
 
 type Directory struct {

@@ -75,7 +75,7 @@ export default {
       connection: { tool: "Configured connection tool", request: "Requested a connection", credential_set: "Saved a connection credential", credential_delete: "Deleted a connection credential", credential_revoke: "Revoked an employee's connection credential", ee_jwt_rotate: "Rotated the ee_jwt signing key", shared_credential_set: "Saved a named shared credential", shared_credential_delete: "Deleted a named shared credential" },
       extension: { install: "Installed or upgraded an extension", rollback: "Rolled back an extension version" },
       connect: { publish: "Published connect plugin" },
-      oidc: { update: "Changed OIDC config", bind: "Bound SSO identity", feishu_sync: "Synced Feishu organization" },
+      oidc: { update: "Changed OIDC config", bind: "Bound SSO identity", feishu_sync: "Synced Feishu organization", dingtalk_sync: "Synced DingTalk organization", identity_link: "Linked a Feishu / DingTalk identity", identity_unlink: "Unlinked a Feishu / DingTalk identity" },
       access: { request: "Requested access" },
       app: { export: "Exported app", import: "Imported app" },
       demo: { clear: "Cleared demo data", import: "Imported demo data" },

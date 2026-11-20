@@ -169,7 +169,7 @@ export default {
       oidc: {
         update: "Alterar configuração OIDC",
         bind: "Vincular identidade corporativa",
-        feishu_sync: "Sincronização da organização Feishu",
+        feishu_sync: "Sincronização da organização Feishu", dingtalk_sync: "Sincronização da organização DingTalk", identity_link: "Vincular identidade Feishu / DingTalk", identity_unlink: "Desvincular identidade Feishu / DingTalk",
       },
       access: {
         request: "Solicitar acesso",

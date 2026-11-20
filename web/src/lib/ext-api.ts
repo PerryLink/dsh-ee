@@ -70,7 +70,7 @@ export interface ObjectFieldView extends AccessField {
 }
 
 export interface FieldSyncMapping {
-  source: "ldap" | "feishu";
+  source: "ldap" | "feishu" | "dingtalk";
   attr: string;
   field: string;
   override: boolean;

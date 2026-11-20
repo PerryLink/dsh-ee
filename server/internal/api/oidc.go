@@ -28,9 +28,11 @@ import (
 
 const (
 	oidcSettingsKey = "oidc"
-	oidcStateCookie = "dsh_ee_oidc"
-	oidcCallback    = "/api/auth/oidc/callback"
-	oidcStateTTL    = 10 * time.Minute
+	// 第二登录入口：主登录方式是飞书时可以再开钉钉，反过来也一样，同一名员工用哪边登录都进同一个账号。
+	oidcSecondaryKey = "oidc_secondary"
+	oidcStateCookie  = "dsh_ee_oidc"
+	oidcCallback     = "/api/auth/oidc/callback"
+	oidcStateTTL     = 10 * time.Minute
 )
 
 type oidcStored struct {
@@ -41,8 +43,15 @@ type oidcStored struct {
 }
 
 func (s *Server) loadOIDC(ctx context.Context) (*oidc.Config, error) {
+	return s.loadOIDCSlot(ctx, oidcSettingsKey)
+}
+
+func (s *Server) loadOIDCSlot(ctx context.Context, key string) (*oidc.Config, error) {
 	st := oidcStored{Config: *oidc.Defaults()}
-	if _, err := s.store.GetSettingJSON(ctx, oidcSettingsKey, &st); err != nil {
+	if key == oidcSecondaryKey {
+		st.Preset, st.Name = "", ""
+	}
+	if _, err := s.store.GetSettingJSON(ctx, key, &st); err != nil {
 		return nil, err
 	}
 	if st.RoleMappings == nil {
@@ -74,7 +83,7 @@ func (s *Server) loadOIDC(ctx context.Context) (*oidc.Config, error) {
 	return &cfg, nil
 }
 
-func (s *Server) saveOIDC(ctx context.Context, cfg *oidc.Config, userID int64) error {
+func (s *Server) saveOIDC(ctx context.Context, key string, cfg *oidc.Config, userID int64) error {
 	st := oidcStored{Config: *cfg}
 	if cfg.ClientSecret != "" {
 		sealed, err := s.box.Seal([]byte(cfg.ClientSecret))
@@ -90,12 +99,71 @@ func (s *Server) saveOIDC(ctx context.Context, cfg *oidc.Config, userID int64) e
 		}
 		st.FeishuEncryptKeyEnc = base64.StdEncoding.EncodeToString(sealed)
 	}
-	return s.store.PutSettingJSON(ctx, oidcSettingsKey, st, userID)
+	return s.store.PutSettingJSON(ctx, key, st, userID)
+}
+
+// chatPreset：能互相关联身份的两个来源。
+func chatPreset(preset string) bool { return preset == "feishu" || preset == dingtalk.Preset }
+
+// oidcSecondary 返回生效的第二登录入口。只有主登录方式开着、两边一个是飞书一个是钉钉时才生效；
+// 主登录方式换成别的 IdP 或关掉，第二入口跟着失效，不需要另外清配置。
+func (s *Server) oidcSecondary(ctx context.Context) (*oidc.Config, bool) {
+	primary, err := s.loadOIDC(ctx)
+	if err != nil {
+		return nil, false
+	}
+	cfg, err := s.loadOIDCSecondary(ctx, primary)
+	return cfg, err == nil && cfg != nil
+}
+
+func (s *Server) loadOIDCSecondary(ctx context.Context, primary *oidc.Config) (*oidc.Config, error) {
+	if !oidcSlotEnabled(primary) || !chatPreset(primary.Preset) {
+		return nil, nil
+	}
+	cfg, err := s.loadOIDCSlot(ctx, oidcSecondaryKey)
+	if err != nil || !oidcSlotEnabled(cfg) || !chatPreset(cfg.Preset) || cfg.Preset == primary.Preset {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// oidcByPreset 在主登录方式和第二登录入口里找开着的飞书（或钉钉）配置；第二个返回值是它所在的配置键。
+func (s *Server) oidcByPreset(ctx context.Context, preset string) (*oidc.Config, string) {
+	cfg, key, _ := s.loadOIDCByPreset(ctx, preset)
+	return cfg, key
+}
+
+func (s *Server) loadOIDCByPreset(ctx context.Context, preset string) (*oidc.Config, string, error) {
+	primary, err := s.loadOIDC(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if oidcSlotEnabled(primary) && primary.Preset == preset {
+		return primary, oidcSettingsKey, nil
+	}
+	if cfg, err := s.loadOIDCSecondary(ctx, primary); err != nil {
+		return nil, "", err
+	} else if cfg != nil && cfg.Preset == preset {
+		return cfg, oidcSecondaryKey, nil
+	}
+	return nil, "", nil
+}
+
+func oidcSlotEnabled(cfg *oidc.Config) bool {
+	return cfg != nil && cfg.Enabled && cfg.Issuer != "" && cfg.ClientID != ""
+}
+
+// oidcSlotKey：管理接口用 ?slot=secondary 指第二登录入口。
+func oidcSlotKey(r *http.Request) string {
+	if r.URL.Query().Get("slot") == "secondary" {
+		return oidcSecondaryKey
+	}
+	return oidcSettingsKey
 }
 
 func (s *Server) oidcEnabled(ctx context.Context) (*oidc.Config, bool) {
 	cfg, err := s.loadOIDC(ctx)
-	if err != nil || !cfg.Enabled || cfg.Issuer == "" || cfg.ClientID == "" {
+	if err != nil || !oidcSlotEnabled(cfg) {
 		return nil, false
 	}
 	return cfg, true
@@ -143,9 +211,9 @@ type oidcView struct {
 	RedirectURI         string `json:"redirectUri"`
 }
 
-// GET /api/admin/auth/oidc
+// GET /api/admin/auth/oidc（?slot=secondary 是第二登录入口）
 func (s *Server) handleGetOIDC(w http.ResponseWriter, r *http.Request) {
-	cfg, err := s.loadOIDC(r.Context())
+	cfg, err := s.loadOIDCSlot(r.Context(), oidcSlotKey(r))
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -165,12 +233,12 @@ type oidcInput struct {
 	RedirectURI     *string `json:"redirectUri"`
 }
 
-func (s *Server) resolveOIDCInput(ctx context.Context, in *oidcInput) (*oidc.Config, string, error) {
+func (s *Server) resolveOIDCInput(ctx context.Context, key string, in *oidcInput) (*oidc.Config, string, error) {
 	cfg := in.Config
 	if in.ClientSecret != nil {
 		cfg.ClientSecret = strings.TrimSpace(*in.ClientSecret)
 	} else {
-		cur, err := s.loadOIDC(ctx)
+		cur, err := s.loadOIDCSlot(ctx, key)
 		if err != nil {
 			return nil, "", err
 		}
@@ -179,11 +247,19 @@ func (s *Server) resolveOIDCInput(ctx context.Context, in *oidcInput) (*oidc.Con
 	if in.FeishuEncryptKey != nil {
 		cfg.FeishuEncryptKey = strings.TrimSpace(*in.FeishuEncryptKey)
 	} else {
-		cur, err := s.loadOIDC(ctx)
+		cur, err := s.loadOIDCSlot(ctx, key)
 		if err != nil {
 			return nil, "", err
 		}
 		cfg.FeishuEncryptKey = cur.FeishuEncryptKey
+	}
+	if key == oidcSecondaryKey {
+		cfg.FeishuNotify, cfg.FeishuNotifyActions = false, false
+		if cfg.Enabled && !chatPreset(cfg.Preset) {
+			return nil, "第二登录入口只能是飞书或钉钉", nil
+		}
+	} else {
+		cfg.LinkByContact = false
 	}
 	if msg := cfg.Validate(); msg != "" {
 		return nil, msg, nil
@@ -269,7 +345,8 @@ func (s *Server) handlePutOIDC(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	cfg, msg, err := s.resolveOIDCInput(r.Context(), &in)
+	key := oidcSlotKey(r)
+	cfg, msg, err := s.resolveOIDCInput(r.Context(), key, &in)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -278,10 +355,20 @@ func (s *Server) handlePutOIDC(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
-	cur, err := s.loadOIDC(r.Context())
+	cur, err := s.loadOIDCSlot(r.Context(), key)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
+	}
+	if key == oidcSecondaryKey && cfg.Enabled {
+		// 两个入口必须一个是飞书一个是钉钉：同一个来源开两次，身份就分不清属于哪个应用了。
+		if primary, err := s.loadOIDC(r.Context()); err != nil {
+			s.internalErr(w, r, err)
+			return
+		} else if !primary.Enabled || !chatPreset(primary.Preset) || primary.Preset == cfg.Preset {
+			writeErr(w, http.StatusBadRequest, "第二登录入口要求主登录方式已开启，并且两边一个是飞书、一个是钉钉")
+			return
+		}
 	}
 	if msg := s.checkOIDCSecretTarget(&in, cfg, cur); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
@@ -298,11 +385,11 @@ func (s *Server) handlePutOIDC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.saveOIDC(r.Context(), cfg, currentUser(r).ID); err != nil {
+	if err := s.saveOIDC(r.Context(), key, cfg, currentUser(r).ID); err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
-	s.audit(r, auditOIDCUpdate, cfg.Issuer, map[string]any{"enabled": cfg.Enabled, "mappings": len(cfg.RoleMappings), "secret_changed": in.ClientSecret != nil, "require_email_verified": cfg.RequireEmailVerified})
+	s.audit(r, auditOIDCUpdate, cfg.Issuer, map[string]any{"slot": key, "enabled": cfg.Enabled, "mappings": len(cfg.RoleMappings), "secret_changed": in.ClientSecret != nil, "require_email_verified": cfg.RequireEmailVerified})
 	s.handleGetOIDC(w, r)
 }
 
@@ -312,7 +399,7 @@ func (s *Server) handleTestOIDC(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	cfg, msg, err := s.resolveOIDCInput(r.Context(), &in)
+	cfg, msg, err := s.resolveOIDCInput(r.Context(), oidcSlotKey(r), &in)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -349,6 +436,10 @@ const oidcStateKind = "oidc_state"
 
 type oidcPending struct {
 	nonce, verifier, next, dingTalkTarget string
+	// 这次登录走的是哪个配置（主登录方式或第二登录入口）
+	slot string
+	// 非 0 表示这不是登录，而是已登录的这个账号在绑定另一个身份
+	bindUser int64
 }
 
 // oidcStatePlain 是 OIDC 登录请求里真正要带过回调的东西；PKCE verifier 与 nonce 是敏感值，
@@ -358,6 +449,8 @@ type oidcStatePlain struct {
 	Verifier       string `json:"verifier"`
 	Next           string `json:"next"`
 	DingTalkTarget string `json:"dingTalkTarget,omitempty"`
+	Slot           string `json:"slot,omitempty"`
+	BindUser       int64  `json:"bindUser,omitempty"`
 }
 
 // oidcStateSealed 是落库的 payload：enc 是 oidcStatePlain 用主密钥 AES-GCM 加密后的 base64。
@@ -369,7 +462,7 @@ type oidcStateSealed struct {
 // putOIDCState 保存一次登录请求（state 只存 sha256，nonce/PKCE verifier 加密后存）。
 // 多实例：回调可能落到任意实例，所以放在共享表 ephemeral_states 里。
 func (s *Server) putOIDCState(ctx context.Context, state string, p oidcPending, ttl time.Duration) error {
-	plain, err := json.Marshal(oidcStatePlain{Nonce: p.nonce, Verifier: p.verifier, Next: p.next, DingTalkTarget: p.dingTalkTarget})
+	plain, err := json.Marshal(oidcStatePlain{Nonce: p.nonce, Verifier: p.verifier, Next: p.next, DingTalkTarget: p.dingTalkTarget, Slot: p.slot, BindUser: p.bindUser})
 	if err != nil {
 		return err
 	}
@@ -412,7 +505,7 @@ func (s *Server) takeOIDCState(ctx context.Context, state string) (*oidcPending,
 	if err := json.Unmarshal(plain, &p); err != nil {
 		return nil, err
 	}
-	return &oidcPending{nonce: p.Nonce, verifier: p.Verifier, next: p.Next, dingTalkTarget: p.DingTalkTarget}, nil
+	return &oidcPending{nonce: p.Nonce, verifier: p.Verifier, next: p.Next, dingTalkTarget: p.DingTalkTarget, slot: p.Slot, bindUser: p.BindUser}, nil
 }
 
 func randString(n int) string {
@@ -437,9 +530,36 @@ func loginError(w http.ResponseWriter, r *http.Request, msg string) {
 	http.Redirect(w, r, "/login?oidc_error="+url.QueryEscape(msg), http.StatusFound)
 }
 
+// oidcSlot 按配置键取开着的登录配置。
+func (s *Server) oidcSlot(ctx context.Context, key string) (*oidc.Config, bool) {
+	if key == oidcSecondaryKey {
+		return s.oidcSecondary(ctx)
+	}
+	return s.oidcEnabled(ctx)
+}
+
 // GET /api/auth/oidc/start?next=…：跳到 IdP 登录。
+// provider=feishu|dingtalk 指定从哪个入口登录（不带就是主登录方式）；bind=1 是已登录的员工绑定另一个身份。
 func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
+	slot := oidcSettingsKey
 	cfg, ok := s.oidcEnabled(r.Context())
+	if provider := r.URL.Query().Get("provider"); provider != "" {
+		cfg, slot = s.oidcByPreset(r.Context(), provider)
+		ok = cfg != nil
+	}
+	bindUser := int64(0)
+	if r.URL.Query().Get("bind") != "" {
+		u := s.sessionUser(r)
+		if u == nil {
+			loginError(w, r, "请先登录，再绑定另一个身份")
+			return
+		}
+		if !ok || !chatPreset(cfg.Preset) {
+			bindError(w, codeIdentityEntranceDisabled, "这个登录入口没有开启，不能绑定")
+			return
+		}
+		bindUser = u.ID
+	}
 	if !ok {
 		loginError(w, r, "没有开启企业统一登录")
 		return
@@ -459,7 +579,7 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 		}
 		authURL = oidc.AuthCodeURL(p, cfg, s.oidcRedirect(r), state, nonce, verifier)
 	}
-	if err := s.putOIDCState(r.Context(), state, oidcPending{nonce: nonce, verifier: verifier, next: safeNext(r.URL.Query().Get("next")), dingTalkTarget: dingTalkLoginTarget(cfg)}, oidcStateTTL); err != nil {
+	if err := s.putOIDCState(r.Context(), state, oidcPending{nonce: nonce, verifier: verifier, next: safeNext(r.URL.Query().Get("next")), dingTalkTarget: dingTalkLoginTarget(cfg), slot: slot, bindUser: bindUser}, oidcStateTTL); err != nil {
 		// 状态落不了库就无法完成登录：不回退到进程内存，按暂时不可用处理。
 		s.log.Warn("保存 OIDC 登录状态失败", "err", err)
 		loginError(w, r, "企业统一登录暂时不可用，请稍后再试或联系管理员")
@@ -495,7 +615,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		loginError(w, r, "企业统一登录暂时不可用，请稍后再试或联系管理员")
 		return
 	}
-	cfg, ok := s.oidcEnabled(r.Context())
+	cfg, ok := s.oidcSlot(r.Context(), pending.slot)
 	if !ok {
 		loginError(w, r, "没有开启企业统一登录")
 		return
@@ -519,13 +639,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		subject := dingtalk.ExternalSubject(cfg.DingTalkCorpID, employee.UserID)
-		username := strings.ToLower(employee.UserID)
-		if !usernameRe.MatchString(username) {
-			sum := sha256.Sum256([]byte(subject))
-			username = fmt.Sprintf("ding-%x", sum[:16])
-		}
+		// 登录拿不到部门：角色映射留给组织同步按部门决定，登录时不动已有的角色。
 		cfg.RoleMappings = nil
-		s.finishOIDCLogin(w, r, cfg, oidc.Identity{Subject: subject, Username: username, DisplayName: employee.Name}, pending.next)
+		s.finishOIDCLogin(w, r, cfg, oidc.Identity{Subject: subject, Username: dingTalkUsername(subject, employee.UserID), DisplayName: employee.Name}, pending)
 		return
 	}
 	cl := s.oidcHTTP()
@@ -534,7 +650,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		var claims oidc.Claims
 		claims, err = cl.Exchange(ctx, p, cfg, s.oidcRedirect(r), q.Get("code"), pending.verifier, pending.nonce)
 		if err == nil {
-			s.finishOIDCLogin(w, r, cfg, cfg.Identity(claims), pending.next)
+			s.finishOIDCLogin(w, r, cfg, cfg.Identity(claims), pending)
 			return
 		}
 	}
@@ -543,7 +659,19 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	loginError(w, r, "企业统一登录失败："+truncate(err.Error(), 200))
 }
 
-func (s *Server) finishOIDCLogin(w http.ResponseWriter, r *http.Request, cfg *oidc.Config, id oidc.Identity, next string) {
+// dingTalkUsername 是钉钉成员在 dsh-ee 的用户名：userId 能当用户名就直接用，否则用身份的摘要。
+// 登录和组织同步用同一个规则，谁先建号结果都一样。
+func dingTalkUsername(subject, userID string) string {
+	username := strings.ToLower(userID)
+	if !usernameRe.MatchString(username) {
+		sum := sha256.Sum256([]byte(subject))
+		username = fmt.Sprintf("ding-%x", sum[:16])
+	}
+	return username
+}
+
+func (s *Server) finishOIDCLogin(w http.ResponseWriter, r *http.Request, cfg *oidc.Config, id oidc.Identity, pending *oidcPending) {
+	next := pending.next
 	// 飞书本体和其它 OIDC 身份源共用登录流程；给 open_id 加来源前缀，后续组织同步不会误伤其它 IdP 的 sub。
 	if cfg.Preset == "feishu" && !strings.HasPrefix(id.Subject, "feishu:") {
 		id.Subject = feishu.ExternalSubject(id.Subject)
@@ -554,7 +682,19 @@ func (s *Server) finishOIDCLogin(w http.ResponseWriter, r *http.Request, cfg *oi
 		loginError(w, r, errOIDCEmailUnverified.Error())
 		return
 	}
-	u, bound, err := s.provisionOIDC(r.Context(), cfg, id)
+	if pending.bindUser != 0 {
+		s.finishIdentityBind(w, r, cfg, id, pending.bindUser)
+		return
+	}
+	// 飞书 / 钉钉身份先看是不是某个账号的关联身份（或能不能按核实过的联系方式安全关联），
+	// 是就登录那个账号，资料和角色仍由账号的主身份管；不是才走原来的建号流程。
+	u, err := s.linkedLogin(r.Context(), cfg, id.Subject)
+	bound := false
+	if err == nil && u == nil {
+		if u, bound, err = s.provisionOIDC(r.Context(), cfg, id); err == nil {
+			s.recordLoginIdentity(r.Context(), cfg, u)
+		}
+	}
 	switch {
 	case errors.Is(err, errNotProvisioned), errors.Is(err, errBadCredentials), errors.Is(err, errOIDCConflict), errors.Is(err, errOIDCIdentity), errors.Is(err, errOIDCNoSubject), errors.Is(err, errOIDCEmailMismatch):
 		s.auditAs(r, nil, auditLoginFailed, id.Username, map[string]any{"via": "oidc", "reason": err.Error()})

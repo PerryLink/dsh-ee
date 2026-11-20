@@ -632,14 +632,19 @@ func feishuToast(w http.ResponseWriter, kind, content string) {
 // 之后 action id、消息号、操作者、当前权限、状态和过期都要通过。
 // 来源不对的回 4xx；来源对了以后，审批办不成的原因用 toast 告诉点按钮的人。
 func (s *Server) handleFeishuCard(w http.ResponseWriter, r *http.Request) {
-	cb := s.verifiedFeishuCallback(w, r, false)
+	cfg, err := s.loadOIDC(r.Context())
+	if err != nil || !cfg.Enabled || cfg.Preset != "feishu" || !cfg.FeishuNotifyActions {
+		writeErr(w, http.StatusNotFound, "飞书卡片回调未开启")
+		return
+	}
+	cb := verifiedFeishuCallback(w, r, cfg)
 	if cb == nil {
 		return
 	}
 	s.processFeishuCard(w, r, cb)
 }
 
-func (s *Server) verifiedFeishuCallback(w http.ResponseWriter, r *http.Request, bot bool) *feishuCallback {
+func verifiedFeishuCallback(w http.ResponseWriter, r *http.Request, cfg *oidc.Config) *feishuCallback {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "飞书回调读不了")
@@ -649,11 +654,6 @@ func (s *Server) verifiedFeishuCallback(w http.ResponseWriter, r *http.Request, 
 	var cb feishuCallback
 	if err := json.Unmarshal(body, &cb); err != nil {
 		writeErr(w, http.StatusBadRequest, "飞书回调 JSON 格式错误")
-		return nil
-	}
-	cfg, err := s.loadOIDC(r.Context())
-	if err != nil || !cfg.Enabled || cfg.Preset != "feishu" || (!bot && !cfg.FeishuNotifyActions) || (bot && !cfg.FeishuBot) {
-		writeErr(w, http.StatusNotFound, "飞书卡片回调未开启")
 		return nil
 	}
 	// 这是公开接口：先确认请求是飞书发来的，再看内容。操作人身份取自回调，来源不对就不能信

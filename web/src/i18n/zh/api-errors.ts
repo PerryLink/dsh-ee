@@ -10,6 +10,17 @@
  * es / pt / hi 等语言包合并后按同一份键补译文。
  */
 export default {
+  identity: {
+    entrance_disabled: "这个登录入口没有开启，不能绑定",
+    session_changed: "登录状态变了，请重新登录后再绑定",
+    provider_invalid: "只能绑定飞书或钉钉身份",
+    account_ineligible: "只有通过企业统一登录建立的员工账号可以绑定飞书 / 钉钉身份",
+    home_provider: "这个账号本来就是用这个入口登录的，不能再绑定另一个同类身份",
+    home_elsewhere: "这个身份已经是另一个 dsh-ee 账号的登录身份，不能绑定到当前账号；需要合并请联系管理员",
+    linked_elsewhere: "这个身份属于另一个 dsh-ee 账号。若仍有绑定，请先在原账号解除；否则请联系管理员。",
+    already_linked: "当前账号已经绑定过这个入口的身份；要换一个请先解除",
+    unlink_missing: "没有可以解除的关联身份",
+  },
   dingtalk_chat: {
     disabled: "钉钉机器人未开启",
     unbound: "请先用钉钉登录并连接 DSH",

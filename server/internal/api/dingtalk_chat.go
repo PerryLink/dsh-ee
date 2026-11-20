@@ -26,18 +26,28 @@ type dingTalkChatState struct {
 }
 
 func (s *Server) dingTalkBotConfig(ctx context.Context) (*oidc.Config, bool) {
-	cfg, enabled := s.oidcEnabled(ctx)
-	return cfg, enabled && cfg.Preset == dingtalk.Preset && cfg.DingTalkBot &&
-		cfg.DingTalkCorpID != "" && cfg.ClientSecret != ""
+	cfg, _ := s.loadDingTalkBotConfig(ctx)
+	return cfg, dingTalkBotEnabled(cfg)
 }
 
-func dingTalkIdentity(cfg *oidc.Config, u *store.User) (dingTalkPollKey, bool) {
-	if cfg == nil || cfg.Preset != dingtalk.Preset || cfg.DingTalkCorpID == "" ||
-		u == nil || u.AuthSource != store.AuthOIDC || u.AccountType != store.AccountHuman || u.Disabled {
-		return dingTalkPollKey{}, false
+func (s *Server) loadDingTalkBotConfig(ctx context.Context) (*oidc.Config, error) {
+	cfg, _, err := s.loadOIDCByPreset(ctx, dingtalk.Preset)
+	return cfg, err
+}
+
+func dingTalkBotEnabled(cfg *oidc.Config) bool {
+	return cfg != nil && cfg.DingTalkBot && cfg.DingTalkCorpID != "" && cfg.ClientSecret != ""
+}
+
+func (s *Server) dingTalkIdentity(ctx context.Context, cfg *oidc.Config, u *store.User) (dingTalkPollKey, error) {
+	if cfg == nil || cfg.DingTalkCorpID == "" {
+		return dingTalkPollKey{}, nil
 	}
-	sender, ok := strings.CutPrefix(u.ExternalDN, dingtalk.ExternalSubject(cfg.DingTalkCorpID, ""))
-	return dingTalkPollKey{scope: dingTalkLoginTarget(cfg), sender: sender, userID: u.ID}, ok && sender != ""
+	sender, err := s.chatSender(ctx, u, dingtalk.Preset, dingtalk.ExternalSubject(cfg.DingTalkCorpID, ""))
+	if sender == "" || err != nil {
+		return dingTalkPollKey{}, err
+	}
+	return dingTalkPollKey{scope: dingTalkLoginTarget(cfg), sender: sender, userID: u.ID}, nil
 }
 
 func (s *Server) dingTalkPoll(key dingTalkPollKey, update bool) bool {
@@ -128,12 +138,12 @@ func (s *Server) runDingTalkChat(ctx context.Context) {
 func (s *Server) receiveDingTalkChat(stream context.Context, connected *oidc.Config, msg dingtalk.BotMessage) error {
 	ctx, cancel := context.WithTimeout(stream, 4*time.Second)
 	defer cancel()
-	cfg, err := s.loadOIDC(ctx)
+	cfg, err := s.loadDingTalkBotConfig(ctx)
 	if err != nil {
 		return err
 	}
 	scope := dingTalkLoginTarget(connected)
-	if !cfg.Enabled || !cfg.DingTalkBot || dingTalkLoginTarget(cfg) != scope || cfg.ClientSecret != connected.ClientSecret {
+	if !dingTalkBotEnabled(cfg) || dingTalkLoginTarget(cfg) != scope || cfg.ClientSecret != connected.ClientSecret {
 		return nil
 	}
 	if msg.ConversationType != "1" || msg.RobotCorpID != cfg.DingTalkCorpID ||
@@ -143,23 +153,25 @@ func (s *Server) receiveDingTalkChat(stream context.Context, connected *oidc.Con
 		return nil
 	}
 	subject := dingtalk.ExternalSubject(cfg.DingTalkCorpID, msg.SenderUserID)
-	u, err := s.store.GetUserByExternalDN(ctx, store.AuthOIDC, subject)
+	u, err := s.chatUserBySubject(ctx, subject)
 	if err != nil && !notFound(err) {
 		return err
 	}
-	key, bound := dingTalkIdentity(cfg, u)
+	key := dingTalkPollKey{scope: scope, sender: msg.SenderUserID}
 	lang := "zh"
 	if u != nil {
 		lang = s.userLanguage(ctx, u)
 	}
 	notice := ""
 	text := strings.TrimSpace(msg.Text.Content)
-	if !bound || key.sender != msg.SenderUserID {
+	if !chatEmployee(u) {
 		key.userID, text = 0, ""
 		notice = dingTalkNotice(lang, "请先在 dsh-ee 登录页用钉钉登录，并在电脑上连接 DSH。", "Sign in to dsh-ee with DingTalk first, then connect DSH on your computer.")
 	} else if msg.MessageType != "text" || text == "" {
 		key.userID, text = 0, ""
 		notice = dingTalkNotice(lang, "目前只支持文字消息。", "Only text messages are supported.")
+	} else {
+		key.userID = u.ID
 	}
 	if len(text) > 32*1024 {
 		key.userID, text = 0, ""
@@ -196,10 +208,14 @@ func dingTalkNotice(lang, zh, en string) string {
 
 func (s *Server) handleDingTalkChatStatus(w http.ResponseWriter, r *http.Request) {
 	cfg, enabled := s.dingTalkBotConfig(r.Context())
-	key, bound := dingTalkIdentity(cfg, currentUser(r))
+	key, err := s.dingTalkIdentity(r.Context(), cfg, currentUser(r))
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	bound := key.userID != 0
 	online := false
 	if enabled && bound {
-		var err error
 		online, err = s.dingTalkOnline(r.Context(), key)
 		if err != nil {
 			s.internalErr(w, r, err)
@@ -229,8 +245,12 @@ func (s *Server) handleDingTalkChatNext(w http.ResponseWriter, r *http.Request) 
 			writeErrCode(w, 403, codeAuthForbidden, nil, "这个令牌没有 Agent 权限")
 			return
 		}
-		key, bound := dingTalkIdentity(cfg, currentUser(rp))
-		if !bound {
+		key, err := s.dingTalkIdentity(rp.Context(), cfg, currentUser(rp))
+		if err != nil {
+			s.internalErr(w, rp, err)
+			return
+		}
+		if key.userID == 0 {
 			writeErrCode(w, 404, codeDingTalkChatUnbound, nil, "请先用钉钉登录并连接 DSH")
 			return
 		}
@@ -261,8 +281,12 @@ func (s *Server) handleDingTalkChatReply(w http.ResponseWriter, r *http.Request)
 		writeErrCode(w, 404, codeDingTalkChatDisabled, nil, "钉钉机器人未开启")
 		return
 	}
-	key, bound := dingTalkIdentity(cfg, currentUser(r))
-	if !bound {
+	key, err := s.dingTalkIdentity(r.Context(), cfg, currentUser(r))
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	if key.userID == 0 {
 		writeErrCode(w, 404, codeDingTalkChatUnbound, nil, "请先用钉钉登录并连接 DSH")
 		return
 	}
@@ -295,7 +319,7 @@ func (s *Server) handleDingTalkChatReply(w http.ResponseWriter, r *http.Request)
 		writeErrCode(w, 502, codeDingTalkChatSend, nil, "钉钉回复发送失败，请稍后重试")
 		return
 	}
-	if err := s.store.FinishDingTalkChat(r.Context(), id); err != nil {
+	if err := s.store.FinishDingTalkChat(r.Context(), key.scope, key.userID, id, key.sender); err != nil {
 		s.internalErr(w, r, err)
 		return
 	}

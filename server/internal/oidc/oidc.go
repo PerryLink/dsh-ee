@@ -70,6 +70,12 @@ type Config struct {
 	FeishuEncryptKey string `json:"-"`
 	DingTalkCorpID   string `json:"dingTalkCorpId,omitempty"`
 	DingTalkBot      bool   `json:"dingTalkBot"`
+	// 钉钉组织同步：每小时自动同步；钉钉明确说找不到的成员同步禁用
+	DingTalkSync        bool `json:"dingTalkSync"`
+	DingTalkSyncDisable bool `json:"dingTalkSyncDisable"`
+	// 只在第二登录入口上有意义：允许按目录里核实过的手机号 / 企业邮箱，把飞书和钉钉两个身份
+	// 自动关联到同一个账号。默认关闭，关闭时只能由员工自己显式绑定。
+	LinkByContact bool `json:"linkByContact"`
 }
 
 type RoleMapping struct {

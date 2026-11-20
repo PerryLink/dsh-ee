@@ -27,6 +27,16 @@ package api
 //  2. 把对应调用点的 writeErr 换成 writeErrCode（见 server.go），error 文案原样保留；
 //  3. 在 web 的 zh/en 两份 api-errors.ts 里加同一个键路径。
 const (
+	codeIdentityEntranceDisabled  = "identity.entrance_disabled"
+	codeIdentitySessionChanged    = "identity.session_changed"
+	codeIdentityProviderInvalid   = "identity.provider_invalid"
+	codeIdentityAccountIneligible = "identity.account_ineligible"
+	codeIdentityHomeProvider      = "identity.home_provider"
+	codeIdentityHomeElsewhere     = "identity.home_elsewhere"
+	codeIdentityLinkedElsewhere   = "identity.linked_elsewhere"
+	codeIdentityAlreadyLinked     = "identity.already_linked"
+	codeIdentityUnlinkMissing     = "identity.unlink_missing"
+
 	codeFeishuChatDisabled   = "feishu_chat.disabled"
 	codeFeishuChatEmpty      = "feishu_chat.empty"
 	codeFeishuChatMissing    = "feishu_chat.missing"

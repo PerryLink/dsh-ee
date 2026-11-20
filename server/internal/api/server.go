@@ -161,7 +161,7 @@ type Options struct {
 
 type Server struct {
 	feishuChatMu       sync.Mutex
-	feishuChatPresence map[int64]*feishuChatPresence
+	feishuChatPresence map[store.FeishuChatKey]*feishuChatPresence
 	dingTalkState      dingTalkChatState
 	dingTalkClientMu   sync.Mutex
 	dingTalkAPIClient  *dingtalk.Client
@@ -609,6 +609,7 @@ func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
 func (s *Server) RunBackground(ctx context.Context) {
 	go s.runLDAPSync(ctx)
 	go s.runFeishuSync(ctx)
+	go s.runDingTalkSync(ctx)
 	go s.runDingTalkChat(ctx)
 	go s.runExtHealth(ctx)
 	go s.runKBSourceSync(ctx)

@@ -604,6 +604,24 @@ export interface OidcConfig {
   feishuEncryptKeySet?: boolean;
   dingTalkCorpId?: string;
   dingTalkBot?: boolean;
+  /** 钉钉组织同步：每小时自动同步；钉钉确认找不到的成员同步禁用 */
+  dingTalkSync?: boolean;
+  dingTalkSyncDisable?: boolean;
+  /** 只在第二登录入口上有意义：按目录里核实过的手机号 / 企业邮箱自动关联飞书与钉钉身份 */
+  linkByContact?: boolean;
+}
+
+/** 登录设置的两个位置：主登录方式，和只能是飞书 / 钉钉的第二登录入口。 */
+export type OidcSlot = "primary" | "secondary";
+
+/** 当前账号的一个飞书 / 钉钉身份。via：home 是账号的主身份，其余是关联身份的来历。 */
+export interface IdentityBinding {
+  provider: "feishu" | "dingtalk";
+  name: string;
+  bound: boolean;
+  via?: "home" | "explicit" | "mobile" | "email";
+  canBind: boolean;
+  canUnlink: boolean;
 }
 
 export interface OidcView extends OidcConfig {
@@ -625,7 +643,14 @@ export interface FeishuSyncResult {
   skipped: string[];
   /** 目录里没看到、但飞书没有明确说离职或冻结的账号：没有禁用 */
   kept?: string[];
+  /** 关联在另一个来源建的账号上的成员数：不另外建号 */
+  linked?: number;
+  /** 来源确认人已不在、被解除关联的账号 */
+  unlinked?: string[];
 }
+
+/** 钉钉组织同步的结果，字段与飞书一致。 */
+export type DingTalkSyncResult = FeishuSyncResult;
 
 export interface OidcTestResult {
   ok: boolean;
@@ -1988,11 +2013,15 @@ export const api = {
   revokeTokens: (input: { ids?: string[]; user_id?: number; client_name?: string; department?: string }) =>
     request<{ revoked: number }>("POST", "/api/admin/tokens/revoke", input),
 
-  authMethods: () => request<{ ldap: boolean; oidc: { name: string } | null; demo: DemoSite | null; init_admin?: boolean }>("GET", "/api/auth/methods", undefined, { silent401: true }),
+  authMethods: () => request<{ ldap: boolean; oidc: { name: string } | null; oidc_secondary?: { name: string; provider: "feishu" | "dingtalk" } | null; demo: DemoSite | null; init_admin?: boolean }>("GET", "/api/auth/methods", undefined, { silent401: true }),
   dingTalkChatStatus: () => request<{ available: boolean; enabled: boolean; bound: boolean; online: boolean }>("GET", "/api/me/dingtalk-chat"),
-  oidc: () => request<OidcView>("GET", "/api/admin/auth/oidc"),
-  saveOidc: (c: OidcInput) => request<OidcView>("PUT", "/api/admin/auth/oidc", c),
-  testOidc: (c: OidcInput) => request<OidcTestResult>("POST", "/api/admin/auth/oidc/test", c),
+  oidc: (slot: OidcSlot = "primary") => request<OidcView>("GET", `/api/admin/auth/oidc?slot=${slot}`),
+  saveOidc: (c: OidcInput, slot: OidcSlot = "primary") => request<OidcView>("PUT", `/api/admin/auth/oidc?slot=${slot}`, c),
+  testOidc: (c: OidcInput, slot: OidcSlot = "primary") => request<OidcTestResult>("POST", `/api/admin/auth/oidc/test?slot=${slot}`, c),
+  dingTalkSyncStatus: () => request<{ last: DingTalkSyncResult | null }>("GET", "/api/admin/auth/dingtalk/sync"),
+  syncDingTalk: () => request<DingTalkSyncResult>("POST", "/api/admin/auth/dingtalk/sync"),
+  myIdentities: () => request<{ identities: IdentityBinding[] }>("GET", "/api/me/identities"),
+  unlinkIdentity: (provider: string) => request<{ ok: boolean }>("DELETE", `/api/me/identities/${encodeURIComponent(provider)}`),
   feishuSyncStatus: () => request<{ last: FeishuSyncResult | null }>("GET", "/api/admin/auth/feishu/sync"),
   syncFeishu: () => request<FeishuSyncResult>("POST", "/api/admin/auth/feishu/sync"),
   feishuWorkspaceURL: (next: string) => request<{ url: string; next: string }>("GET", `/api/admin/auth/feishu/workspace-url?next=${encodeURIComponent(next)}`),

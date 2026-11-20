@@ -280,6 +280,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
+	if req.UnbindIdentity {
+		// 主身份解除了，关联的飞书 / 钉钉身份和记下的联系方式摘要也一起清掉，重新登录时重新建立
+		if err := s.store.DeleteUserIdentities(r.Context(), id); err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+	}
 	if req.Disabled != nil && *req.Disabled {
 		// 停用的员工按人存的连接凭据一起删掉（docs/plugins.md §7.6）
 		s.purgeUserCredentials(r.Context(), id)

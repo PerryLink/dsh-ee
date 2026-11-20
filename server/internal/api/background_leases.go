@@ -12,6 +12,7 @@ import (
 const (
 	leaseLDAPSync            = "ldap.sync"
 	leaseFeishuSync          = "feishu.sync"
+	leaseDingTalkSync        = "dingtalk.sync"
 	leaseExtHealth           = "extension.health"
 	leaseKBSourceSync        = "kb.source-sync"
 	leaseElevationExpiry     = "admin.elevation-expiry"

@@ -47,6 +47,9 @@ const (
 	auditOIDCUpdate     = "oidc.update"
 	auditOIDCBind       = "oidc.bind"
 	auditFeishuSync     = "oidc.feishu_sync"
+	auditDingTalkSync   = "oidc.dingtalk_sync"
+	auditIdentityLink   = "oidc.identity_link"
+	auditIdentityUnlink = "oidc.identity_unlink"
 
 	auditPackagePublish         = "package.publish"
 	auditPackageStatus          = "package.status"

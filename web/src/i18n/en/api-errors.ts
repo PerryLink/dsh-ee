@@ -3,6 +3,17 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  identity: {
+    entrance_disabled: "This sign-in method is disabled and cannot be linked.",
+    session_changed: "Your session changed. Sign in again before linking.",
+    provider_invalid: "Only Feishu and DingTalk identities can be linked.",
+    account_ineligible: "Only employee accounts created through company single sign-on can link Feishu or DingTalk identities.",
+    home_provider: "This account already signs in with this provider. You cannot link another identity from it.",
+    home_elsewhere: "This identity is the sign-in identity of another dsh-ee account. Contact an administrator to request an account merge.",
+    linked_elsewhere: "This identity belongs to another dsh-ee account. If it is still linked there, unlink it there first; otherwise contact an administrator.",
+    already_linked: "This account already has a linked identity from this provider. Unlink it before switching.",
+    unlink_missing: "There is no linked identity to unlink.",
+  },
   dingtalk_chat: {
     disabled: "The DingTalk bot is disabled.",
     unbound: "Sign in with DingTalk and connect DSH first.",

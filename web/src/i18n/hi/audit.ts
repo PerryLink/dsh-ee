@@ -169,7 +169,7 @@ export default {
       "oidc": {
         "update": "OIDC कॉन्फ़िगरेशन बदला",
         "bind": "एंटरप्राइज़ पहचान बाइंड की",
-        "feishu_sync": "Feishu संगठन सिंक किया"
+        "feishu_sync": "Feishu संगठन सिंक किया", "dingtalk_sync": "DingTalk संगठन सिंक किया", "identity_link": "Feishu / DingTalk पहचान जोड़ी", "identity_unlink": "Feishu / DingTalk पहचान का जोड़ हटाया"
       },
       "access": {
         "request": "पहुँच का अनुरोध किया"

@@ -26,14 +26,16 @@ type feishuSyncResult struct {
 	Skipped    []string  `json:"skipped"`
 	// 目录里没看到、但飞书没有明确说离职或冻结的账号：没有禁用，列出来给管理员确认
 	Kept []string `json:"kept"`
+	// 关联在另一个来源（钉钉）建的账号上的成员：不另外建号
+	Linked int `json:"linked"`
+	// 飞书明确说人不在了的关联身份：只解除关联，账号归主身份所在的来源管
+	Unlinked []string `json:"unlinked"`
 }
 
 func (s *Server) feishuConfig(ctx context.Context) (*oidc.Config, error) {
-	cfg, err := s.loadOIDC(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !cfg.Enabled || cfg.Preset != "feishu" {
+	// 飞书可以是主登录方式，也可以是第二登录入口
+	cfg, _ := s.oidcByPreset(ctx, "feishu")
+	if cfg == nil {
 		return nil, errors.New("请先选择飞书并开启统一登录")
 	}
 	if cfg.FeishuAPIBase == "" {
@@ -58,7 +60,7 @@ func externalDeptNames(dir *feishu.Directory, ids []string) ([]string, []string)
 }
 
 func (s *Server) syncFeishu(ctx context.Context) (*feishuSyncResult, error) {
-	res := &feishuSyncResult{At: time.Now().UTC(), Disabled: []string{}, Conflicts: []string{}, Skipped: []string{}, Kept: []string{}}
+	res := &feishuSyncResult{At: time.Now().UTC(), Disabled: []string{}, Conflicts: []string{}, Skipped: []string{}, Kept: []string{}, Unlinked: []string{}}
 	finish := func(err error) (*feishuSyncResult, error) {
 		if err != nil {
 			res.Error = err.Error()
@@ -83,6 +85,7 @@ func (s *Server) syncFeishu(ctx context.Context) (*feishuSyncResult, error) {
 		return finish(errors.New("通讯录没有员工；为避免误更新或误禁用整批账号，本轮不生效"))
 	}
 	res.Remote = len(dir.Users)
+	autoLink := s.identityAutoLink(ctx)
 	seen := map[string]bool{}
 	// 目录里明确标了冻结 / 离职的
 	gone := map[string]bool{}
@@ -93,6 +96,17 @@ func (s *Server) syncFeishu(ctx context.Context) (*feishuSyncResult, error) {
 		gone[subject] = remote.Disabled()
 		if remote.Disabled() {
 			res.Skipped = append(res.Skipped, remote.OpenID)
+			continue
+		}
+		contacts := feishuContacts(remote)
+		// 已经（或可以安全地）关联在钉钉建的账号上：不另外建号，资料和角色由那边管
+		if linked, suppressed, err := s.syncLinkedIdentity(ctx, "feishu", subject, contacts, autoLink); err != nil {
+			return finish(err)
+		} else if suppressed {
+			res.Skipped = append(res.Skipped, remote.OpenID)
+			continue
+		} else if linked {
+			res.Linked++
 			continue
 		}
 		username := oidcUsername(remote.Email)
@@ -126,6 +140,7 @@ func (s *Server) syncFeishu(ctx context.Context) (*feishuSyncResult, error) {
 		synced, _, err := s.provisionOIDC(ctx, cfg, identity)
 		if err == nil && synced != nil {
 			s.applyDirectoryFields(ctx, "feishu", synced.ID, remote.Attrs())
+			s.recordSyncIdentity(ctx, "feishu", synced, contacts)
 		}
 		switch {
 		case errors.Is(err, errOIDCConflict), errors.Is(err, errOIDCIdentity), errors.Is(err, errOIDCEmailMismatch):
@@ -178,6 +193,17 @@ func (s *Server) syncFeishu(ctx context.Context) (*feishuSyncResult, error) {
 			res.Disabled = append(res.Disabled, u.Username)
 			s.auditSystem(ctx, auditUserUpdate, u.Username, map[string]any{"disabled": true, "reason": "feishu_missing"})
 		}
+		unlinked, err := s.pruneLinkedIdentities(ctx, "feishu", "feishu:", seen, func(subject string) (bool, error) {
+			if gone[subject] {
+				return true, nil
+			}
+			state, err := client.UserState(ctx, strings.TrimPrefix(subject, "feishu:"))
+			return state == feishu.UserGone, err
+		})
+		res.Unlinked = unlinked
+		if err != nil {
+			return finish(err)
+		}
 	}
 	s.auditSystem(ctx, auditFeishuSync, "", map[string]any{"remote": res.Remote, "created": res.Created, "reconciled": res.Reconciled, "disabled": len(res.Disabled), "kept": len(res.Kept), "conflicts": len(res.Conflicts)})
 	s.feishuNotifyKBGaps(ctx)
@@ -213,8 +239,8 @@ func (s *Server) runFeishuSync(ctx context.Context) {
 			return
 		case <-t.C:
 			s.runLeased(ctx, leaseFeishuSync, func(ctx context.Context) {
-				cfg, err := s.loadOIDC(ctx)
-				if err != nil || !cfg.Enabled || cfg.Preset != "feishu" || !cfg.FeishuSync {
+				cfg, _ := s.oidcByPreset(ctx, "feishu")
+				if cfg == nil || !cfg.FeishuSync {
 					return
 				}
 				result, err := s.syncFeishu(ctx)

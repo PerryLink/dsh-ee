@@ -230,11 +230,15 @@ func TestFeishuBotChat(t *testing.T) {
 		}
 	}
 	checkBusyStatus(false)
-	if _, err := st.EnqueueFeishuChat(ctx, busyUser.ID, "busy-turn", "oc-busy", "long-running work"); err != nil {
+	busyKey := store.FeishuChatKey{UserID: busyUser.ID, SenderID: "ou-chat-busy"}
+	if err := st.DB().QueryRowContext(ctx, `SELECT app_scope FROM feishu_chat_messages WHERE message_id='first'`).Scan(&busyKey.AppScope); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnqueueFeishuChat(ctx, busyKey, "busy-turn", "oc-busy", "long-running work"); err != nil {
 		t.Fatal(err)
 	}
 	checkBusyStatus(false)
-	if _, err := st.NextFeishuChat(ctx, busyUser.ID); err != nil {
+	if _, err := st.NextFeishuChat(ctx, busyKey); err != nil {
 		t.Fatal(err)
 	}
 	checkBusyStatus(true)

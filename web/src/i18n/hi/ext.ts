@@ -114,6 +114,7 @@ export default {
     "desc": "डायरेक्टरी फ़ील्ड सिंक करें; प्रामाणिक सिंक चुनने पर मैनुअल मान बदल जाएँगे।",
     "source": "स्रोत",
     "sourceFeishu": "Feishu",
+    "sourceDingTalk": "DingTalk",
     "attr": "निर्देशिका में गुणधर्म",
     "attrHint": "LDAP में गुणधर्म नाम (title, employeeType…); Feishu में job_title, city, employee_no, employee_type, या कस्टम फ़ील्ड की id (C-…)",
     "field": "उपयोगकर्ता फ़ील्ड",

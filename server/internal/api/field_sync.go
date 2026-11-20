@@ -16,7 +16,7 @@ import (
 const fieldSyncSetting = "field_sync"
 
 type fieldSyncMapping struct {
-	// ldap / feishu
+	// ldap / feishu / dingtalk
 	Source string `json:"source"`
 	// LDAP 属性名（title、employeeType…）；飞书是 job_title / city / employee_no / employee_type 或自定义字段的 id（C-…）
 	Attr string `json:"attr"`
@@ -132,8 +132,8 @@ func (s *Server) handlePutFieldSync(w http.ResponseWriter, r *http.Request) {
 	for i := range req.Mappings {
 		m := &req.Mappings[i]
 		m.Attr, m.Field = strings.TrimSpace(m.Attr), strings.TrimSpace(m.Field)
-		if m.Source != "ldap" && m.Source != "feishu" {
-			writeErr(w, http.StatusBadRequest, "来源只能是 ldap 或 feishu")
+		if m.Source != "ldap" && m.Source != "feishu" && m.Source != "dingtalk" {
+			writeErr(w, http.StatusBadRequest, "来源只能是 ldap、feishu 或 dingtalk")
 			return
 		}
 		if !fieldSyncAttrRe.MatchString(m.Attr) {

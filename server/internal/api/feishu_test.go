@@ -56,8 +56,17 @@ func (f *fakeFeishuContacts) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(400)
 				_ = json.NewEncoder(w).Encode(map[string]any{"code": 41012, "msg": "user id invalid"})
 			default:
-				_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"user": map[string]any{
-					"open_id": id, "status": map[string]any{"is_resigned": f.single[id] == "resigned", "is_activated": true}}}})
+				// 目录里有这个人就带上他的资料（手机号、企业邮箱），登录时关联身份要用
+				user := map[string]any{}
+				for _, u := range f.users {
+					if u.OpenID == id {
+						raw, _ := json.Marshal(u)
+						_ = json.Unmarshal(raw, &user)
+					}
+				}
+				user["open_id"] = id
+				user["status"] = map[string]any{"is_resigned": f.single[id] == "resigned", "is_activated": true}
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"user": user}})
 			}
 		default:
 			http.NotFound(w, r)
