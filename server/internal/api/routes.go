@@ -113,6 +113,8 @@ func (s *Server) routes() []route {
 		prmt("GET /api/me/feishu-chat", s.handleFeishuChatStatus),
 		agt("GET /api/me/feishu-chat/next", s.handleFeishuChatNext),
 		agt("POST /api/me/feishu-chat/{id}/reply", s.handleFeishuChatReply),
+		usr("GET /api/me/identities", s.handleMyIdentities),
+		usr("DELETE /api/me/identities/{provider}", s.handleUnlinkMyIdentity),
 		prmt("GET /api/me/dingtalk-chat", s.handleDingTalkChatStatus),
 		agt("GET /api/me/dingtalk-chat/next", s.handleDingTalkChatNext),
 		agt("POST /api/me/dingtalk-chat/{id}/reply", s.handleDingTalkChatReply),
@@ -250,6 +252,8 @@ func (s *Server) routes() []route {
 		prm("GET /api/admin/auth/feishu/sync", s.handleFeishuSyncStatus, rbac.SettingsManage),
 		prm("POST /api/admin/auth/feishu/sync", s.handleSyncFeishu, rbac.SettingsManage),
 		prm("GET /api/admin/auth/feishu/workspace-url", s.handleFeishuWorkspaceURL, rbac.SettingsManage),
+		prm("GET /api/admin/auth/dingtalk/sync", s.handleDingTalkSyncStatus, rbac.SettingsManage),
+		prm("POST /api/admin/auth/dingtalk/sync", s.handleSyncDingTalk, rbac.SettingsManage),
 
 		// 能力中心：技能、提示词、微应用、企业连接，插件的可用范围与下发方式
 		prm("GET /api/hub", s.handleHub, rbac.PortalView),

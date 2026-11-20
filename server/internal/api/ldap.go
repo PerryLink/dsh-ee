@@ -402,7 +402,12 @@ func (s *Server) handleAuthMethods(w http.ResponseWriter, r *http.Request) {
 	if cfg, ok := s.oidcEnabled(r.Context()); ok {
 		sso = map[string]string{"name": cfg.Name}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ldap": s.ldapEnabled(r.Context()), "oidc": sso, "demo": s.demoSiteInfo(r.Context()), "init_admin": s.initAdminOpen(r.Context())})
+	// 第二登录入口（飞书 + 钉钉同时开）：登录页多一个按钮
+	var second any
+	if cfg, ok := s.oidcSecondary(r.Context()); ok {
+		second = map[string]string{"name": cfg.Name, "provider": cfg.Preset}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ldap": s.ldapEnabled(r.Context()), "oidc": sso, "oidc_secondary": second, "demo": s.demoSiteInfo(r.Context()), "init_admin": s.initAdminOpen(r.Context())})
 }
 
 // ---- 登录 ----

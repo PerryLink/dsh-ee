@@ -609,6 +609,7 @@ func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
 func (s *Server) RunBackground(ctx context.Context) {
 	go s.runLDAPSync(ctx)
 	go s.runFeishuSync(ctx)
+	go s.runDingTalkSync(ctx)
 	go s.runDingTalkChat(ctx)
 	go s.runExtHealth(ctx)
 	go s.runKBSourceSync(ctx)
