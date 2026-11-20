@@ -375,6 +375,25 @@ test("表单提交到应用自带的表：只带表单里的字段，经 app__wr
   assert.deepEqual(await insertFormRow([app], bad, { app: "outing", pane: "main", widget: 0, values: {} }), { error: "字段「场次」必填" });
 });
 
+test("表单提交中（写表还没回来）：输入只读、提交按钮禁用，再点提交不会再发一次", async () => {
+  const { formView } = await import("../src/workbench-view.js");
+  const widget = { type: "form", title: "报名", fields: [{ name: "session", label: "场次", kind: "select", options: ["上午"] }, { name: "diet", label: "忌口", kind: "text" }], submit: { label: "报名", prompt: "", table: "signups" } } as any;
+  const submitOf = (view: any) => find(view, (node) => node.type === "button")[0];
+  const idle = handlers();
+  const idleView = formView(h, 0, widget, idle);
+  assert.equal(submitOf(idleView).props.disabled, false);
+  assert.equal(find(idleView, (node) => node.type === "input")[0].props.readOnly, false);
+  submitOf(idleView).props.onClick();
+  assert.equal(idle.sent.length, 1);
+  const busy = handlers(new Set(["0:form"]));
+  const busyView = formView(h, 0, widget, busy);
+  assert.equal(submitOf(busyView).props.disabled, true);
+  assert.equal(find(busyView, (node) => node.type === "input")[0].props.readOnly, true);
+  assert.equal(find(busyView, (node) => node.type === "select")[0].props.disabled, true);
+  submitOf(busyView).props.onClick();
+  assert.equal(busy.sent.length, 0);
+});
+
 // ---- 仪表盘版式与写表的行按钮 ----
 
 const rowsPane: WorkbenchPane = {

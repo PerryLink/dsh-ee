@@ -47,6 +47,7 @@ export default async function (t) {
   const department = `E2E-${tag}`;
   const model = `token-chat-${tag}`;
   let providerId;
+  let configToken;
   try {
     await login(admin, "admin", ADMIN_PW);
     assertEq((await api(admin, "POST", "/api/admin/users", { username, password, department })).status, 201, "创建员工");
@@ -167,7 +168,7 @@ export default async function (t) {
     await admin.getByRole("checkbox", { name: "权限配置（dsh-ee config）", exact: true }).check();
     await admin.locator("form").getByRole("button", { name: "生成令牌", exact: true }).click();
     await admin.getByText("令牌已生成", { exact: true }).waitFor();
-    const configToken = (await admin.locator("pre").filter({ hasText: /^ee_at_/ }).first().innerText()).trim();
+    configToken = (await admin.locator("pre").filter({ hasText: /^ee_at_/ }).first().innerText()).trim();
     await admin.locator("td", { hasText: "权限配置（dsh-ee config）" }).first().waitFor();
     assertEq(await admin.getByText("tokens.scopes.config").count(), 0, "令牌列表不应出现原始翻译键");
     const exported = await fetch(`${BASE}/api/admin/config`, { headers: { Authorization: `Bearer ${configToken}` } });
@@ -178,5 +179,11 @@ export default async function (t) {
   } finally {
     upstream.close();
     if (providerId) await api(admin, "DELETE", `/api/admin/providers/${providerId}`);
+    // 上面建的 config 令牌能改权限配置，不能留在库里
+    if (configToken) {
+      const mine = await api(admin, "GET", "/api/me/tokens");
+      const info = mine.data?.tokens?.find((item) => item.prefix === configToken.slice(0, 12));
+      if (info) await api(admin, "DELETE", `/api/me/tokens/${info.id}`);
+    }
   }
 }
