@@ -76,7 +76,7 @@ func TestFeishuBotChat(t *testing.T) {
 			t.Fatal(err)
 		}
 		token := "ee_at_" + secret.Token()
-		if err := st.CreateAccessToken(ctx, &store.AccessToken{UserID: u.ID, Name: "DSH", Prefix: token[:12], Scopes: []string{"agent"}, CreatedBy: u.ID}, secret.Hash(token)); err != nil {
+		if err := st.CreateAccessToken(ctx, &store.AccessToken{UserID: u.ID, Name: "DSH", Prefix: token[:12], Scopes: []string{"agent", "connections"}, ClientKind: store.ClientKindDSH, CreatedBy: u.ID}, secret.Hash(token)); err != nil {
 			t.Fatal(err)
 		}
 		return u, map[string]string{"Authorization": "Bearer " + token}
@@ -178,6 +178,14 @@ func TestFeishuBotChat(t *testing.T) {
 	expect(t, "empty reply", code, 400, body)
 	code, body = c.do("POST", replyPath, map[string]string{"text": "**answer**"}, bearer)
 	expect(t, "reply", code, 200, body)
+	notice("/messages/first/reply")
+	if _, err := st.DB().ExecContext(ctx, `UPDATE feishu_chat_messages SET id=1234567 WHERE id=?`, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	a := agent{dshClient{t: t, base: ts.URL, token: strings.TrimPrefix(bearer["Authorization"], "Bearer ")}}
+	if out := a.ok("ee_feishu", map[string]any{"action": "reply", "id": 1234567, "text": "large id answer"}); out["ok"] != true {
+		t.Fatalf("large message id reply: %v", out)
+	}
 	notice("/messages/first/reply")
 	post(event("first", "ou-chat-user", "text"), 200)
 	code, body = c.do("GET", "/api/me/feishu-chat/next", nil, bearer)

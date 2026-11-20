@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -834,9 +835,9 @@ func (s *Server) agentForward(orig *http.Request, p *Principal, act *agentAction
 		}
 		switch in {
 		case "path":
-			pathValues[field] = fmt.Sprint(v)
+			pathValues[field] = agentParamString(v)
 		case "query":
-			query.Set(field, fmt.Sprint(v))
+			query.Set(field, agentParamString(v))
 		case "body":
 			body[field] = v
 		}
@@ -905,6 +906,13 @@ func (s *Server) agentForward(orig *http.Request, p *Principal, act *agentAction
 		text = string(r[:agentMaxText]) + "…（内容过长已截断，请缩小范围或加筛选条件）"
 	}
 	return mcp.TextResult(text, false)
+}
+
+func agentParamString(v any) string {
+	if n, ok := v.(float64); ok {
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
 }
 
 // errorText 取处理函数写的错误提示（网页上也是这句中文）。
