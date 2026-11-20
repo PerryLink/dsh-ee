@@ -224,12 +224,20 @@ export function AppNew() {
       <Segmented value={mode} onChange={setMode} options={[{ value: "agent", label: t("appAgent.tabAgent") }, { value: "manual", label: t("appAgent.tabManual") }]} />
     </div>
   );
-  // 两个页签都挂着，来回切换不丢已经填的内容
+  // 手动编辑器懒挂载：第一次进「手动配置」才挂（agent 页签下不替用户打编辑器要用的接口），
+  // 挂上之后就不卸载，来回切页签不丢已经填的内容。?mode=manual 直接进来的首帧就挂，不空一拍。
+  const [visitedManual, setVisitedManual] = useState(mode === "manual");
+  useEffect(() => {
+    if (mode === "manual") setVisitedManual(true);
+  }, [mode]);
+  const manualMounted = visitedManual || mode === "manual";
   return (
     <>
-    <div hidden={mode !== "manual"}>
-      <AssetEditorRoute forceKind="app" tabs={tabs} />
-    </div>
+    {manualMounted && (
+      <div hidden={mode !== "manual"}>
+        <AssetEditorRoute forceKind="app" tabs={tabs} />
+      </div>
+    )}
     <div hidden={mode !== "agent"} className="max-w-[1400px]">
       <PageLink page="build" className={backLinkCls}>
         <ArrowLeft size={14} /> {t("asset.back", { page: t("pages.build") })}
@@ -248,7 +256,7 @@ export function AppNew() {
 
 /**
  * 「企业系统 → 新建连接」：默认「让 AI 帮我做」，提示词让 DSH 里的 AI 用 ee_hub 建好连接；
- * 「手动配置」是连接编辑器。两个页签都挂着，来回切换不丢已经填的内容；?mode= 记住所在页签。
+ * 「手动配置」是连接编辑器，首次进入后才挂载、之后不卸载，来回切换不丢已经填的内容；?mode= 记住所在页签。
  */
 export function ConnNew() {
   const { t } = useTranslation();
@@ -268,11 +276,19 @@ export function ConnNew() {
       <Segmented value={mode} onChange={setMode} options={[{ value: "agent", label: t("appAgent.tabAgent") }, { value: "manual", label: t("appAgent.tabManual") }]} />
     </div>
   );
+  // 同 AppNew：手动编辑器首次进「手动配置」才挂，之后保持挂载；?mode=manual 直接进来首帧就挂。
+  const [visitedManual, setVisitedManual] = useState(mode === "manual");
+  useEffect(() => {
+    if (mode === "manual") setVisitedManual(true);
+  }, [mode]);
+  const manualMounted = visitedManual || mode === "manual";
   return (
     <>
-    <div hidden={mode !== "manual"}>
-      <AssetEditorRoute forceKind="connection" tabs={tabs} />
-    </div>
+    {manualMounted && (
+      <div hidden={mode !== "manual"}>
+        <AssetEditorRoute forceKind="connection" tabs={tabs} />
+      </div>
+    )}
     <div hidden={mode !== "agent"} className="max-w-[1400px]">
       <PageLink page="admin-connections" className="mb-4 inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900">
         <ArrowLeft size={14} /> {t("asset.back", { page: t("pages.admin-connections") })}
@@ -285,10 +301,16 @@ export function ConnNew() {
   );
 }
 
-/** /assets/new：kind=connection 走「让 AI 帮我做 / 手动配置」双页签，其它类型仍是原来的编辑器。 */
+/**
+ * /assets/new：应用和连接都走与菜单里「新建应用 / 新建连接」同一套「让 AI 帮我做 / 手动配置」双页签，
+ * 其它类型仍是原来的编辑器。旧深链 ?kind=app 默认落在 agent 页签，要直接进表单加 ?mode=manual。
+ */
 export function AssetNew() {
   const [params] = useSearchParams();
-  return params.get("kind") === "connection" ? <ConnNew /> : <AssetEditorRoute />;
+  const kind = params.get("kind");
+  if (kind === "connection") return <ConnNew />;
+  if (kind === "app") return <AppNew />;
+  return <AssetEditorRoute />;
 }
 
 function AssetEditor({ forceKind, tabs }: { forceKind?: AssetKind; tabs?: ReactNode }) {
@@ -302,6 +324,8 @@ function AssetEditor({ forceKind, tabs }: { forceKind?: AssetKind; tabs?: ReactN
   const fromId = !editing ? Number(params.get("from")) || 0 : 0;
   const kbSlug = params.get("knowledge");
   const connSlug = params.get("connection");
+  // 只把 form 当成「按 URL 初始化」的输入：切页签会改 ?mode=，不能让整个表单被重置
+  const expertParam = params.get("form") === "expert";
   const existing = useApi(() => (editing ? api.hubAsset(Number(id)) : Promise.resolve(null)));
   const source = useApi(() => (fromId ? api.hubAsset(fromId) : Promise.resolve(null)));
   // 原料一键生成草稿（M5）：失败时退回到只带上知识库
@@ -352,11 +376,12 @@ function AssetEditor({ forceKind, tabs }: { forceKind?: AssetKind; tabs?: ReactN
       setTablesText("");
       setSlug(draft.data.slug);
     } else if (!editing && !fromId) {
-      setSpec({ ...emptySpec(kind), ...(kind === "app" && kbSlug ? { knowledge: [kbSlug] } : {}), ...(kind === "app" && params.get("form") === "expert" ? { form: "expert" as const } : {}) });
+      setSpec({ ...emptySpec(kind), ...(kind === "app" && kbSlug ? { knowledge: [kbSlug] } : {}), ...(kind === "app" && expertParam ? { form: "expert" as const } : {}) });
       setWbText("");
       setTablesText("");
     }
-  }, [existing.data, source.data, draft.data, editing, fromId, kind, kbSlug, t, params]);
+    // 依赖里不放 params：切换页签只改 ?mode=，不应该把已经填好的内容重置成空白
+  }, [existing.data, source.data, draft.data, editing, fromId, kind, kbSlug, expertParam, t]);
 
   const set = (p: Partial<AssetSpec>) => setSpec((s) => ({ ...s, ...p }));
   const expert = kind === "app" && spec.form === "expert";

@@ -83,7 +83,7 @@ export default async function (t) {
   step("审核通过后，提示词出现在作者的 DSH 里（/命令）");
 
   // ---- 微应用：配置图标与打开方式，详情页和列表显示图标 ----
-  await admin.goto(`${BASE}/assets/new?kind=app`);
+  await admin.goto(`${BASE}/assets/new?kind=app&mode=manual`);
   await admin.getByLabel("标识").fill(app);
   await admin.getByLabel("标题").fill(`E2E 报销助手 ${tag}`);
   await admin.getByLabel("说明").fill("帮你判断费用能不能报销");
@@ -108,7 +108,7 @@ export default async function (t) {
 
   // ---- 微应用工作台：插入示例 → 服务端拒绝不在依赖里的连接 → 改成合法配置 → 预览 → 保存并下发 ----
   const wbApp = `e2e-wb-${tag}`;
-  await admin.goto(`${BASE}/assets/new?kind=app`);
+  await admin.goto(`${BASE}/assets/new?kind=app&mode=manual`);
   await admin.getByLabel("标识").fill(wbApp);
   await admin.getByLabel("标题").fill(`E2E 工作台 ${tag}`);
   await admin.getByLabel("说明").fill("带业务面板的微应用");
