@@ -16,6 +16,9 @@ import (
 // 不在这里的：飞书设置页/组织同步结果等管理端接口文案（属 P4 的 API 文案），以及
 // internal/feishu 里只进日志和错误链的接口错误（不会发给飞书用户）。
 const (
+	MsgChatLogin               = "feishu.chat.login"
+	MsgChatTextOnly            = "feishu.chat.text_only"
+	MsgChatOffline             = "feishu.chat.offline"
 	MsgCardHubTitle            = "feishu.card.hub.title"
 	MsgCardHubDetail           = "feishu.card.hub.detail"
 	MsgCardScopeTitle          = "feishu.card.scope.title"
@@ -57,6 +60,27 @@ const (
 // 其余四种语言按同一组 {{参数}} 翻译。缺语言时 Text 依次回退 en、zh，所以漏写某条译文
 // 不会把内部键名发给用户；但 messages_test.go 的完整性测试会直接卡住漏译。
 var messages = map[string]map[string]string{
+	MsgChatLogin: {
+		i18n.Zh: "请先使用飞书登录 dsh-ee：{{url}}",
+		i18n.En: "Please sign in to dsh-ee with Feishu first: {{url}}",
+		i18n.Es: "Primero inicia sesión en dsh-ee con Feishu: {{url}}",
+		i18n.Pt: "Primeiro entre no dsh-ee com o Feishu: {{url}}",
+		i18n.Hi: "पहले Feishu से dsh-ee में साइन इन करें: {{url}}",
+	},
+	MsgChatTextOnly: {
+		i18n.Zh: "只支持文字消息",
+		i18n.En: "Only text messages are supported.",
+		i18n.Es: "Solo se admiten mensajes de texto.",
+		i18n.Pt: "Somente mensagens de texto são aceitas.",
+		i18n.Hi: "केवल टेक्स्ट संदेश समर्थित हैं।",
+	},
+	MsgChatOffline: {
+		i18n.Zh: "你的 DSH 当前不在线。请在电脑上打开 DSH，消息会在连接后处理。",
+		i18n.En: "Your DSH is offline. Open DSH on your computer; your message will be handled when it connects.",
+		i18n.Es: "Tu DSH está desconectado. Abre DSH en tu ordenador; el mensaje se procesará cuando se conecte.",
+		i18n.Pt: "Seu DSH está offline. Abra o DSH no computador; a mensagem será processada quando ele se conectar.",
+		i18n.Hi: "आपका DSH ऑफ़लाइन है। कंप्यूटर पर DSH खोलें; कनेक्ट होने पर आपका संदेश संभाला जाएगा।",
+	},
 	MsgCardHubTitle: {
 		i18n.Zh: "{{title}} · 待审核",
 		i18n.En: "{{title}} · Pending review",

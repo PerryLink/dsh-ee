@@ -228,12 +228,18 @@ export default function OidcSettings() {
             <ToggleRow label={t("oidcAdmin.feishu.syncDisable")} desc={t("oidcAdmin.feishu.syncDisableDesc")} checked={!!form.feishuSyncDisable} onChange={(v) => set({ feishuSyncDisable: v })} />
             <ToggleRow label={t("oidcAdmin.feishu.notify")} desc={t("oidcAdmin.feishu.notifyDesc")} checked={!!form.feishuNotify} onChange={(v) => set({ feishuNotify: v })} />
             <ToggleRow label={t("oidcAdmin.feishu.notifyActions")} desc={t("oidcAdmin.feishu.notifyActionsDesc")} checked={!!form.feishuNotifyActions} onChange={(v) => set({ feishuNotifyActions: v })} />
-            {form.feishuNotifyActions && (
+            <ToggleRow label={t("oidcAdmin.feishu.bot")} desc={t("oidcAdmin.feishu.botDesc")} checked={!!form.feishuBot} onChange={(v) => set({ feishuBot: v })} />
+            {form.feishuBot && (
+              <Field label={t("oidcAdmin.feishu.eventLink")} hint={t("oidcAdmin.feishu.botSetupHint")}>
+                <CopyBox text={`${window.location.origin}/api/auth/feishu/event`} wrap />
+              </Field>
+            )}
+            {(form.feishuNotifyActions || form.feishuBot) && (
               <Field label={t("oidcAdmin.feishu.verificationToken")} hint={t("oidcAdmin.feishu.verificationTokenHint")}>
                 <input className={cx(inputCls, "font-mono")} autoComplete="off" value={form.feishuVerificationToken ?? ""} onChange={(e) => set({ feishuVerificationToken: e.target.value })} />
               </Field>
             )}
-            {form.feishuNotifyActions && (
+            {(form.feishuNotifyActions || form.feishuBot) && (
               <Field label={t("oidcAdmin.feishu.encryptKey")} hint={form.feishuEncryptKeySet && form.feishuEncryptKey === undefined ? t("oidcAdmin.feishu.encryptKeySetHint") : t("oidcAdmin.feishu.encryptKeyHint")}>
                 <input className={cx(inputCls, "font-mono")} type="password" autoComplete="new-password" value={form.feishuEncryptKey ?? ""} placeholder={form.feishuEncryptKeySet ? "••••••••" : ""} onChange={(e) => set({ feishuEncryptKey: e.target.value })} />
               </Field>

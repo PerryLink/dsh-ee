@@ -404,6 +404,18 @@ type feishuCallback struct {
 		AppID     string `json:"app_id"`
 	} `json:"header"`
 	Event struct {
+		Sender struct {
+			SenderID struct {
+				OpenID string `json:"open_id"`
+			} `json:"sender_id"`
+		} `json:"sender"`
+		Message struct {
+			MessageID   string `json:"message_id"`
+			ChatID      string `json:"chat_id"`
+			ChatType    string `json:"chat_type"`
+			MessageType string `json:"message_type"`
+			Content     string `json:"content"`
+		} `json:"message"`
 		Operator struct {
 			OpenID string `json:"open_id"`
 		} `json:"operator"`
@@ -620,60 +632,72 @@ func feishuToast(w http.ResponseWriter, kind, content string) {
 // 之后 action id、消息号、操作者、当前权限、状态和过期都要通过。
 // 来源不对的回 4xx；来源对了以后，审批办不成的原因用 toast 告诉点按钮的人。
 func (s *Server) handleFeishuCard(w http.ResponseWriter, r *http.Request) {
+	cb := s.verifiedFeishuCallback(w, r, false)
+	if cb == nil {
+		return
+	}
+	s.processFeishuCard(w, r, cb)
+}
+
+func (s *Server) verifiedFeishuCallback(w http.ResponseWriter, r *http.Request, bot bool) *feishuCallback {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "飞书回调读不了")
-		return
+		return nil
 	}
 	// 飞书事件还有 create_time / tenant_key / host 等附加字段，不能用 DisallowUnknownFields 拒掉。
 	var cb feishuCallback
 	if err := json.Unmarshal(body, &cb); err != nil {
 		writeErr(w, http.StatusBadRequest, "飞书回调 JSON 格式错误")
-		return
+		return nil
 	}
 	cfg, err := s.loadOIDC(r.Context())
-	if err != nil || !cfg.Enabled || cfg.Preset != "feishu" || !cfg.FeishuNotifyActions {
+	if err != nil || !cfg.Enabled || cfg.Preset != "feishu" || (!bot && !cfg.FeishuNotifyActions) || (bot && !cfg.FeishuBot) {
 		writeErr(w, http.StatusNotFound, "飞书卡片回调未开启")
-		return
+		return nil
 	}
 	// 这是公开接口：先确认请求是飞书发来的，再看内容。操作人身份取自回调，来源不对就不能信
 	switch {
 	case cb.Encrypt != "" && cfg.FeishuEncryptKey == "":
 		writeErr(w, http.StatusBadRequest, "回调是加密的：请在 dsh-ee 的飞书设置里填上 Encrypt Key，或在飞书开发者后台清空它")
-		return
+		return nil
 	case cb.Encrypt == "" && cfg.FeishuEncryptKey != "":
 		// 配了 Encrypt Key 飞书就只发加密的；明文的不是飞书发的
 		writeErr(w, http.StatusForbidden, "回调没有加密，不是这个飞书应用发来的")
-		return
+		return nil
 	case cb.Encrypt != "":
 		// 带了签名的要对得上（配置回调地址时的验证请求不带签名）
 		if r.Header.Get("X-Lark-Signature") != "" && !feishuSignatureOK(r, cfg.FeishuEncryptKey, body) {
 			writeErr(w, http.StatusForbidden, "回调签名不对")
-			return
+			return nil
 		}
 		plain, err := feishuDecrypt(cfg.FeishuEncryptKey, cb.Encrypt)
 		if err != nil {
 			writeErr(w, http.StatusForbidden, "回调解不开：Encrypt Key 和飞书后台的不一致")
-			return
+			return nil
 		}
 		cb = feishuCallback{}
 		if err := json.Unmarshal(plain, &cb); err != nil {
 			writeErr(w, http.StatusForbidden, "回调解不开：Encrypt Key 和飞书后台的不一致")
-			return
+			return nil
 		}
 	}
 	if cb.Type == "url_verification" {
 		if !feishuTokenOK(cfg.FeishuVerificationToken, cb.Token) {
 			writeErr(w, http.StatusForbidden, "Verification Token 不对")
-			return
+			return nil
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"challenge": cb.Challenge})
-		return
+		return nil
 	}
 	if !feishuTokenOK(cfg.FeishuVerificationToken, cb.Header.Token) || (cb.Header.AppID != "" && cb.Header.AppID != cfg.ClientID) {
 		writeErr(w, http.StatusForbidden, "回调不是这个飞书应用发来的（Verification Token 或 App ID 不对）")
-		return
+		return nil
 	}
+	return &cb
+}
+
+func (s *Server) processFeishuCard(w http.ResponseWriter, r *http.Request, cb *feishuCallback) {
 	event := feishuCardEvent{
 		Type: cb.Header.EventType, EventID: cb.Header.EventID, OperatorID: cb.Event.Operator.OpenID,
 		MessageID: cb.Event.Context.OpenMessageID, ActionTag: cb.Event.Action.Tag, ActionValue: cb.Event.Action.Value,

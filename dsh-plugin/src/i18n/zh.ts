@@ -4,6 +4,11 @@
  * 日志、命令名、URL、JSON、包名、环境变量不翻译。
  */
 const zh = {
+  feishuChat: {
+    prompt: "以下是你本人从飞书发来的消息（消息 id={{id}}）。请完成其中的工作，然后使用 ee_feishu 工具将最终答案发回飞书：action=reply，id={{id}}，text=你的答案。答案请使用简洁的普通 Markdown。\n\n飞书消息：\n{{text}}",
+    handled: "已在电脑上的 DSH 中处理，请打开 DSH 查看详情。",
+    failed: "无法在电脑上的 DSH 中处理这条消息，请打开 DSH 检查后重试。",
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "登录",

@@ -27,6 +27,10 @@ package api
 //  2. 把对应调用点的 writeErr 换成 writeErrCode（见 server.go），error 文案原样保留；
 //  3. 在 web 的 zh/en 两份 api-errors.ts 里加同一个键路径。
 const (
+	codeFeishuChatDisabled = "feishu_chat.disabled"
+	codeFeishuChatEmpty    = "feishu_chat.empty"
+	codeFeishuChatMissing  = "feishu_chat.missing"
+	codeFeishuChatSend     = "feishu_chat.send"
 	// ---- 登录与认证：server/internal/api/auth.go ----
 
 	// codeAuthLoginRequired：没有网页会话或嵌入令牌，401。params 无。

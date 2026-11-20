@@ -5,6 +5,33 @@ import (
 	"testing"
 )
 
+func TestFeishuBotVerificationToken(t *testing.T) {
+	c := Defaults()
+	if c.FeishuBot {
+		t.Fatal("bot must default off")
+	}
+	c.Enabled = true
+	c.Preset = "feishu"
+	c.Issuer = "https://accounts.feishu.cn"
+	c.ClientID = "app"
+	c.FeishuBot = true
+	if c.Validate() == "" {
+		t.Fatal("bot accepted without verification token")
+	}
+	c.FeishuVerificationToken = "token"
+	if msg := c.Validate(); msg != "" {
+		t.Fatal(msg)
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Config
+	if err := json.Unmarshal(raw, &back); err != nil || !back.FeishuBot {
+		t.Fatalf("bot roundtrip %s %v", raw, err)
+	}
+}
+
 func TestRequireEmailVerifiedDefaultOff(t *testing.T) {
 	if Defaults().RequireEmailVerified {
 		t.Fatal("严格身份绑定应默认关闭，避免不返回 email_verified 的企业 IdP 登不进来")
