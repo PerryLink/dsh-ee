@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,9 @@ func (sp *agentSpec) key() string { return sp.Tool + "." + sp.Action }
 
 // agentExcluded 是永久不开放给 Agent 的路由，必须写清原因。
 var agentExcluded = map[string]string{
+	"POST /api/auth/feishu/event":               "飞书事件使用独立来源验证，不由 Agent 调用",
+	"GET /api/me/feishu-chat":                   "员工界面与接入插件查询机器人状态",
+	"GET /api/me/feishu-chat/next":              "接入插件长轮询消息，不能由模型消费队列",
 	"GET /healthz":                              "探活接口",
 	"GET /metrics":                              "监控抓取用，给运维平台，不经过 Agent",
 	"GET /readyz":                               "就绪探针，给负载均衡 / 编排系统判断能否接流量",
@@ -428,6 +432,7 @@ type agentTool struct {
 
 // agentToolDocs 是每个工具的总述，也决定工具的出现顺序。
 var agentToolDocs = []struct{ name, doc string }{
+	{"ee_feishu", "回复当前员工收到的飞书机器人私聊消息。"},
 	{"ee_me", "我的账号、额度与用量。"},
 	{"ee_tokens", "我的接入令牌。新令牌的明文不经过这里，请到网页「我的令牌」生成。"},
 	{"ee_hub", "能力中心：技能、提示词、微应用与企业连接。分享给同事用 create；写好的内容会进入审核。"},
@@ -830,9 +835,9 @@ func (s *Server) agentForward(orig *http.Request, p *Principal, act *agentAction
 		}
 		switch in {
 		case "path":
-			pathValues[field] = fmt.Sprint(v)
+			pathValues[field] = agentParamString(v)
 		case "query":
-			query.Set(field, fmt.Sprint(v))
+			query.Set(field, agentParamString(v))
 		case "body":
 			body[field] = v
 		}
@@ -901,6 +906,13 @@ func (s *Server) agentForward(orig *http.Request, p *Principal, act *agentAction
 		text = string(r[:agentMaxText]) + "…（内容过长已截断，请缩小范围或加筛选条件）"
 	}
 	return mcp.TextResult(text, false)
+}
+
+func agentParamString(v any) string {
+	if n, ok := v.(float64); ok {
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
 }
 
 // errorText 取处理函数写的错误提示（网页上也是这句中文）。

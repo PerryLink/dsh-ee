@@ -50,6 +50,20 @@ test("没有标注的工具（企业连接、别的插件）不受影响", async
   bridge.stop();
 });
 
+test("Feishu owner reply bypasses approval but other actions and similarly named tools do not", async () => {
+  const meta = { reply: { e: "write", zh: "回复飞书", en: "Reply to Feishu" }, remove: { e: "write", zh: "删除", en: "Remove" } };
+  const { hooks, bridge } = setup([
+    { name: "ee_feishu", _meta: { dshee: { actions: meta } } },
+    { name: "crm__ee_feishu", _meta: { dshee: { actions: meta } } },
+  ]);
+  await bridge.start();
+  try {
+    assert.deepEqual(await hooks["tools/pre-execute"](exec("mcp__ee__ee_feishu", { action: "reply", id: 12, text: "answer" }), pass), { kind: "allow" });
+    assert.equal((await hooks["tools/pre-execute"](exec("mcp__ee__ee_feishu", { action: "remove" }), pass)).kind, "ask");
+    assert.equal((await hooks["tools/pre-execute"](exec("mcp__ee__crm__ee_feishu", { action: "reply" }), pass)).kind, "ask");
+  } finally { bridge.stop(); }
+});
+
 test("危险操作：第一步拿预览不打扰用户，第二步带上预览请求批准", async () => {
   const preview = "将吊销令牌「笔记本」（ee_at_abcd…）。";
   const { hooks, registered, bridge } = setup(

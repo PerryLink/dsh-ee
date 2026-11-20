@@ -13,6 +13,11 @@ import type zh from "./zh.js";
 import type { DeepPartial, Messages } from "./types.js";
 
 const hi: DeepPartial<Messages<typeof zh>> = {
+  feishuChat: {
+    prompt: "यह संदेश आपने Feishu से भेजा है (id={{id}})। अनुरोधित काम करें, फिर ee_feishu टूल से अंतिम जवाब Feishu पर भेजें: action=reply, id={{id}}, text=आपका जवाब। संक्षिप्त, साधारण Markdown इस्तेमाल करें।\n\nFeishu संदेश:\n{{text}}",
+    handled: "आपके कंप्यूटर के DSH में काम पूरा किया गया। विवरण के लिए DSH खोलें।",
+    failed: "आपके कंप्यूटर के DSH में यह संदेश संभाला नहीं जा सका। DSH खोलकर जाँचें और फिर कोशिश करें।",
+  },
   // words shared by several modules (view titles / buttons / empty states)
   common: {
     login: "साइन इन करें",

@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func TestFeishuClientDefaultBaseURL(t *testing.T) {
+	for _, tc := range []struct{ base, want string }{
+		{"", "https://open.feishu.cn"},
+		{" \t", "https://open.feishu.cn"},
+		{"https://open.larksuite.com/", "https://open.larksuite.com"},
+	} {
+		client := NewClient(tc.base, "app", "secret", http.DefaultClient)
+		if client.BaseURL != tc.want {
+			t.Fatalf("NewClient(%q).BaseURL = %q, want %q", tc.base, client.BaseURL, tc.want)
+		}
+	}
+}
+
 func TestDirectoryPaginationAndFailures(t *testing.T) {
 	t.Helper()
 	mux := http.NewServeMux()

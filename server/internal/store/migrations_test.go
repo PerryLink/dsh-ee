@@ -41,6 +41,22 @@ func TestMigrationsParse(t *testing.T) {
 	}
 }
 
+func TestFeishuChatMigration(t *testing.T) {
+	body, err := migrationFS.ReadFile("migrations/0045_feishu_chat.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := splitStatements(string(body))
+	if len(stmts) != 1 {
+		t.Fatalf("expected one create statement, got %d", len(stmts))
+	}
+	for _, fragment := range []string{"CREATE TABLE feishu_chat_messages", "UNIQUE KEY uq_feishu_chat_message (message_id)", "KEY idx_feishu_chat_queue (user_id, status, id)", "delivered_at", "replied_at"} {
+		if !strings.Contains(stmts[0], fragment) {
+			t.Errorf("migration missing %s", fragment)
+		}
+	}
+}
+
 // 0032：令牌客户端类型与调用/确认记录里的令牌归属。
 func TestTokenClientKindMigration(t *testing.T) {
 	body, err := migrationFS.ReadFile("migrations/0032_token_client_kind.sql")

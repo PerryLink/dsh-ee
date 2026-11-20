@@ -100,6 +100,10 @@ var specSchema = map[string]any{
 }
 
 var agentSpecs = map[string]*agentSpec{
+	"POST /api/me/feishu-chat/{id}/reply": {
+		Tool: "ee_feishu", Action: "reply", Summary: "回复一条飞书机器人消息", En: "Reply to a Feishu message", Effect: effWrite,
+		Params: []agentParam{{Name: "id", Type: "integer", Required: true, In: "path", Desc: "消息 id"}, {Name: "text", Type: "string", Required: true, Desc: "回复正文（Markdown）"}},
+	},
 	// ---- ee_me ----
 	"GET /api/auth/me": {
 		Tool: "ee_me", Action: "whoami", Summary: "我是谁：账号、部门、角色", Effect: effRead,

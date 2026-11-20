@@ -7,6 +7,11 @@ import type zh from "./zh.js";
 import type { Messages } from "./types.js";
 
 const en = {
+  feishuChat: {
+    prompt: "This message came from you via Feishu (message id={{id}}). Do the requested work, then send the final answer back to Feishu with the ee_feishu tool: action=reply, id={{id}}, text=your answer. Use concise, plain Markdown.\n\nFeishu message:\n{{text}}",
+    handled: "Handled in DSH on your computer. Open DSH for details.",
+    failed: "Could not handle this message in DSH on your computer. Open DSH to check and try again.",
+  },
   // 多个模块共用的词（视图标题/按钮/空态）；页面专属文案放各自命名空间
   common: {
     login: "Log in",
