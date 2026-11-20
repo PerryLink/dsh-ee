@@ -47,6 +47,13 @@ export default {
     },
   },
   account: {
+    shortcuts: {
+      title: "DSH connection & development",
+      hint: "These pages aren't in the sidebar; open them from here.",
+      connect: "Connect",
+      develop: "Develop",
+      getStarted: "Get started",
+    },
     title: "Account",
     logout: "Log out",
     username: "Username",

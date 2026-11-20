@@ -1,4 +1,4 @@
-// 开发文档 / 开发样例（PR-B）：固定路由 /docs、/examples，工作台「开发」双卡，侧栏「开发」组。
+// 开发文档 / 开发样例（PR-B）：固定路由 /docs、/examples，工作台「开发」双卡；侧栏默认不放，账号页有入口。
 // 页面内容全部是前端静态数据，不需要额外接口；这里同时验证表格、标题锚点、移动端单列与中英切换。
 import { readFileSync } from "node:fs";
 
@@ -14,16 +14,15 @@ export default async function (t) {
   const page = await newPage(t);
   await login(page, "admin", ADMIN_PW);
 
-  // ---- 侧栏：「开发」组在「接入」之后，两项都进得去 ----
+  // ---- 开发页不进侧栏，从账号页的「DSH 接入与开发」打开 ----
   const aside = page.locator("aside");
-  const group = aside.getByText("开发", { exact: true });
-  await group.waitFor();
-  const jieru = aside.getByText("接入", { exact: true });
-  const [gb, jb] = await Promise.all([group.boundingBox(), jieru.boundingBox()]);
-  assert(gb && jb && gb.y > jb.y, "「开发」组应排在「接入」组之后");
-  await aside.getByRole("link", { name: "开发文档" }).waitFor();
-  await aside.getByRole("link", { name: "开发样例" }).waitFor();
-  step("侧栏新增「开发」组（开发文档 / 开发样例），排在「接入」之后");
+  await page.goto(`${BASE}/account`);
+  const shortcuts = page.locator("[data-account-shortcuts]");
+  await shortcuts.getByRole("link", { name: "开发样例" }).waitFor();
+  assertEq(await aside.getByRole("link", { name: "开发文档" }).count(), 0, "侧栏默认不放「开发文档」");
+  await shortcuts.getByRole("link", { name: "开发文档" }).click();
+  await page.waitForURL(/\/docs$/);
+  step("开发文档 / 开发样例不进侧栏，账号页能打开");
 
   // ---- /docs：目录 + 分类筛选 + 详情（表格与标题锚点）----
   // 站内文档数量从构建期生成的 /llms.txt 反推：新增一篇 docs/dev 文档后这里不用跟着改数字。
@@ -210,8 +209,9 @@ export default async function (t) {
   await login(en, "admin", ADMIN_PW);
   await en.goto(`${BASE}/docs`);
   await en.getByRole("heading", { level: 1, name: "Developer docs" }).waitFor();
-  await en.locator("aside").getByRole("link", { name: "Developer docs" }).waitFor();
-  await en.locator("aside").getByRole("link", { name: "Examples" }).waitFor();
+  await en.goto(`${BASE}/account`);
+  await en.locator("[data-account-shortcuts]").getByRole("link", { name: "Examples" }).waitFor();
+  await en.goto(`${BASE}/docs`);
   // 文档已五语化：已接入译文的 8 篇在英文界面显示英文标题/摘要，不再出现「Body in Chinese」回退徽标
   await en.getByText("Where to start: three development paths").first().waitFor();
   const overviewCard = en.locator('a[data-dev-doc="overview"]');
@@ -225,5 +225,5 @@ export default async function (t) {
   assertEq(await en.getByText("Body in Chinese").count(), 0, "英文正文详情页不应再显示「正文为中文」徽标");
   await en.goto(`${BASE}/examples`);
   await en.getByRole("heading", { level: 1, name: "Examples" }).waitFor();
-  step("英文界面：页名、侧栏「Develop」组、英文文档标题与英文正文都正确");
+  step("英文界面：页名、账号页「Develop」入口、英文文档标题与英文正文都正确");
 }

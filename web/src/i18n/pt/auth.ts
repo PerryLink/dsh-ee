@@ -50,6 +50,13 @@ export default {
     },
   },
   account: {
+    shortcuts: {
+      title: "Conexão com o DSH e desenvolvimento",
+      hint: "Estas páginas não estão na barra lateral; abra-as daqui.",
+      connect: "Conectar",
+      develop: "Desenvolver",
+      getStarted: "Começar",
+    },
     title: "Conta",
     logout: "Sair",
     username: "Nome de usuário",

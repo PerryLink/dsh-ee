@@ -50,6 +50,13 @@ export default {
     }
   },
   "account": {
+    "shortcuts": {
+      "title": "DSH कनेक्शन और डेवलपमेंट",
+      "hint": "ये पेज साइडबार में नहीं हैं; इन्हें यहाँ से खोलें।",
+      "connect": "कनेक्ट",
+      "develop": "डेवलप",
+      "getStarted": "शुरू करें",
+    },
     "title": "खाता",
     "logout": "साइन आउट करें",
     "username": "उपयोगकर्ता नाम",

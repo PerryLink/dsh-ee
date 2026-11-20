@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Copy, Plus, LayoutGrid } from "lucide-react";
+import { Copy, Plus, LayoutGrid, Layers } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { copyText } from "../lib/clipboard";
 import { api, type HubAsset, type Scope } from "../lib/api";
@@ -93,7 +93,7 @@ export default function Build() {
   const { t } = useTranslation();
   const { user, can } = useAuth();
   const { notify } = useStore();
-  const { pathOf } = useMenus();
+  const { pathOf, hasPage } = useMenus();
   const navigate = useNavigate();
   const hub = useApi(api.hub);
   const opts = useScopeOptions();
@@ -110,17 +110,24 @@ export default function Build() {
         title={t("build.title")}
         desc={t("build.desc")}
         actions={
-          can("registry.publish") && (
-            <>
-              <ImportAppButton onDone={hub.reload} />
-              <Button variant="secondary" onClick={() => navigate(pathOf("templates"))}>
-                <Copy size={15} /> {t("build.fromTemplate")}
+          <>
+            {hasPage("materials") && (
+              <Button variant="secondary" onClick={() => navigate(pathOf("materials"))}>
+                <Layers size={15} /> {t("pages.materials")}
               </Button>
-              <Button onClick={() => navigate(pathOf("app-new"))}>
-                <Plus size={15} /> {t("build.newApp")}
-              </Button>
-            </>
-          )
+            )}
+            {can("registry.publish") && (
+              <>
+                <ImportAppButton onDone={hub.reload} />
+                <Button variant="secondary" onClick={() => navigate(pathOf("templates"))}>
+                  <Copy size={15} /> {t("build.fromTemplate")}
+                </Button>
+                <Button onClick={() => navigate(pathOf("app-new"))}>
+                  <Plus size={15} /> {t("build.newApp")}
+                </Button>
+              </>
+            )}
+          </>
         }
       />
       <div className="mb-4">

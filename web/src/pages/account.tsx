@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useAction } from "../lib/use-api";
@@ -9,7 +9,42 @@ import { LangSwitch } from "../components/lang-switch";
 import { ThemeToggle } from "../components/theme-toggle";
 import { useTranslation } from "react-i18next";
 import { useLabels } from "../lib/labels";
+import { PageLink, useMenus } from "../lib/menus";
+import { useStore } from "../lib/store";
+import type { PageKey } from "../lib/page-meta";
 import { LANGUAGE_OPTIONS, isLanguageCode, setUiLanguage, type LanguageCode } from "../lib/languages";
+
+/** 不在侧边栏里的接入页与开发页：员工侧栏只放每天用的页面，这些从账号页打开。 */
+function Shortcuts() {
+  const { t } = useTranslation();
+  const { hasPage } = useMenus();
+  const { settings } = useStore();
+  const linkCls = "rounded-md border border-neutral-200 px-2.5 py-1 text-sm text-neutral-700 transition-colors hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-900 dark:border-white/10";
+  const pages = (keys: PageKey[]) => keys.filter((k) => hasPage(k) && (k !== "dsh-download" || settings.distribution.enabled));
+  const connect = pages(["setup", "dsh-download", "my-keys"]);
+  const develop = pages(["dev-docs", "dev-examples"]);
+  const row = (label: string, keys: PageKey[], first?: ReactNode) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="w-14 shrink-0 text-sm text-neutral-600">{label}</span>
+      {first}
+      {keys.map((k) => (
+        <PageLink key={k} page={k} className={linkCls}>
+          {t(`pages.${k}`)}
+        </PageLink>
+      ))}
+    </div>
+  );
+  return (
+    <Card className="mt-4 p-5" data-account-shortcuts="">
+      <h2 className="text-neutral-900 text-[15px] leading-6 font-semibold">{t("account.shortcuts.title")}</h2>
+      <p className="mt-1 text-sm text-neutral-600">{t("account.shortcuts.hint")}</p>
+      <div className="mt-4 space-y-3">
+        {row(t("account.shortcuts.connect"), connect, <Link to="/get-started" className={linkCls}>{t("account.shortcuts.getStarted")}</Link>)}
+        {develop.length > 0 && row(t("account.shortcuts.develop"), develop)}
+      </div>
+    </Card>
+  );
+}
 
 export default function Account() {
   const { t } = useTranslation();
@@ -143,6 +178,8 @@ export default function Account() {
           </div>
         </div>
       </Card>
+
+      <Shortcuts />
 
       {user.auth_source !== "local" ? (
         <Card className="mt-4 p-5">

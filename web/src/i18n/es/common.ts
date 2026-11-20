@@ -32,6 +32,10 @@ export default {
     "no": "No"
   },
   "shell": {
+    "getStarted": {
+      "title": "Empieza con DSH",
+      "desc": "Aún no te has conectado: instala el plugin de la empresa e inicia sesión una vez para usar las apps de la empresa en DSH.",
+    },
     "limited": {
       "employee": "Abriste esta página desde DSH y se inició sesión automáticamente. Las funciones de seguridad de la cuenta, como Mis tokens, requieren tu contraseña.",
       "admin": "Abriste esta página desde DSH y se inició sesión automáticamente con acceso solo de empleado. Inicia sesión con tu contraseña para usar las funciones de administración.",
