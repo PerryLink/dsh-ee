@@ -239,6 +239,8 @@ dsh-ee यूज़र्स और डेवलपर्स ग्रुप स
 
 <img alt="dsh-ee WeChat ग्रुप QR कोड" src="docs/images/wechat-group.png" width="240">
 
+QR कोड 7 दिनों के लिए मान्य है। समाप्त होने पर [issue खोलें](https://github.com/hikariming/dsh-ee/issues), हम नया निमंत्रण साझा करेंगे।
+
 ## योगदान
 
 Issue और pull request का स्वागत है। PR खोलने से पहले संबंधित टेस्ट चलाएँ। UI के स्ट्रिंग `web/src/i18n/{zh,en}` में हैं; अंग्रेज़ी फ़ाइल को चीनी की संरचना के हिसाब से होना चाहिए, और छूटी हुई keys `tsc` फ़ेल कर देती हैं।

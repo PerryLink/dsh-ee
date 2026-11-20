@@ -267,6 +267,8 @@ Scan the QR code with WeChat to join the dsh-ee users & developers group:
 
 <img alt="dsh-ee WeChat group QR code" src="docs/images/wechat-group.png" width="240">
 
+The QR code is valid for 7 days. If it has expired, [open an issue](https://github.com/hikariming/dsh-ee/issues) and we'll share a new invite.
+
 ## Contributing
 
 Issues and pull requests are welcome. Please run the relevant tests before opening a PR. UI strings live in `web/src/i18n/{zh,en}`; the English file must mirror the Chinese structure, and missing keys fail `tsc`.

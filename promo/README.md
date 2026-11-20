@@ -32,6 +32,19 @@ node promo/openmotion/build-film.mjs   # 需要本机有 OpenMotion 源码，默
 - `out/dsh-ee-openmotion-film-<lang>/`：OpenMotion（Hyperframes）工程，可以在 Studio 里打开，或者渲染成 MP4：
   `hyperframes render out/dsh-ee-openmotion-film-zh --format png-sequence -o frames`，再用 ffmpeg 把帧编码成 H.264（1280×720，30 帧，61 秒，无声）。
 
+### 模板版本与复现
+
+模板和 jsdom 都从本机 OpenMotion 源码里取：脚本读 `library/templates/catalog/motion-f6f244d1-c549-4081-8a5d-f0e1e3660044/source` 下的
+`compositions/glean-film.html`、`index.html`、`hyperframes.json`、`assets/fonts`、`assets/gsap.min.js`，并用该 checkout 的 `jsdom`（`30.1.3`）。
+仓库里的画面按 OpenMotion tag **`v0.1.0`（commit `19f7424e0cf45606c463216f41c6f8a9db393bfe`）** 核验过：模板文件在这个提交之后没有再改过，固定到它重新生成，
+`generated/` 应该没有 diff。升级 OpenMotion 前先跑一遍这条命令，模板一改，画面就可能跟着变：
+
+```sh
+git -C ~/openmotion checkout 19f7424e0cf45606c463216f41c6f8a9db393bfe   # OpenMotion v0.1.0
+node promo/openmotion/build-film.mjs
+git diff --exit-code web/src/components/product-film/generated   # 为空 = 当前模板能复现仓库里的画面
+```
+
 ### 配乐和音效
 
 声音也全是代码合成的（`openmotion/build-audio.mjs`，不用任何音频素材）：D 大调 120 BPM 的铺底、贝斯、鼓和琶音，切场「呼」一声，打字时按各语言的字数出键盘声，片尾落在 D 大和弦上。时间点取自短片的时间轴，三种语言一样响（约 -14 dBFS RMS，峰值 -1 dBFS）。
@@ -44,7 +57,7 @@ FFMPEG=/path/to/ffmpeg node promo/openmotion/build-audio.mjs   # 不写 FFMPEG �
 
 ### 转 GIF（README 第一屏）
 
-README 第一屏放的是这部片子的 GIF（英文版给英、西、葡、印地语 README，中文版给中文 README）。从无声的 MP4 转，800 宽、8 帧、128 色，一份约 8 MB；用的 ffmpeg 要有调色板滤镜（palettegen / paletteuse）。没有 `fps` 滤镜时像下面这样用 `-r` 抽帧：
+README 第一屏放的是这部片子的 GIF（英文版给英、西、葡、印地语 README，中文版给中文 README）。从无声的 MP4 转，800 宽、8 帧、128 色，一份约 8 MB（英文 8.0 MB、中文 7.7 MB）；用的 ffmpeg 要有调色板滤镜（palettegen / paletteuse）。没有 `fps` 滤镜时像下面这样用 `-r` 抽帧：
 
 ```sh
 ffmpeg -i out/dsh-ee-openmotion-film-en.silent.mp4 -vf "scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=full[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" -r 8 ../docs/images/intro.gif

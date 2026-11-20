@@ -39,7 +39,7 @@
 **视频：用代码生成 30～40 秒的项目介绍，放在 README 第一屏和演示站登录页。**
 
 - 工具：Remotion（React 写画面，直接渲染 MP4），放在仓库里单独的 `promo/` 目录，不进主构建。画面里的 dsh-ee 界面用 Playwright 从演示站截真图；DSH 对话画面用动画模拟，角落标「示意」。
-- 产物：`promo/out/intro.mp4`（中文、英文各一版）和一个压缩到 5 MB 以内的 GIF（`docs/images/intro*.gif`）。README 用 GIF 保证一定能显示；MP4 由你在 GitHub 网页上拖进 README 编辑框，换成 user-attachments 链接后可以直接播放。
+- 产物：`promo/out/intro.mp4`（中文、英文各一版）和一个 GIF（`docs/images/intro*.gif`）。首屏 GIF 体积上限按页面实测调整：按 `promo/README.md` 的 800 宽、8 帧、128 色转换，当前每份约 8 MB（英文 8.0 MB、中文 7.7 MB），不按固定 5 MB 卡。README 用 GIF 保证一定能显示；MP4 由你在 GitHub 网页上拖进 README 编辑框，换成 user-attachments 链接后可以直接播放。
 - 分镜（约 36 秒）：
 
 | 时间 | 画面 | 字幕 |
@@ -133,7 +133,7 @@
   - 演示模式禁止一切对外请求，npm 源回源也被拦，corepack 经本源下载 pnpm 时 502。现在演示模式下 npm 源可以回源 registry.npmjs.org、registry.npmmirror.com（只读转发公共包；npm 发布本来就关着）。
   - npm 源改写包信息时丢掉了 `dist.signatures`，corepack 校验签名失败、装不上 pnpm。**正式部署也有这个问题**。现在 integrity 和上游一致时保留签名（签名只覆盖「名字@版本:integrity」，和 tarball 地址无关）。
   - **待你在 Mac 上确认**：接上演示站后，在 DSH 里用自己的模型真的问一次 `/customer-brief`。
-- **1.2 介绍视频**：`promo/`（Remotion），36 秒，中英文各一版。MP4 在 `promo/out/`（不进 git），GIF（约 5 MB）在 `docs/images/intro*.gif`。
+- **1.2 介绍视频**：`promo/`（Remotion），36 秒，中英文各一版。MP4 在 `promo/out/`（不进 git）。README 第一屏的 GIF 后来换成 OpenMotion 一分钟短片（61 秒，约 8 MB；首屏体积上限按页面实测调整），在 `docs/images/intro*.gif`。
 - **2.1 / 2.2 README**：中英文都换了新口号，第一屏依次是视频 GIF、「在线试一下」、三个场景、适合谁；原来的架构图移到「架构」一节。
 
 还要你做的：
