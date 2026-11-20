@@ -25,6 +25,10 @@ type Client struct {
 }
 
 func NewClient(baseURL, id, secret string, hc *http.Client) *Client {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		baseURL = "https://open.feishu.cn"
+	}
 	return &Client{HTTP: hc, BaseURL: strings.TrimRight(baseURL, "/"), ID: id, Secret: secret}
 }
 
