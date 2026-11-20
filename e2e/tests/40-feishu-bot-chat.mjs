@@ -2,8 +2,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { register } from "tsx/esm/api";
 import { generateKeyPairSync, randomUUID, sign as cryptoSign, createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ADMIN_PW, BASE, SHOTS, api, assert, assertEq, login, logout, newPage, shot, step, tag } from "../lib.mjs";
@@ -136,8 +135,6 @@ async function until(check, label, timeout = 15_000) {
 
 export default async function (t) {
   const { server: idp, state } = await fakeFeishu();
-  const requirePlugin = createRequire(new URL("../../dsh-plugin/package.json", import.meta.url));
-  const { register } = await import(pathToFileURL(requirePlugin.resolve("tsx/esm/api")).href);
   const loader = register({ namespace: `feishu-e2e-${tag}` });
   let relay;
   let bridge;

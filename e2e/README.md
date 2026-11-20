@@ -43,6 +43,6 @@ E2E_MANAGED=1 E2E_BIN="$PWD/../dist/dsh-ee" \
   E2E_RECORD=1 node run.mjs 40-feishu-bot-chat
 ```
 
-依赖运行中的 TiDB、`dsh-plugin` 的开发依赖（`make build` 已安装，单独构建服务端时先运行 `cd dsh-plugin && npm ci`），以及能显示中文的字体。首次录屏前，在 `e2e/` 下运行 `node node_modules/playwright-core/cli.js install ffmpeg` 安装 Playwright 视频编码器。测试会真实等待约 60 秒，让停止轮询后的在线状态自然过期，不改服务端时钟或数据库。
+依赖运行中的 TiDB 和能显示中文的字体；`e2e/` 的 `npm ci` 会安装加载真实插件源码所需的 `tsx`，无需另外安装 `dsh-plugin` 的开发依赖。首次录屏前，在 `e2e/` 下运行 `node node_modules/playwright-core/cli.js install ffmpeg` 安装 Playwright 视频编码器。测试会真实等待约 60 秒，让停止轮询后的在线状态自然过期，不改服务端时钟或数据库。
 
 默认输出位于 `e2e/shots/`（不入库）：三张 `feishu-bot-*.png`、`feishu-bot-video/*.webm` 与 `feishu-bot-recording.json`。JSON 记录原片路径和可在演示 GIF 中跳过的在线状态等待时间；原片保留完整等待。`E2E_SHOTS` / `E2E_RECORD_DIR` 可覆盖目录。预览页明确标注「本地验证」，这些产物不是生产飞书租户或真实 DSH / 模型的验收记录。
