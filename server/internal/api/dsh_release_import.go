@@ -100,6 +100,7 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 		writeErrCode(w, 400, codeReleaseChecksum, nil, "sha512 无效或校验不一致")
 		return
 	}
+	item.ChecksumVerified = expected != nil
 	if err = f.Sync(); err != nil {
 		s.internalErr(w, r, err)
 		return

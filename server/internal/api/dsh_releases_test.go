@@ -159,6 +159,26 @@ func TestDshReleaseSyncSkipsImported(t *testing.T) {
 	}
 }
 
+func TestDshReleaseVerificationSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, upstream, kind string
+		checked, want        bool
+	}{
+		{"unchecked import", "", "zip", false, false},
+		{"checked import", "", "zip", true, true},
+		{"checked dmg import", "", "dmg", true, true},
+		{"official zip", "https://download.deepseek.com/dsh.zip", "zip", false, true},
+		{"official dmg", "https://download.deepseek.com/dsh.dmg", "dmg", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &store.DshRelease{UpstreamURL: tc.upstream, Kind: tc.kind, ChecksumVerified: tc.checked}
+			if got := publicDshRelease(r, "http://ee")["verified"]; got != tc.want {
+				t.Fatalf("verified = %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDshReleaseImportSizeAndLock(t *testing.T) {
 	f := newReleaseFixture(t, "off")
 	oldLimit := maxDshReleaseBytes

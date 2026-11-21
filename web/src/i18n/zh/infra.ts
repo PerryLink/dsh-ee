@@ -112,7 +112,7 @@ export default {
     importFile: "安装包文件",
     importVersion: "版本号",
     importHash: "SHA-512（可选）",
-    importHint: "可从官方 nightly.yml / latest.yml 复制 sha512，支持 base64 或十六进制。",
+    importHint: "可从官方 nightly.yml / latest.yml 复制 sha512，支持 base64 或十六进制。 不填写时，员工将看到安装包未经校验的提示。",
     importSubmit: "上传并导入",
     importSuccess: "离线安装包导入成功",
     importUploading: "正在上传",

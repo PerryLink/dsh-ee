@@ -14,10 +14,17 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
+func dshReleaseVerified(r *store.DshRelease) bool {
+	if r.UpstreamURL == "" {
+		return r.ChecksumVerified
+	}
+	return r.Kind != "dmg"
+}
+
 func publicDshRelease(r *store.DshRelease, base string) map[string]any {
 	return map[string]any{
 		"id": r.ID, "target": r.Target, "kind": r.Kind, "version": r.Version, "released_at": r.ReleasedAt,
-		"size": r.Size, "sha512": r.SHA512, "recommended": r.Recommended, "verified": r.Kind != "dmg",
+		"size": r.Size, "sha512": r.SHA512, "recommended": r.Recommended, "verified": dshReleaseVerified(r),
 		"download_url": base + "/dl/" + r.Target + "/" + r.File,
 	}
 }
@@ -71,7 +78,7 @@ func (s *Server) handleAdminDshReleases(w http.ResponseWriter, r *http.Request) 
 			"id":     item.ID, "target": item.Target, "kind": item.Kind, "version": item.Version, "released_at": item.ReleasedAt,
 			"file": item.File, "size": item.Size, "sha512": item.SHA512, "upstream_url": item.UpstreamURL,
 			"state": item.State, "recommended": item.Recommended, "error": item.Error, "mirrored_at": item.MirroredAt,
-			"created_at": item.CreatedAt, "verified": item.Kind != "dmg",
+			"created_at": item.CreatedAt, "verified": dshReleaseVerified(item),
 		}
 		if item.State == store.ReleaseDownloading {
 			var downloaded int64

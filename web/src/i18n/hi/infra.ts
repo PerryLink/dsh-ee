@@ -115,7 +115,7 @@ export default {
     importFile: "Installer file",
     importVersion: "Version",
     importHash: "SHA-512 (optional)",
-    importHint: "Copy sha512 from official nightly.yml / latest.yml; base64 or hex accepted.",
+    importHint: "Copy sha512 from official nightly.yml / latest.yml; base64 or hex accepted. Without SHA-512, employees will see the package as unverified.",
     importSubmit: "Upload and import",
     importSuccess: "Offline package imported",
     importUploading: "Uploading",

@@ -66,7 +66,7 @@ func TestDshReleaseImportAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.State != store.ReleaseMirrored || item.UpstreamURL != "" || item.Size != 5 || item.MirroredAt == nil {
+	if item.State != store.ReleaseMirrored || item.UpstreamURL != "" || item.Size != 5 || item.MirroredAt == nil || !item.ChecksumVerified {
 		t.Fatalf("invalid row: %+v", item)
 	}
 	b, err := os.ReadFile(item.LocalPath)
@@ -83,6 +83,9 @@ func TestDshReleaseImportAPI(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"source":"import"`)) {
 		t.Fatalf("missing source: %s", body)
 	}
+	if !bytes.Contains(body, []byte(`"verified":true`)) {
+		t.Fatalf("checksummed import not verified: %s", body)
+	}
 	code, body = admin.do("POST", "/api/admin/dsh-releases/"+fmtInt(item.ID)+"/mirror", nil, nil)
 	expect(t, "mirror import", code, 400, body)
 	upload("mac-arm64", "1.2.4", "first.zip", "", "conflict", 409)
@@ -93,7 +96,7 @@ func TestDshReleaseImportAPI(t *testing.T) {
 	}
 	upload("mac-arm64", "1.2.3", "second.zip", "", "second", 201)
 	updated, _ := st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
-	if updated.ID != item.ID || updated.File != "second.zip" || updated.Size != 6 {
+	if updated.ID != item.ID || updated.File != "second.zip" || updated.Size != 6 || updated.ChecksumVerified {
 		t.Fatalf("replacement: %+v", updated)
 	}
 	if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
@@ -102,6 +105,11 @@ func TestDshReleaseImportAPI(t *testing.T) {
 	b, _ = os.ReadFile(updated.LocalPath)
 	if string(b) != "second" {
 		t.Fatal("replacement contents")
+	}
+	code, body = admin.do("GET", "/api/admin/dsh-releases", nil, nil)
+	expect(t, "unverified list", code, 200, body)
+	if !bytes.Contains(body, []byte(`"verified":false`)) {
+		t.Fatalf("unchecked import verified: %s", body)
 	}
 }
 

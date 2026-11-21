@@ -22,31 +22,32 @@ var (
 )
 
 type DshRelease struct {
-	ID          int64      `json:"id"`
-	Target      string     `json:"target"`
-	Kind        string     `json:"kind"`
-	Version     string     `json:"version"`
-	ReleasedAt  time.Time  `json:"released_at"`
-	File        string     `json:"file"`
-	Size        int64      `json:"size"`
-	SHA512      string     `json:"sha512"`
-	UpstreamURL string     `json:"upstream_url"`
-	State       string     `json:"state"`
-	Recommended bool       `json:"recommended"`
-	LocalPath   string     `json:"local_path"`
-	Error       string     `json:"error"`
-	MirroredAt  *time.Time `json:"mirrored_at"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID               int64      `json:"id"`
+	Target           string     `json:"target"`
+	Kind             string     `json:"kind"`
+	Version          string     `json:"version"`
+	ReleasedAt       time.Time  `json:"released_at"`
+	File             string     `json:"file"`
+	Size             int64      `json:"size"`
+	SHA512           string     `json:"sha512"`
+	ChecksumVerified bool       `json:"checksum_verified"`
+	UpstreamURL      string     `json:"upstream_url"`
+	State            string     `json:"state"`
+	Recommended      bool       `json:"recommended"`
+	LocalPath        string     `json:"local_path"`
+	Error            string     `json:"error"`
+	MirroredAt       *time.Time `json:"mirrored_at"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
-const dshReleaseColumns = "id, target, kind, version, released_at, file, size, sha512, upstream_url, state, recommended, local_path, error, mirrored_at, created_at"
+const dshReleaseColumns = "id, target, kind, version, released_at, file, size, sha512, upstream_url, state, recommended, local_path, error, mirrored_at, created_at, checksum_verified"
 
 func scanDshRelease(row interface{ Scan(...any) error }) (*DshRelease, error) {
 	var r DshRelease
 	var localPath, releaseErr sql.NullString
 	var mirroredAt sql.NullTime
 	err := row.Scan(&r.ID, &r.Target, &r.Kind, &r.Version, &r.ReleasedAt, &r.File, &r.Size, &r.SHA512,
-		&r.UpstreamURL, &r.State, &r.Recommended, &localPath, &releaseErr, &mirroredAt, &r.CreatedAt)
+		&r.UpstreamURL, &r.State, &r.Recommended, &localPath, &releaseErr, &mirroredAt, &r.CreatedAt, &r.ChecksumVerified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -70,9 +71,9 @@ func nullableReleaseText(v string) any {
 func (s *Store) CreateDshRelease(ctx context.Context, r *DshRelease) error {
 	r.CreatedAt = now()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO dsh_releases
-		(target, kind, version, released_at, file, size, sha512, upstream_url, state, recommended, local_path, error, mirrored_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.Target, r.Kind, r.Version, r.ReleasedAt, r.File, r.Size,
-		r.SHA512, r.UpstreamURL, r.State, r.Recommended, nullableReleaseText(r.LocalPath), nullableReleaseText(r.Error), r.MirroredAt, r.CreatedAt)
+		(target, kind, version, released_at, file, size, sha512, upstream_url, state, recommended, local_path, error, mirrored_at, created_at, checksum_verified)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.Target, r.Kind, r.Version, r.ReleasedAt, r.File, r.Size,
+		r.SHA512, r.UpstreamURL, r.State, r.Recommended, nullableReleaseText(r.LocalPath), nullableReleaseText(r.Error), r.MirroredAt, r.CreatedAt, r.ChecksumVerified)
 	if err != nil {
 		return err
 	}
@@ -132,7 +133,7 @@ func (s *Store) FinishDshRelease(ctx context.Context, id, size int64, sha512, lo
 }
 
 func (s *Store) UpdateImportedDshReleaseMetadata(ctx context.Context, r *DshRelease) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE dsh_releases SET released_at = ?, file = ?, size = ?, sha512 = ?, upstream_url = '' WHERE id = ?`, r.ReleasedAt, r.File, r.Size, r.SHA512, r.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE dsh_releases SET released_at = ?, file = ?, size = ?, sha512 = ?, upstream_url = '', checksum_verified = ? WHERE id = ?`, r.ReleasedAt, r.File, r.Size, r.SHA512, r.ChecksumVerified, r.ID)
 	return err
 }
 
