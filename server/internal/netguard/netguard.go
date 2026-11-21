@@ -8,7 +8,14 @@
 // directory 漏了 0.0.0.0/8 和阿里云元数据 100.100.100.200，而连接试连已经拦了。
 package netguard
 
-import "net"
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+)
 
 // metadataIPs 是不在链路本地段里的已知云主机元数据地址；169.254.0.0/16 这类
 // 段内地址由调用方现有的链路本地判定拦。
@@ -53,4 +60,54 @@ func IsMetadataIP(ip net.IP) bool {
 func IsZeroNetwork(ip net.IP) bool {
 	v4 := ip.To4()
 	return v4 != nil && v4[0] == 0
+}
+
+// ---- 出站请求的重定向策略 ----
+//
+// 管理面（npm 源检查、OIDC 发现/换令牌/JWKS、上游连通性检查等）的出站请求由管理员配置的
+// 目标地址触发，但重定向目标是对方服务器当场给的。Go 默认最多跟 10 跳，而且只在跨域时
+// 去掉 Authorization；自定义头（X-API-Key、员工身份头）会原样带过去，所以一次跨主机
+// 重定向就能把凭据送到别处，或把「只访问这个地址」的预期绕过去。
+//
+// 策略写在一处，各出站 client 共用，避免像 registry / directory / api 那样三份拷贝各写一遍
+// 再漂移：只跟随同 scheme/host/port 的重定向，最多 5 跳。
+
+// SameOrigin 比较 scheme + host + 端口（默认端口按协议补齐）；scheme 与 host 大小写不敏感。
+func SameOrigin(a, b string) bool {
+	ua, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	ub, err := url.Parse(b)
+	if err != nil {
+		return false
+	}
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		switch u.Scheme {
+		case "https":
+			return "443"
+		default:
+			return "80"
+		}
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Hostname(), ub.Hostname()) && port(ua) == port(ub)
+}
+
+// SameOriginRedirect 可直接赋给 http.Client.CheckRedirect：只跟随同来源重定向，跨
+// scheme/host/port 一律返回可读错误。错误信息保留「重定向」「另一个地址」两个词，既有的
+// 管理面测试按这两个词断言被拦原因。
+func SameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("重定向次数太多")
+	}
+	if len(via) == 0 {
+		return nil
+	}
+	if !SameOrigin(via[0].URL.String(), req.URL.String()) {
+		return fmt.Errorf("目标服务把请求重定向到了另一个地址（%s），为免把凭据带过去，已停止（只允许同来源重定向）", req.URL.Host)
+	}
+	return nil
 }

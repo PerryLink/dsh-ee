@@ -125,28 +125,10 @@ func (s *Server) connHeader(ctx context.Context, assetID int64, sp *assetSpec, o
 	return h, nil
 }
 
-// sameOrigin 比较 scheme + host + 端口（默认端口按协议补齐）。
+// sameOrigin 比较 scheme + host + 端口（默认端口按协议补齐）。实现集中在 netguard，
+// 与 registryClient、OIDC 等出站 client 的重定向判定共用一份，避免各自拷贝漂移。
 func sameOrigin(a, b string) bool {
-	ua, err := url.Parse(a)
-	if err != nil {
-		return false
-	}
-	ub, err := url.Parse(b)
-	if err != nil {
-		return false
-	}
-	port := func(u *url.URL) string {
-		if p := u.Port(); p != "" {
-			return p
-		}
-		switch u.Scheme {
-		case "https":
-			return "443"
-		default:
-			return "80"
-		}
-	}
-	return ua.Scheme == ub.Scheme && strings.EqualFold(ua.Hostname(), ub.Hostname()) && port(ua) == port(ub)
+	return netguard.SameOrigin(a, b)
 }
 
 func (s *Server) connHTTP(sp *assetSpec) *http.Client {
@@ -161,13 +143,7 @@ func (s *Server) connHTTP(sp *assetSpec) *http.Client {
 // sameHostRedirect 不跟随跳到别的主机的重定向。Go 只会在跨域时去掉 Authorization，
 // 自定义请求头（X-API-Key、放员工身份的头）会原样带过去；上游一个重定向就能把凭据送到别处。
 func sameHostRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 5 {
-		return errors.New("重定向次数太多")
-	}
-	if !sameOrigin(via[0].URL.String(), req.URL.String()) {
-		return fmt.Errorf("上游把请求重定向到了另一个地址（%s），为了不把凭据带过去，已停止", req.URL.Host)
-	}
-	return nil
+	return netguard.SameOriginRedirect(req, via)
 }
 
 // ---- 连接测试的地址校验 ----

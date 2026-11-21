@@ -849,9 +849,18 @@ func (s *Server) handleRegistryCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) registryClient() *http.Client {
 	if s.opts.NpmUpstream != nil {
-		return s.opts.NpmUpstream
+		// 显式注入的 client 归调用方管 Transport/超时，但管理面检查不能因此绕过跨主机
+		// 重定向限制：复制一份再补上，调用方自带的 CheckRedirect 策略保留不覆盖。
+		c := *s.opts.NpmUpstream
+		if c.CheckRedirect == nil {
+			c.CheckRedirect = sameHostRedirect
+		}
+		return &c
 	}
-	return &http.Client{Timeout: 15 * time.Second, Transport: s.opts.DemoSite.guard(&http.Transport{Proxy: http.ProxyFromEnvironment})}
+	// 管理员填的上游 registry（或中间人）可能用 302/307/308 把检查请求引到别的主机：
+	// 跟过去就成了跳板，也和「只检查这个地址」的预期不符。和网关默认 client 一致，
+	// 只允许跳到同 scheme/host/port 的地址。
+	return &http.Client{Timeout: 15 * time.Second, Transport: s.opts.DemoSite.guard(&http.Transport{Proxy: http.ProxyFromEnvironment}), CheckRedirect: sameHostRedirect}
 }
 
 // ---- 上游预载 ----
