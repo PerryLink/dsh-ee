@@ -164,11 +164,10 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if err = s.cleanupDshReleases(ctx, item.Target, set.Distribution.KeepVersions); err != nil {
-		s.internalErr(w, r, err)
-		return
-	}
 	finished = true
+	if err = s.cleanupDshReleases(ctx, item.Target, set.Distribution.KeepVersions); err != nil {
+		s.log.Warn("离线导入后清理旧版本失败", "target", item.Target, "err", err)
+	}
 	s.audit(r, auditDshReleaseImport, item.Target+"/"+item.File, map[string]any{"version": item.Version})
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "id": item.ID})
 }

@@ -299,6 +299,48 @@ func TestDshReleaseImportFailureAfterRename(t *testing.T) {
 	}
 }
 
+func TestDshReleaseImportSurvivesRetentionFailure(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	oldDir := filepath.Join(f.s.opts.DataDir, "nonempty")
+	if err := os.MkdirAll(oldDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "file"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	set, err := f.st.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.Distribution.KeepVersions = 1
+	if err := f.st.SaveSettings(ctx, set, 0); err != nil {
+		t.Fatal(err)
+	}
+	f.s.settings.v = nil
+	old := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.0.0", File: "old.zip", LocalPath: oldDir, ReleasedAt: time.Now().Add(-time.Hour), State: store.ReleaseMirrored}
+	if err := f.st.CreateDshRelease(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	f.s.handleImportDshRelease(w, httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=new.zip", strings.NewReader("new")))
+	if w.Code != 201 {
+		t.Fatalf("retention failure rejected completed import: %d %s", w.Code, w.Body)
+	}
+	row, err := f.st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
+	if err != nil || row.State != store.ReleaseMirrored || row.LocalPath == "" || row.Error != "" {
+		t.Fatalf("completed import changed: %+v %v", row, err)
+	}
+	content, err := os.ReadFile(row.LocalPath)
+	if err != nil || string(content) != "new" {
+		t.Fatalf("imported file: %q %v", content, err)
+	}
+	oldRow, err := f.st.DshReleaseByID(ctx, old.ID)
+	if err != nil || oldRow.State != store.ReleaseMirrored {
+		t.Fatalf("retention failure was not exercised: %+v %v", oldRow, err)
+	}
+}
+
 func TestDshReleaseMirrorAndValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
