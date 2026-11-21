@@ -163,7 +163,8 @@ func TestLoginIPRateLimitWindowResets(t *testing.T) {
 	}
 }
 
-// 用户名锁仍然生效；/metrics 统计密码错误、IP 限流与用户名锁定三种计数。
+// 用户名锁仍然生效（锁定期内继续输错密码才 429，密码正确则放行）；
+// /metrics 统计密码错误、IP 限流与用户名锁定三种计数。
 func TestLoginRateLimitMetrics(t *testing.T) {
 	ts := newLoginRateLimitServer(t, api.Options{LoginIPLimit: 5, LoginIPWindow: 15 * time.Minute, Metrics: true, Version: "test"})
 	ip := "198.51.100.40"
@@ -174,18 +175,27 @@ func TestLoginRateLimitMetrics(t *testing.T) {
 			t.Fatalf("第 %d 次错误密码应返回 401，得到 %d：%s", i+1, code, body)
 		}
 	}
-	// 用户名锁（5 次）先于 IP 限流命中
-	if code, body, _ := loginAttempt(t, ts.URL, ip, "admin", "admin-password-123"); code != http.StatusTooManyRequests {
-		t.Fatalf("用户名应被锁定，得到 %d：%s", code, body)
+	// 换一个干净 IP（避开已到上限的 IP 限流），锁定期内继续输错密码：用户名锁命中。
+	cleanIP := "198.51.100.41"
+	code, body, header := loginAttempt(t, ts.URL, cleanIP, "admin", "wrong-password")
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("用户名应被锁定（429），得到 %d：%s", code, body)
 	}
-	// 换一个用户名，IP 失败次数达到上限
+	if got := header.Get("Retry-After"); got == "" {
+		t.Errorf("用户名锁定的 429 应带 Retry-After，实际没有")
+	}
+	// 同一个干净 IP 用正确密码：锁定不能挡密码正确的合法用户。
+	if code, body, _ := loginAttempt(t, ts.URL, cleanIP, "admin", "admin-password-123"); code != http.StatusOK {
+		t.Fatalf("锁定期内正确密码应登录成功，得到 %d：%s", code, body)
+	}
+	// 原 IP 失败次数达到上限，换一个用户名也会被 IP 限流。
 	if code, body, _ := loginAttempt(t, ts.URL, ip, "another", "whatever-password"); code != http.StatusTooManyRequests {
 		t.Fatalf("IP 应被限流，得到 %d：%s", code, body)
 	}
 
-	code, body, header := getBody(t, ts.URL, "/metrics")
+	code, metricsBody, header := getBody(t, ts.URL, "/metrics")
 	if code != http.StatusOK {
-		t.Fatalf("抓取 /metrics 应成功，得到 %d：%s", code, body)
+		t.Fatalf("抓取 /metrics 应成功，得到 %d：%s", code, metricsBody)
 	}
 	if ct := header.Get("Content-Type"); !strings.Contains(ct, "text/plain") {
 		t.Fatalf("Content-Type 应为文本格式，得到 %q", ct)
@@ -195,8 +205,8 @@ func TestLoginRateLimitMetrics(t *testing.T) {
 		"dsh_ee_login_ip_limited_total 1",
 		"dsh_ee_login_username_limited_total 1",
 	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("指标里缺少 %q：\n%s", want, body)
+		if !strings.Contains(metricsBody, want) {
+			t.Errorf("指标里缺少 %q：\n%s", want, metricsBody)
 		}
 	}
 }

@@ -513,6 +513,9 @@ func TestLoginAndUserQuota(t *testing.T) {
 	expect(t, "退出后访问", code, 401, body)
 }
 
+// 用户名锁定期间不能把密码正确的合法用户挡在门外（否则未认证者可用错误密码定向 DoS：
+// 锁是全局按用户名的，锁定期内原本在密码校验之前就 429）。锁定仍然只惩罚继续输错密码
+// 的请求；一旦用正确密码登录成功，失败计数清零。
 func TestLoginLockout(t *testing.T) {
 	st := openTestStore(t)
 	if _, err := api.Bootstrap(context.Background(), st, "admin", "admin-password-123"); err != nil {
@@ -525,8 +528,15 @@ func TestLoginLockout(t *testing.T) {
 	for range 5 {
 		c.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "nope-nope-nope"}, nil)
 	}
-	code, body := c.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
-	expect(t, "连续失败后即使密码正确也应锁定", code, 429, body)
+	// 锁定期内继续输错密码：429，反爆破仍然有效。
+	code, body := c.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "nope-nope-nope"}, nil)
+	expect(t, "锁定期间错误密码", code, 429, body)
+	// 锁定期内输入正确密码：必须放行。
+	code, body = c.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "锁定期间正确密码应放行", code, 200, body)
+	// 登录成功清零失败计数：下一次错误密码回到 401，而不是继续 429。
+	code, body = c.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "nope-nope-nope"}, nil)
+	expect(t, "登录成功后失败计数应清零", code, 401, body)
 }
 
 func itoa(n int64) string {

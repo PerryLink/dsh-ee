@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -140,10 +141,17 @@ func createSuperAdmin(ctx context.Context, st *store.Store, username, password s
 }
 
 // ---- 登录限流：同一用户名 15 分钟内连续失败 5 次即锁定 15 分钟 ----
+//
+// 锁是按用户名全局生效的，所以它只用于惩罚「继续输错密码」的请求：检查点在密码校验
+// 之后（见 login），密码正确的合法用户不会被锁挡住。锁定期间不再累加失败、也不延长
+// 锁定到期时间，否则未认证者每发一次错误密码就能把 until 续到 now+lockFor，把用户名
+// 永久锁死。
 
 type loginLimiter struct {
 	mu    sync.Mutex
 	fails map[string]*failState
+	// now 可替换，测试里用假时钟验证锁定到期与续期语义。
+	now func() time.Time
 }
 
 type failState struct {
@@ -158,21 +166,41 @@ const (
 	lockFor    = 15 * time.Minute
 )
 
-func newLoginLimiter() *loginLimiter { return &loginLimiter{fails: map[string]*failState{}} }
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{fails: map[string]*failState{}, now: time.Now}
+}
 
-func (l *loginLimiter) locked(user string) bool {
+// lockRemaining 返回该用户名锁定的剩余时间；不在锁定窗口内返回 0。
+func (l *loginLimiter) lockRemaining(user string) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	f := l.fails[user]
-	return f != nil && time.Now().Before(f.until)
+	if f == nil {
+		return 0
+	}
+	d := f.until.Sub(l.now())
+	if d <= 0 {
+		return 0
+	}
+	return d
+}
+
+func (l *loginLimiter) locked(user string) bool {
+	return l.lockRemaining(user) > 0
 }
 
 func (l *loginLimiter) fail(user string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	t := time.Now()
+	t := l.now()
 	f := l.fails[user]
-	if f == nil || t.Sub(f.first) > failWindow {
+	// 锁定窗口内不再计数：既不延长锁定，也不改变到期时间。
+	if f != nil && !f.until.IsZero() && t.Before(f.until) {
+		return
+	}
+	// 锁定已到期或失败窗口已过：从零开始计数。否则锁定到期后的一次错误就会
+	// 接着旧的失败次数立刻把用户名重新锁上。
+	if f == nil || t.Sub(f.first) > failWindow || (!f.until.IsZero() && !t.Before(f.until)) {
 		f = &failState{first: t}
 		l.fails[user] = f
 	}
@@ -203,12 +231,19 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
-// usernameLocked 检查同一用户名的失败锁定；命中时写 429 并计入 /metrics，调用方直接返回。
+// usernameLocked 检查同一用户名的失败锁定。它只在密码校验失败之后调用（见 login）：
+// 密码正确时根本走不到这里，所以锁定不会把合法用户挡在门外，未认证者也就无法用
+// 错误密码对已知用户名做登录 DoS。命中时写 429（带 Retry-After）并计入 /metrics，
+// 调用方直接返回；锁定期内的失败不计数、不续期。
 func (s *Server) usernameLocked(w http.ResponseWriter, username string) bool {
-	if !s.limiter.locked(username) {
+	remaining := s.limiter.lockRemaining(username)
+	if remaining <= 0 {
 		return false
 	}
 	s.loginUsernameLimited.Add(1)
+	if w.Header().Get("Retry-After") == "" {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(remaining)))
+	}
 	// 文案里的 15 分钟与 lockFor 一致；params 给前端多语言文案插值用。
 	writeErrCode(w, http.StatusTooManyRequests, codeAuthTooManyAttempts,
 		map[string]any{"minutes": int(lockFor / time.Minute)}, "失败次数过多，请 15 分钟后再试")
@@ -221,9 +256,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := strings.ToLower(strings.TrimSpace(req.Username))
-	if s.usernameLocked(w, username) {
-		return
-	}
 	u, ok := s.login(w, r, username, req.Password, "web")
 	if !ok {
 		return
@@ -274,6 +306,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, username, passwor
 	u, err := s.authenticate(r.Context(), username, password)
 	switch {
 	case errors.Is(err, errBadCredentials):
+		// 用户名锁定检查放在密码校验之后：上面的 authenticate 已经跑完恒时 bcrypt（或
+		// LDAP），密码正确的合法用户会直接走成功分支，不会因锁定被挡成 429。
+		// 只有密码确实错误、且该用户名正处于锁定窗口时才 429；此时不调用 limiter.fail，
+		// 否则 429 会不断把锁定到期时间往后推，攻击者可以永久锁死用户名。
+		if s.usernameLocked(w, username) {
+			return nil, false
+		}
 		s.loginFailures.Add(1)
 		s.loginIPLimiter.fail(ip)
 		s.limiter.fail(username)

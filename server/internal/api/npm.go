@@ -485,9 +485,7 @@ func (s *Server) handleNpmLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := strings.ToLower(strings.TrimSpace(body.Name))
-	if s.usernameLocked(w, username) {
-		return
-	}
+	// 用户名锁定检查在 s.login 内部、密码校验之后：密码正确的 npm 登录不受锁定影响。
 	u, ok := s.login(w, r, username, body.Password, "npm")
 	if !ok {
 		return

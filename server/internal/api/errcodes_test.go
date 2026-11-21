@@ -82,15 +82,22 @@ func TestLoginErrorCodes(t *testing.T) {
 	expect(t, "密码错误", code, http.StatusUnauthorized, body)
 	checkErr(t, "密码错误", body, "用户名或密码错误", "auth.bad_credentials", nil)
 
-	// 同一用户名连续失败 5 次后锁定：429 + auth.too_many_attempts + minutes=15。
+	// 同一用户名连续失败 5 次后锁定；第 6 次仍然输错密码才 429
+	// （锁定期内密码正确必须放行，见 TestLockedUsernameCorrectPasswordIsNotDenied）。
 	ip := "198.51.100.61"
 	for i := 2; i <= 5; i++ {
 		code, body, _ = loginAttempt(t, ts.URL, ip, "admin", "wrong-password")
 		expect(t, "连续密码错误", code, http.StatusUnauthorized, body)
 	}
-	code, body, _ = loginAttempt(t, ts.URL, ip, "admin", "admin-password-123")
+	code, body, header := loginAttempt(t, ts.URL, "198.51.100.63", "admin", "wrong-password")
 	expect(t, "用户名锁定", code, http.StatusTooManyRequests, body)
 	checkErr(t, "用户名锁定", body, "失败次数过多，请 15 分钟后再试", "auth.too_many_attempts", map[string]any{"minutes": 15})
+	if retry, err := strconv.Atoi(header.Get("Retry-After")); err != nil || retry < 1 || retry > 900 {
+		t.Errorf("用户名锁定的 Retry-After 应是 1..900 的秒数，得到 %q（%v）", header.Get("Retry-After"), err)
+	}
+	// 锁定期内用正确密码登录：放行（修复前这里被全局锁定挡成 429，构成登录 DoS）。
+	code, body, _ = loginAttempt(t, ts.URL, "198.51.100.64", "admin", "admin-password-123")
+	expect(t, "锁定期内正确密码", code, http.StatusOK, body)
 
 	// 没有会话：401 + auth.login_required。
 	anon := newClient(t, ts.URL)
