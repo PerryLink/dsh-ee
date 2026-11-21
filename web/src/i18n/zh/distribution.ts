@@ -1,6 +1,7 @@
 /** 下载 DSH、接入指南、分享能力。 */
 export default {
   download: {
+    copySha512: "复制完整 SHA-512",
     download: "下载",
     disabled: "管理员未开启 DSH 桌面版分发，请联系 IT 获取安装包。",
     title: "下载 DSH Desktop",

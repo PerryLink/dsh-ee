@@ -21,6 +21,7 @@ export default {
     hashNote: "Cada paquete indica arriba el origen y estado de su verificación. Usa SHA-512 para comprobar el archivo descargado.",
     "officialVerified": "Verificado con el sha512 oficial",
     importVerified: "Verificado con el sha512 proporcionado por el administrador",
+    copySha512: "Copiar SHA-512 completo",
     importUnverified: "Sin verificar con una suma proporcionada; dsh-ee calculó SHA-512 al importar",
     "unverifiedDmg": "No hay hash oficial disponible; dsh-ee calculó este sha512 durante la descarga",
     "winInstall": "Ejecuta el exe para instalar. Si Windows muestra «Windows protegió tu PC» en el primer inicio, elige Más información → Ejecutar de todos modos.",

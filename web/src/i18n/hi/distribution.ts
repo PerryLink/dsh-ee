@@ -21,6 +21,7 @@ export default {
     hashNote: "ऊपर हर पैकेज का सत्यापन स्रोत और स्थिति दी गई है। डाउनलोड के बाद SHA-512 से फ़ाइल की जाँच करें।",
     "officialVerified": "आधिकारिक sha512 से सत्यापित",
     importVerified: "व्यवस्थापक द्वारा दिए गए sha512 से सत्यापित",
+    copySha512: "पूरा SHA-512 कॉपी करें",
     importUnverified: "दिए गए चेकसम से सत्यापित नहीं; आयात के समय dsh-ee ने SHA-512 गणना की",
     "unverifiedDmg": "आधिकारिक हैश से सत्यापित नहीं; sha512 dsh-ee ने डाउनलोड के समय गणना की",
     "winInstall": "exe पर डबल-क्लिक करके इंस्टॉल करें; पहली बार चलाने पर यदि “Windows protected your PC” दिखे, तो More info → Run anyway चुनें।",

@@ -44,9 +44,10 @@ export function ImportReleaseDialog({ releases, onClose, onSuccess }: { releases
   };
   const inputClass = "mt-1 block w-full rounded-md border border-neutral-300 bg-card px-3 py-2 text-sm";
   return <Dialog open onOpenChange={(open) => { if (!open && progress === null) onClose(); }}>
-    <DialogContent className="sm:max-w-2xl">
-      <DialogHeader><DialogTitle>{t("distributionAdmin.importOffline")}</DialogTitle><DialogDescription>{t("distributionAdmin.importHint")}</DialogDescription></DialogHeader>
-      <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); upload(); }}>
+    <DialogContent className="flex flex-col overflow-hidden sm:max-w-2xl">
+      <DialogHeader className="shrink-0"><DialogTitle>{t("distributionAdmin.importOffline")}</DialogTitle><DialogDescription>{t("distributionAdmin.importHint")}</DialogDescription></DialogHeader>
+      <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={(e) => { e.preventDefault(); upload(); }}>
+        <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
         <label className="block text-sm font-medium">{t("distributionAdmin.importTarget")}<select className={inputClass} value={target} onChange={(e) => setTarget(e.target.value as DshTarget)} disabled={progress !== null}>
           <option value="mac-arm64">{t("distributionAdmin.arm64")}</option><option value="mac-x64">{t("distributionAdmin.x64")}</option><option value="win-x64">{t("distributionAdmin.windows")}</option>
         </select></label>
@@ -65,7 +66,8 @@ export function ImportReleaseDialog({ releases, onClose, onSuccess }: { releases
         <label className="block text-sm font-medium">{t("distributionAdmin.importHash")}<input className={inputClass} value={hash} disabled={progress !== null} onChange={(e) => setHash(e.target.value)} /></label>
         {progress !== null && <div className="space-y-2 text-sm"><div>{t("distributionAdmin.importUploading")} · {progress}%</div><progress aria-label={t("distributionAdmin.importUploading")} className="h-2 w-full accent-emerald-600" max={100} value={progress} /></div>}
         {error && <Notice tone="warn">{error}</Notice>}
-        <DialogFooter><Button type="button" variant="secondary" disabled={progress !== null} onClick={onClose}>{t("common.cancel")}</Button><Button type="submit" disabled={!file || mismatch || !version.trim() || progress !== null}>{t("distributionAdmin.importSubmit")}</Button></DialogFooter>
+        </div>
+        <DialogFooter className="shrink-0"><Button type="button" variant="secondary" disabled={progress !== null} onClick={onClose}>{t("common.cancel")}</Button><Button type="submit" disabled={!file || mismatch || !version.trim() || progress !== null}>{t("distributionAdmin.importSubmit")}</Button></DialogFooter>
       </form>
     </DialogContent>
   </Dialog>;

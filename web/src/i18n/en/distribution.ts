@@ -3,6 +3,7 @@ import type { Messages } from "../types";
 
 export default {
   download: {
+    copySha512: "Copy full SHA-512",
     download: "Download",
     disabled: "DSH Desktop distribution is turned off. Ask IT for an installer.",
     title: "Download DSH Desktop",
