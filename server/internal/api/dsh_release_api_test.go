@@ -35,7 +35,7 @@ func TestDshReleaseImportAPI(t *testing.T) {
 	admin := newClient(t, ts.URL)
 	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
 	expect(t, "login", code, 200, body)
-	upload := func(target, version, file, hash, content string, want int) {
+	upload := func(target, version, file, hash, content string, want int) []byte {
 		t.Helper()
 		q := url.Values{"target": {target}, "version": {version}, "file": {file}, "sha512": {hash}}
 		req, _ := http.NewRequest("POST", ts.URL+"/api/admin/dsh-releases/import?"+q.Encode(), strings.NewReader(content))
@@ -46,14 +46,23 @@ func TestDshReleaseImportAPI(t *testing.T) {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
 		expect(t, "import "+file, resp.StatusCode, want, b)
+		return b
 	}
 	for _, tc := range []struct{ target, version, file string }{
+		{"mac-arm64", "1.2.3", "dsh.exe"}, {"mac-x64", "1.2.3", "dsh.msi"}, {"win-x64", "1.2.3", "dsh.zip"}, {"win-x64", "1.2.3", "dsh.dmg"},
 		{"linux", "1.2.3", "dsh.zip"}, {"mac-arm64", "1.2.3", "dsh.tar"}, {"mac-arm64", "1.2.3", "../dsh.zip"}, {"mac-arm64", "1.2.3", `x\dsh.zip`}, {"mac-arm64", "", "dsh.zip"}, {"mac-arm64", "bad version", "dsh.zip"}, {"mac-arm64", strings.Repeat("a", 65), "dsh.zip"},
 	} {
 		upload(tc.target, tc.version, tc.file, "", "bytes", 400)
 	}
 	upload("mac-arm64", "1.2.3", "empty.zip", "", "", 400)
-	upload("mac-arm64", "1.2.3", "bad.zip", strings.Repeat("0", 128), "bad", 400)
+	badFormat := upload("mac-arm64", "1.2.3", "bad.zip", "sha512: incomplete", "bad", 400)
+	if !bytes.Contains(badFormat, []byte(`"code":"release.checksum_format"`)) {
+		t.Fatalf("format error: %s", badFormat)
+	}
+	mismatch := upload("mac-arm64", "1.2.3", "bad.zip", strings.Repeat("0", 128), "bad", 400)
+	if !bytes.Contains(mismatch, []byte(`"code":"release.checksum_mismatch"`)) {
+		t.Fatalf("mismatch error: %s", mismatch)
+	}
 	if rows, _ := st.ListDshReleases(ctx, ""); len(rows) != 0 {
 		t.Fatalf("rejected imports kept rows: %+v", rows)
 	}
@@ -61,7 +70,8 @@ func TestDshReleaseImportAPI(t *testing.T) {
 		t.Fatalf("mismatch kept file: %v", err)
 	}
 	sum := sha512.Sum512([]byte("first"))
-	upload("mac-arm64", " 1.2.3 ", "first.zip", base64.StdEncoding.EncodeToString(sum[:]), "first", 201)
+	encoded := base64.StdEncoding.EncodeToString(sum[:])
+	upload("mac-arm64", " 1.2.3 ", "first.zip", " \nsha512: \n"+encoded[:40]+"\n  "+encoded[40:]+"\n", "first", 201)
 	item, err := st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
 	if err != nil {
 		t.Fatal(err)

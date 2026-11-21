@@ -4,6 +4,8 @@ import type { Messages } from "../types";
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
   release: {
+    checksum_format: "Formato SHA-512 no válido. Pega solo el valor sha512 completo.",
+    checksum_mismatch: "SHA-512 no coincide. Comprueba el nombre y la versión del archivo en el manifiesto.",
     invalid: "Invalid platform, version or installer filename.",
     busy: "This platform is busy or the filename belongs to another version.",
     checksum: "Invalid SHA-512 or checksum mismatch.",

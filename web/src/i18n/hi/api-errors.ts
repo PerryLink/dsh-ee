@@ -4,6 +4,8 @@ import type { Messages } from "../types";
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
   release: {
+    checksum_format: "SHA-512 प्रारूप अमान्य है। केवल पूरा sha512 मान पेस्ट करें।",
+    checksum_mismatch: "SHA-512 मेल नहीं खाता। मेनिफ़ेस्ट में फ़ाइल का नाम और संस्करण जाँचें।",
     invalid: "Invalid platform, version or installer filename.",
     busy: "This platform is busy or the filename belongs to another version.",
     checksum: "Invalid SHA-512 or checksum mismatch.",

@@ -29,18 +29,25 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 		item.Kind = "dmg"
 	}
 	part, err := s.releasePartPath(item)
-	if err != nil || !releaseVersionPattern.MatchString(item.Version) || strings.ContainsAny(item.File, "\x00\r\n") || (ext != ".zip" && ext != ".exe" && ext != ".msi" && ext != ".dmg") {
+	windowsFile := ext == ".exe" || ext == ".msi"
+	macFile := ext == ".zip" || ext == ".dmg"
+	if err != nil || !releaseVersionPattern.MatchString(item.Version) || strings.ContainsAny(item.File, "\x00\r\n") || (item.Target == "win-x64" && !windowsFile) || (item.Target != "win-x64" && !macFile) {
 		writeErrCode(w, 400, codeReleaseInvalid, nil, "平台、版本或安装包文件名无效")
 		return
 	}
 	var expected []byte
-	if raw := strings.TrimSpace(q.Get("sha512")); raw != "" {
+	raw := strings.TrimSpace(q.Get("sha512"))
+	if len(raw) >= 7 && strings.EqualFold(raw[:7], "sha512:") {
+		raw = raw[7:]
+	}
+	raw = strings.Join(strings.Fields(raw), "")
+	if raw != "" || strings.TrimSpace(q.Get("sha512")) != "" {
 		expected, err = base64.StdEncoding.DecodeString(raw)
 		if err != nil || len(expected) != sha512.Size {
 			expected, err = hex.DecodeString(raw)
 		}
 		if err != nil || len(expected) != sha512.Size {
-			writeErrCode(w, 400, codeReleaseChecksum, nil, "sha512 无效或校验不一致")
+			writeErrCode(w, 400, codeReleaseChecksumFormat, nil, "SHA-512 格式无效，请仅粘贴完整的 sha512 值")
 			return
 		}
 	}
@@ -127,7 +134,7 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if expected != nil && !bytes.Equal(expected, h.Sum(nil)) {
-		writeErrCode(w, 400, codeReleaseChecksum, nil, "sha512 无效或校验不一致")
+		writeErrCode(w, 400, codeReleaseChecksumMismatch, nil, "SHA-512 校验不一致，请核对清单中的文件名和版本")
 		return
 	}
 	item.ChecksumVerified = expected != nil
@@ -169,5 +176,5 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 		s.log.Warn("离线导入后清理旧版本失败", "target", item.Target, "err", err)
 	}
 	s.audit(r, auditDshReleaseImport, item.Target+"/"+item.File, map[string]any{"version": item.Version})
-	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "id": item.ID})
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "id": item.ID, "target": item.Target, "version": item.Version})
 }

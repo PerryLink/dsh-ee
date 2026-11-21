@@ -56,6 +56,7 @@ export type DshReleaseState = "available" | "downloading" | "mirrored" | "failed
 
 export interface DshRelease {
   source?: "import" | "official";
+  upstream_url?: string;
   id: number;
   target: DshTarget;
   kind: "zip" | "dmg" | "exe";

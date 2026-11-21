@@ -11,6 +11,8 @@
  */
 export default {
   release: {
+    checksum_format: "SHA-512 格式无效，请仅粘贴完整的 sha512 值。",
+    checksum_mismatch: "SHA-512 校验不一致，请核对清单中的文件名和版本。",
     invalid: "平台、版本或安装包文件名无效",
     busy: "该平台正在下载或导入，或文件名已被其他版本使用",
     checksum: "sha512 无效或校验不一致",
