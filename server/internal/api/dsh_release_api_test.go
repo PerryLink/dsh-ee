@@ -115,6 +115,31 @@ func TestDshReleaseImportAPI(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"verified":false`)) {
 		t.Fatalf("unchecked import verified: %s", body)
 	}
+	upload("mac-arm64", "1.2.3", "DSH #1.2.3.zip", "", "escaped", 201)
+	code, body = admin.do("GET", "/api/dsh/releases", nil, nil)
+	expect(t, "employee release URLs", code, 200, body)
+	listing := decode[struct {
+		Releases []struct {
+			DownloadURL string `json:"download_url"`
+			Verified    bool   `json:"verified"`
+		} `json:"releases"`
+	}](t, body)
+	if len(listing.Releases) != 1 || listing.Releases[0].Verified {
+		t.Fatalf("employee list: %s", body)
+	}
+	downloadURL := listing.Releases[0].DownloadURL
+	if !strings.Contains(downloadURL, "DSH%20%231.2.3.zip") {
+		t.Fatalf("filename not escaped: %s", downloadURL)
+	}
+	resp, err := admin.hc.Get(downloadURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err = io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 200 || string(b) != "escaped" {
+		t.Fatalf("escaped download: %d %q %v", resp.StatusCode, b, err)
+	}
 }
 
 func TestDshReleaseAPI(t *testing.T) {

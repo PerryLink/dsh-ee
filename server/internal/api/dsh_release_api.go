@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,7 +26,7 @@ func publicDshRelease(r *store.DshRelease, base string) map[string]any {
 	return map[string]any{
 		"id": r.ID, "target": r.Target, "kind": r.Kind, "version": r.Version, "released_at": r.ReleasedAt,
 		"size": r.Size, "sha512": r.SHA512, "recommended": r.Recommended, "verified": dshReleaseVerified(r),
-		"download_url": base + "/dl/" + r.Target + "/" + r.File,
+		"download_url": base + "/dl/" + r.Target + "/" + url.PathEscape(r.File),
 	}
 }
 
