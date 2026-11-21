@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +21,89 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
+
+func TestDshReleaseImportAPI(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	box, _ := secret.NewBox(bytes.Repeat([]byte{11}, 32))
+	dir := t.TempDir()
+	ts := httptest.NewServer(api.New(st, box, api.Options{DataDir: dir}, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	defer ts.Close()
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "login", code, 200, body)
+	upload := func(target, version, file, hash, content string, want int) {
+		t.Helper()
+		q := url.Values{"target": {target}, "version": {version}, "file": {file}, "sha512": {hash}}
+		req, _ := http.NewRequest("POST", ts.URL+"/api/admin/dsh-releases/import?"+q.Encode(), strings.NewReader(content))
+		resp, err := admin.hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		expect(t, "import "+file, resp.StatusCode, want, b)
+	}
+	for _, tc := range []struct{ target, version, file string }{
+		{"linux", "1.2.3", "dsh.zip"}, {"mac-arm64", "1.2.3", "dsh.tar"}, {"mac-arm64", "1.2.3", "../dsh.zip"}, {"mac-arm64", "1.2.3", `x\dsh.zip`}, {"mac-arm64", "", "dsh.zip"}, {"mac-arm64", "bad version", "dsh.zip"}, {"mac-arm64", strings.Repeat("a", 65), "dsh.zip"},
+	} {
+		upload(tc.target, tc.version, tc.file, "", "bytes", 400)
+	}
+	upload("mac-arm64", "1.2.3", "empty.zip", "", "", 400)
+	upload("mac-arm64", "1.2.3", "bad.zip", strings.Repeat("0", 128), "bad", 400)
+	if rows, _ := st.ListDshReleases(ctx, ""); len(rows) != 0 {
+		t.Fatalf("rejected imports kept rows: %+v", rows)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dsh-releases", "mac-arm64", "bad.zip")); !os.IsNotExist(err) {
+		t.Fatalf("mismatch kept file: %v", err)
+	}
+	sum := sha512.Sum512([]byte("first"))
+	upload("mac-arm64", " 1.2.3 ", "first.zip", base64.StdEncoding.EncodeToString(sum[:]), "first", 201)
+	item, err := st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.State != store.ReleaseMirrored || item.UpstreamURL != "" || item.Size != 5 || item.MirroredAt == nil {
+		t.Fatalf("invalid row: %+v", item)
+	}
+	b, err := os.ReadFile(item.LocalPath)
+	if err != nil || string(b) != "first" {
+		t.Fatalf("stored file: %q %v", b, err)
+	}
+	code, body = admin.do("GET", "/dl/mac-arm64/first.zip", nil, nil)
+	expect(t, "download", code, 200, body)
+	if string(body) != "first" {
+		t.Fatalf("download: %q", body)
+	}
+	code, body = admin.do("GET", "/api/admin/dsh-releases", nil, nil)
+	expect(t, "list", code, 200, body)
+	if !bytes.Contains(body, []byte(`"source":"import"`)) {
+		t.Fatalf("missing source: %s", body)
+	}
+	code, body = admin.do("POST", "/api/admin/dsh-releases/"+fmtInt(item.ID)+"/mirror", nil, nil)
+	expect(t, "mirror import", code, 400, body)
+	upload("mac-arm64", "1.2.4", "first.zip", "", "conflict", 409)
+	upload("mac-arm64", "1.2.3", "first.zip", strings.Repeat("0", 128), "bad", 400)
+	b, _ = os.ReadFile(item.LocalPath)
+	if string(b) != "first" {
+		t.Fatal("mismatch replaced existing file")
+	}
+	upload("mac-arm64", "1.2.3", "second.zip", "", "second", 201)
+	updated, _ := st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
+	if updated.ID != item.ID || updated.File != "second.zip" || updated.Size != 6 {
+		t.Fatalf("replacement: %+v", updated)
+	}
+	if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
+		t.Fatalf("old file retained: %v", err)
+	}
+	b, _ = os.ReadFile(updated.LocalPath)
+	if string(b) != "second" {
+		t.Fatal("replacement contents")
+	}
+}
 
 func TestDshReleaseAPI(t *testing.T) {
 	st := openTestStore(t)

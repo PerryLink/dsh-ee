@@ -78,7 +78,7 @@ export default {
       app: { export: "导出应用", import: "导入应用" },
       demo: { clear: "清空演示数据", import: "导入演示数据" },
       feedback: { vote: "反馈评分" },
-      dsh_release: { check: "检查官方版本", mirror: "下载安装包", mirror_failed: "安装包校验失败", recommend: "设置推荐版本", delete: "删除本地安装包" },
+      dsh_release: { import: "导入离线安装包", check: "检查官方版本", mirror: "下载安装包", mirror_failed: "安装包校验失败", recommend: "设置推荐版本", delete: "删除本地安装包" },
       brand: { update: "更新企业品牌" },
       data: { upload: "上传数据表", drop: "删除数据表", dataset_create: "新建数据集", dataset_update: "修改数据集", dataset_delete: "删除数据集" },
       app_data: { insert: "新增应用数据", update: "修改应用数据", delete: "删除应用数据", export: "导出应用数据" },

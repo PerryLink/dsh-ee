@@ -413,6 +413,7 @@ func (s *Server) routes() []route {
 		prm("GET /dl/{target}/{file}", s.handleDownloadDshRelease, rbac.PortalView),
 		pub("GET /dl/connect/{file}", s.handleConnectTarball),
 		prm("GET /api/admin/dsh-releases", s.handleAdminDshReleases, rbac.SettingsManage),
+		prm("POST /api/admin/dsh-releases/import", s.handleImportDshRelease, rbac.SettingsManage),
 		prm("POST /api/admin/dsh-releases/check", s.handleCheckDshReleases, rbac.SettingsManage),
 		prm("POST /api/admin/dsh-releases/{id}/mirror", s.handleMirrorDshRelease, rbac.SettingsManage),
 		prm("POST /api/admin/dsh-releases/{id}/recommend", s.handleRecommendDshRelease, rbac.SettingsManage),

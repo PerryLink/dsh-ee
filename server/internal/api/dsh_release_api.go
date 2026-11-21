@@ -62,8 +62,13 @@ func (s *Server) handleAdminDshReleases(w http.ResponseWriter, r *http.Request) 
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
+		source := "official"
+		if item.UpstreamURL == "" {
+			source = "import"
+		}
 		v := map[string]any{
-			"id": item.ID, "target": item.Target, "kind": item.Kind, "version": item.Version, "released_at": item.ReleasedAt,
+			"source": source,
+			"id":     item.ID, "target": item.Target, "kind": item.Kind, "version": item.Version, "released_at": item.ReleasedAt,
 			"file": item.File, "size": item.Size, "sha512": item.SHA512, "upstream_url": item.UpstreamURL,
 			"state": item.State, "recommended": item.Recommended, "error": item.Error, "mirrored_at": item.MirroredAt,
 			"created_at": item.CreatedAt, "verified": item.Kind != "dmg",
@@ -100,6 +105,10 @@ func (s *Server) handleMirrorDshRelease(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		s.internalErr(w, r, err)
+		return
+	}
+	if item.UpstreamURL == "" {
+		writeErrCode(w, http.StatusBadRequest, codeReleaseImported, nil, "离线导入的安装包不能从官方下载，请重新导入")
 		return
 	}
 	if item.State == store.ReleaseMirrored {

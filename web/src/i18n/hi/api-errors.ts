@@ -3,6 +3,13 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  release: {
+    invalid: "Invalid platform, version or installer filename.",
+    busy: "This platform is busy or the filename belongs to another version.",
+    checksum: "Invalid SHA-512 or checksum mismatch.",
+    body: "The package is empty, too large, or the upload was interrupted.",
+    imported: "Offline packages cannot be mirrored. Import the package again.",
+  },
   upstream: {
     auth_failed: "अपस्ट्रीम रिपॉज़िटरी प्रमाणीकरण विफल रहा। टोकन, उपयोगकर्ता नाम, पासवर्ड और रिपॉज़िटरी अनुमतियाँ जाँचें।",
   },

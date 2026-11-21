@@ -109,6 +109,16 @@ export default {
     "newToken": "Nuevo token"
   },
   "distributionAdmin": {
+    importOffline: "Import offline package",
+    imported: "Offline import",
+    importTarget: "Target platform",
+    importFile: "Installer file",
+    importVersion: "Version",
+    importHash: "SHA-512 (optional)",
+    importHint: "Copy sha512 from official nightly.yml / latest.yml; base64 or hex accepted.",
+    importSubmit: "Upload and import",
+    importSuccess: "Offline package imported",
+    importUploading: "Uploading",
     "checkOfficial": "Comprobar ahora",
     "checkStarted": "Se ha iniciado la comprobación de las versiones oficiales",
     "colRelease": "Versión / tipo",

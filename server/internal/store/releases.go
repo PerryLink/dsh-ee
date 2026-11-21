@@ -131,6 +131,11 @@ func (s *Store) FinishDshRelease(ctx context.Context, id, size int64, sha512, lo
 	return err
 }
 
+func (s *Store) UpdateImportedDshReleaseMetadata(ctx context.Context, r *DshRelease) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE dsh_releases SET released_at = ?, file = ?, size = ?, sha512 = ?, upstream_url = '' WHERE id = ?`, r.ReleasedAt, r.File, r.Size, r.SHA512, r.ID)
+	return err
+}
+
 func (s *Store) SetDshReleaseRecommended(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

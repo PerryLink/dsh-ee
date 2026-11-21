@@ -27,6 +27,11 @@ package api
 //  2. 把对应调用点的 writeErr 换成 writeErrCode（见 server.go），error 文案原样保留；
 //  3. 在 web 的 zh/en 两份 api-errors.ts 里加同一个键路径。
 const (
+	codeReleaseInvalid  = "release.invalid"
+	codeReleaseBusy     = "release.busy"
+	codeReleaseChecksum = "release.checksum"
+	codeReleaseBody     = "release.body"
+	codeReleaseImported = "release.imported"
 	// codeUpstreamAuthFailed：上游 npm 仓库返回 401/403，502。params 无。
 	codeUpstreamAuthFailed        = "upstream.auth_failed"
 	codeIdentityEntranceDisabled  = "identity.entrance_disabled"

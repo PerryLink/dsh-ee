@@ -8,6 +8,7 @@ import type { DshRelease, DshTarget } from "../../lib/types";
 import { Badge, Button, Card, PageHeader, ToggleRow, Notice, Empty } from "../../components/ui";
 import { LoadState } from "../../components/api-ui";
 import { PageLink } from "../../lib/menus";
+import { ImportReleaseDialog } from "./distribution-import";
 
 function ReleaseTable({ target, title, rows, busy, act }: { target: DshTarget; title: string; rows: DshRelease[]; busy: number; act: (id: number, action: "mirror" | "recommend" | "delete") => void }) {
   const { t } = useTranslation();
@@ -33,6 +34,7 @@ function ReleaseTable({ target, title, rows, busy, act }: { target: DshTarget; t
                   <td className="px-5 py-3">
                     <div className="font-mono font-medium text-neutral-800">{r.version} · {r.kind}</div>
                     {r.recommended && <Badge tone="brand">{t("download.recommended")}</Badge>}
+                    {r.source === "import" && <Badge tone="slate">{t("distributionAdmin.imported")}</Badge>}
                     {r.error && <div className="mt-1 max-w-md text-xs text-red-600">{r.error}</div>}
                   </td>
                   <td className="px-5 py-3 text-neutral-500">{formatTime(r.released_at)}</td>
@@ -45,7 +47,7 @@ function ReleaseTable({ target, title, rows, busy, act }: { target: DshTarget; t
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex flex-wrap gap-2">
-                      {((r.state ?? "available") === "available" || (r.state ?? "available") === "failed" || r.state === "removed") && (
+                      {r.source !== "import" && ((r.state ?? "available") === "available" || (r.state ?? "available") === "failed" || r.state === "removed") && (
                         <Button size="sm" variant="secondary" disabled={busy === r.id} onClick={() => act(r.id, "mirror")}>{t("distributionAdmin.mirror")}</Button>
                       )}
                       {(r.state ?? "available") === "mirrored" && !r.recommended && (
@@ -74,6 +76,7 @@ export default function AdminDistribution() {
   const { settings, updateSettings, notify } = useStore();
   const { data, loading, error, reload } = useApi(api.adminDshReleases);
   const [busy, setBusy] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
   const rows = data ?? [];
   const downloading = rows.some((r) => (r.state ?? "available") === "downloading");
 
@@ -103,7 +106,7 @@ export default function AdminDistribution() {
       <PageHeader
         title={t("distributionAdmin.title")}
         desc={t("distributionAdmin.desc")}
-        actions={<Button variant="secondary" onClick={async () => { await api.checkDshReleases(); notify(t("distributionAdmin.checkStarted")); }}><RefreshCw size={14} /> {t("distributionAdmin.checkOfficial")}</Button>}
+        actions={<><Button onClick={() => setImportOpen(true)}><PackageOpen size={14} />{t("distributionAdmin.importOffline")}</Button><Button variant="secondary" onClick={async () => { await api.checkDshReleases(); notify(t("distributionAdmin.checkStarted")); }}><RefreshCw size={14} /> {t("distributionAdmin.checkOfficial")}</Button></>}
       />
       {!settings.distribution.enabled && (
         <Notice tone="warn" className="mb-6">
@@ -150,6 +153,7 @@ export default function AdminDistribution() {
           <ReleaseTable target="win-x64" title={t("distributionAdmin.windows")} rows={rows} busy={busy} act={run} />
         </div>
       </LoadState>
+      {importOpen && <ImportReleaseDialog onClose={() => setImportOpen(false)} onSuccess={() => { setImportOpen(false); notify(t("distributionAdmin.importSuccess")); void reload(); }} />}
     </div>
   );
 }

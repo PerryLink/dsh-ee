@@ -80,7 +80,7 @@ export default {
       app: { export: "Exported app", import: "Imported app" },
       demo: { clear: "Cleared demo data", import: "Imported demo data" },
       feedback: { vote: "Rated an answer" },
-      dsh_release: { check: "Checked official releases", mirror: "Downloaded installer", mirror_failed: "Installer verification failed", recommend: "Set recommended release", delete: "Deleted local installer" },
+      dsh_release: { import: "Imported offline installer", check: "Checked official releases", mirror: "Downloaded installer", mirror_failed: "Installer verification failed", recommend: "Set recommended release", delete: "Deleted local installer" },
       brand: { update: "Updated company branding" },
       data: { upload: "Upload data table", drop: "Delete data table", dataset_create: "Create dataset", dataset_update: "Edit dataset", dataset_delete: "Delete dataset" },
       app_data: { insert: "Add app data", update: "Edit app data", delete: "Delete app data", export: "Export app data" },

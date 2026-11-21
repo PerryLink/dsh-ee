@@ -359,7 +359,7 @@ func init() {
 		"GET /api/admin/hub/review", "POST /api/admin/hub/review", "POST /api/admin/hub/scope-review", "PUT /api/admin/plugin-policies/{name...}",
 		"POST /api/admin/connections/test", "POST /api/admin/connections/{id}/sync", "PATCH /api/admin/connections/{id}/tools/{name}",
 		"GET /api/admin/connect", "POST /api/admin/connect/publish", "PUT /api/admin/brand/logo",
-		"GET /api/admin/dsh-releases", "POST /api/admin/dsh-releases/check", "POST /api/admin/dsh-releases/{id}/mirror", "POST /api/admin/dsh-releases/{id}/recommend", "DELETE /api/admin/dsh-releases/{id}",
+		"GET /api/admin/dsh-releases", "POST /api/admin/dsh-releases/import", "POST /api/admin/dsh-releases/check", "POST /api/admin/dsh-releases/{id}/mirror", "POST /api/admin/dsh-releases/{id}/recommend", "DELETE /api/admin/dsh-releases/{id}",
 		"GET /api/admin/stats", "GET /api/admin/audit",
 		"GET /api/admin/packages", "GET /api/admin/packages/{name...}", "PATCH /api/admin/packages/{name...}",
 		"GET /api/admin/review", "POST /api/admin/review", "GET /api/admin/tarball",

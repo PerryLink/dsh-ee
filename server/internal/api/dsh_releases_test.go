@@ -140,6 +140,49 @@ func TestDshReleaseNotifyDoesNotDownload(t *testing.T) {
 	}
 }
 
+func TestDshReleaseSyncSkipsImported(t *testing.T) {
+	f := newReleaseFixture(t, "mirror")
+	ctx := context.Background()
+	imported := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "offline.zip", ReleasedAt: time.Now(), State: store.ReleaseAvailable}
+	if err := f.st.CreateDshRelease(ctx, imported); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.syncDshReleases(ctx); err != nil {
+		t.Fatal(err)
+	}
+	row, err := f.st.DshReleaseByID(ctx, imported.ID)
+	if err != nil || row.UpstreamURL != "" || row.File != "offline.zip" || row.State != store.ReleaseAvailable {
+		t.Fatalf("import changed: %+v %v", row, err)
+	}
+	if f.downloads.Load() != 2 {
+		t.Fatalf("expected only other two platforms to download: %d", f.downloads.Load())
+	}
+}
+
+func TestDshReleaseImportSizeAndLock(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	oldLimit := maxDshReleaseBytes
+	maxDshReleaseBytes = 4
+	defer func() { maxDshReleaseBytes = oldLimit }()
+	for _, tc := range []struct {
+		body   string
+		locked bool
+		want   int
+	}{{"12345", false, 413}, {"", false, 400}, {"abc", true, 409}} {
+		f.s.releaseJobs["mac-arm64"] = tc.locked
+		req := httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=test.zip", strings.NewReader(tc.body))
+		w := httptest.NewRecorder()
+		f.s.handleImportDshRelease(w, req)
+		if w.Code != tc.want {
+			t.Fatalf("status %d want %d: %s", w.Code, tc.want, w.Body)
+		}
+	}
+	rows, _ := f.st.ListDshReleases(context.Background(), "")
+	if len(rows) != 0 {
+		t.Fatalf("failed import kept rows: %+v", rows)
+	}
+}
+
 func TestDshReleaseMirrorAndValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
