@@ -58,9 +58,13 @@ func TestReadPackageTarballExactContentLength(t *testing.T) {
 				req.ContentLength = -1
 			}
 			rec := httptest.NewRecorder()
-			raw, info, m, ok := s.readPackageTarball(rec, req)
+			raw, ok := s.readPackageTarball(rec, req)
 			if !ok {
 				t.Fatalf("读取失败：%d %s", rec.Code, rec.Body.String())
+			}
+			info, m, ok := parsePackageTarball(rec, bytes.NewReader(raw))
+			if !ok {
+				t.Fatalf("解包失败：%d %s", rec.Code, rec.Body.String())
 			}
 			if !bytes.Equal(raw, tgz) {
 				t.Fatalf("读到的 tarball 与上传内容不一致：%d != %d", len(raw), len(tgz))
@@ -80,31 +84,24 @@ func TestPackageUploadTooLarge(t *testing.T) {
 	t.Run("声明的 Content-Length 超限", func(t *testing.T) {
 		s := testUploadServer(1024)
 		rec := httptest.NewRecorder()
-		if _, _, _, ok := s.readPackageTarball(rec, testUploadRequest(t, body)); ok {
-			t.Fatal("超限的请求不应继续解析")
+		if _, ok := s.readPackageTarball(rec, testUploadRequest(t, body)); ok {
+			t.Fatal("超限的请求不应继续读")
 		}
 		if rec.Code != http.StatusRequestEntityTooLarge {
 			t.Fatalf("应返回 413，得到 %d：%s", rec.Code, rec.Body.String())
-		}
-		rec = httptest.NewRecorder()
-		if _, _, _, ok := s.inspectPackageTarball(rec, testUploadRequest(t, body)); ok {
-			t.Fatal("超限的预检请求不应继续解析")
-		}
-		if rec.Code != http.StatusRequestEntityTooLarge {
-			t.Fatalf("预检应返回 413，得到 %d：%s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("分块上传按实际字节数超限", func(t *testing.T) {
 		s := testUploadServer(1024)
 		tgz := testTgz(t, "@company/chunked", "1.0.0")
-		// gzip 流本身很小，后面跟着超过上限的尾随数据：解包完把剩余读完时才会发现超限。
+		// gzip 流本身很小，后面跟着超过上限的尾随数据；MaxBytesReader 读到上限就报超限。
 		big := append(bytes.Clone(tgz), bytes.Repeat([]byte("x"), 2048)...)
 		req := testUploadRequest(t, big)
 		req.ContentLength = -1
 		rec := httptest.NewRecorder()
-		if _, _, _, ok := s.inspectPackageTarball(rec, req); ok {
-			t.Fatal("超限的分块预检不应继续解析")
+		if _, ok := s.readPackageTarball(rec, req); ok {
+			t.Fatal("超限的分块上传不应继续读")
 		}
 		if rec.Code != http.StatusRequestEntityTooLarge {
 			t.Fatalf("应返回 413，得到 %d：%s", rec.Code, rec.Body.String())
@@ -117,7 +114,11 @@ func TestInspectPackageTarballCountsTrailingBytes(t *testing.T) {
 	body := append(bytes.Clone(tgz), []byte("trailing-data")...)
 	s := testUploadServer(1 << 20)
 	rec := httptest.NewRecorder()
-	size, info, m, ok := s.inspectPackageTarball(rec, testUploadRequest(t, body))
+	raw, ok := s.readPackageTarball(rec, testUploadRequest(t, body))
+	if !ok {
+		t.Fatalf("读取失败：%d %s", rec.Code, rec.Body.String())
+	}
+	size, info, m, ok := inspectPackageBytes(rec, raw)
 	if !ok {
 		t.Fatalf("预检失败：%d %s", rec.Code, rec.Body.String())
 	}
@@ -148,6 +149,9 @@ func TestPackageUploadConcurrencyLimit(t *testing.T) {
 	s.handleUploadPackage(rec, testUploadRequest(t, testTgz(t, "@company/busy", "1.0.0")))
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("名额占满时应返回 429，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("名额占满的 429 应带 Retry-After")
 	}
 
 	release()
@@ -190,7 +194,11 @@ func TestInspectPackageTarballRejectsMultipleTopDirs(t *testing.T) {
 	s := testUploadServer(1 << 20)
 
 	rec := httptest.NewRecorder()
-	if _, _, _, ok := s.inspectPackageTarball(rec, testUploadRequest(t, tgz)); ok {
+	raw, ok := s.readPackageTarball(rec, testUploadRequest(t, tgz))
+	if !ok {
+		t.Fatalf("读取失败：%d %s", rec.Code, rec.Body.String())
+	}
+	if _, _, _, ok := inspectPackageBytes(rec, raw); ok {
 		t.Fatal("预检不该接受多顶层目录的 tarball")
 	}
 	if rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte("顶层目录")) {
@@ -198,7 +206,7 @@ func TestInspectPackageTarballRejectsMultipleTopDirs(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	if _, _, _, ok := s.readPackageTarball(rec, testUploadRequest(t, tgz)); ok {
+	if _, _, ok := parsePackageTarball(rec, bytes.NewReader(raw)); ok {
 		t.Fatal("发布路径不该接受多顶层目录的 tarball")
 	}
 	if rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte("顶层目录")) {

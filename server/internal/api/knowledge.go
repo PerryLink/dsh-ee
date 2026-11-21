@@ -31,6 +31,8 @@ const (
 
 // KB 转换的并发闸：转换是 CPU 密集的（PDF 按页抽字、PPTX 解压并解析 XML），几个大文件同时转
 // 就能把 CPU 占满。达到上限直接回 429、不在内存里排队；跟 package_check.go 的 beginPackageUpload 一个做法。
+// 名额只在请求体读完、开始转换时占：读 multipart 的慢速过程不占名额，否则一个慢客户端就能
+// 把其他人的上传/重传全部挤成 429（见 upload_limits.go）。
 const maxConcurrentKBConverts = 2
 
 var kbConvertSlots = make(chan struct{}, maxConcurrentKBConverts)
@@ -38,6 +40,11 @@ var kbConvertSlots = make(chan struct{}, maxConcurrentKBConverts)
 // kbConvertTimeout 是一次文档转换的墙钟上限。正常 50 MB 的文档几秒内转完；恶意文件靠文件里
 // 的数字（PDF 页数）或重复引用把转换拖成几十分钟，到了这个时间就返回错误、释放 CPU。
 const kbConvertTimeout = 90 * time.Second
+
+// kbUploadConvertBudget 是一次上传请求里所有文件转换的总时长预算。单文件已有 90s 上限，
+// 但一次最多 50 个文件，串起来理论窗口有 75 分钟；请求体读取另有读时限（kbBodyReadTimeout），
+// 这里再把转换阶段的总时长压到 5 分钟：到点就停下、不再转剩下的文件，客户端分批上传。
+const kbUploadConvertBudget = 5 * time.Minute
 
 // beginKBConvert 占一个转换名额，返回的 release 必须调用一次（即使转换失败）。超限时立即失败。
 func beginKBConvert() (release func(), ok bool) {
@@ -545,15 +552,18 @@ func (s *Server) handleKBUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnsupportedMediaType, "请用 multipart/form-data 上传")
 		return
 	}
-	// 先占转换名额再读请求体：几个大文件同时解析/转换会把 CPU 和内存占满，超限直接 429，不排队。
-	release, ok := beginKBConvert()
-	if !ok {
-		writeErr(w, http.StatusTooManyRequests, "同时转换的文档太多，请稍后重试")
-		return
-	}
-	defer release()
+	// 先读请求体（有读时限、有大小上限），读完再占转换名额：请求体是客户端可控的慢速流，
+	// 读的时候占着名额会让其他人的上传/重传全部 429。名额只保护真正的转换（CPU 密集）。
+	// multipart 里超过 32 MB 的部分落到临时文件，读 body 阶段不把 200 MB 全放内存。
+	stopRead := beginBodyReadDeadline(w, s.bodyReadTimeout(kbBodyReadTimeout))
 	r.Body = http.MaxBytesReader(w, r.Body, maxKBUpload)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	err := r.ParseMultipartForm(32 << 20)
+	stopRead()
+	if err != nil {
+		if bodyReadTimedOut(err) {
+			writeErr(w, http.StatusRequestTimeout, "读取上传内容超时，请检查网络后重试")
+			return
+		}
 		writeErr(w, http.StatusRequestEntityTooLarge, "上传内容太大，一次最多 200 MB")
 		return
 	}
@@ -601,10 +611,26 @@ func (s *Server) handleKBUpload(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
+	// 读完 body 才占转换名额：慢速上传不再空占名额。名额仍限制同时进行的转换数，
+	// 而单请求的内存由 MaxBytesReader + multipart 落临时文件兜住。
+	release, ok := beginKBConvert()
+	if !ok {
+		writeUploadBusy(w, "同时转换的文档太多，请稍后重试")
+		return
+	}
+	defer release()
+	// 本次请求的转换总预算；到点后剩下的文件不再转换（当前这次转换也会被取消）。
+	convertCtx, cancel := context.WithTimeout(r.Context(), kbUploadConvertBudget)
+	defer cancel()
 	results := []kbUploadResult{}
 	created := 0
 	for _, fh := range files {
 		res := kbUploadResult{File: fh.Filename}
+		if convertCtx.Err() != nil {
+			res.Error = "本次上传的转换总时长超过 5 分钟，剩下的文件没有转换，请分批上传"
+			results = append(results, res)
+			break
+		}
 		if fh.Size > maxKBFile {
 			res.Error = "文件超过 50 MB"
 			results = append(results, res)
@@ -623,15 +649,20 @@ func (s *Server) handleKBUpload(w http.ResponseWriter, r *http.Request) {
 			results = append(results, res)
 			continue
 		}
-		conv, origin, err := s.convertUpload(r.Context(), fh.Filename, data, opt)
+		conv, origin, err := s.convertUpload(convertCtx, fh.Filename, data, opt)
 		if err != nil {
+			if errors.Is(convertCtx.Err(), context.DeadlineExceeded) {
+				res.Error = "本次上传的转换总时长超过 5 分钟，剩下的文件没有转换，请分批上传"
+				results = append(results, res)
+				break
+			}
 			res.Error = err.Error()
 			results = append(results, res)
 			continue
 		}
 		if same := sameDoc(existing, folder, fh.Filename); same != nil && !slices.Contains(asNew, fh.Filename) {
 			// 同名文档：出一个新版本，旧版本和旧引用都还在
-			updated, err := s.store.UpdateKDoc(r.Context(), same.ID, store.KDocPatch{Markdown: &conv.Markdown, Note: "上传新版本 " + origin.SourceName, Origin: origin, ConvertInfo: origin.ConvertInfo}, uid)
+			updated, err := s.store.UpdateKDoc(convertCtx, same.ID, store.KDocPatch{Markdown: &conv.Markdown, Note: "上传新版本 " + origin.SourceName, Origin: origin, ConvertInfo: origin.ConvertInfo}, uid)
 			if err != nil {
 				s.internalErr(w, r, err)
 				return
@@ -643,7 +674,7 @@ func (s *Server) handleKBUpload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		d := &store.KDoc{BaseID: b.ID, Title: truncateStr(conv.Title, 200), Folder: folder, SourceName: origin.SourceName, Mime: origin.Mime, BlobKey: origin.BlobKey, Size: origin.Size, ConvertInfo: origin.ConvertInfo}
-		if err := s.store.CreateKDoc(r.Context(), d, conv.Markdown, "上传 "+origin.SourceName, uid); err != nil {
+		if err := s.store.CreateKDoc(convertCtx, d, conv.Markdown, "上传 "+origin.SourceName, uid); err != nil {
 			s.internalErr(w, r, err)
 			return
 		}
@@ -842,14 +873,16 @@ func (s *Server) handleKDocReplace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireKDocEdit(w, v, b) {
 		return
 	}
-	release, ok := beginKBConvert()
-	if !ok {
-		writeErr(w, http.StatusTooManyRequests, "同时转换的文档太多，请稍后重试")
-		return
-	}
-	defer release()
+	// 先读请求体（有读时限），读完再占转换名额：慢速上传不该空占名额让别人 429。
+	stopRead := beginBodyReadDeadline(w, s.bodyReadTimeout(kbBodyReadTimeout))
 	r.Body = http.MaxBytesReader(w, r.Body, maxKBFile+(1<<20))
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	err := r.ParseMultipartForm(32 << 20)
+	stopRead()
+	if err != nil {
+		if bodyReadTimedOut(err) {
+			writeErr(w, http.StatusRequestTimeout, "读取上传内容超时，请检查网络后重试")
+			return
+		}
 		writeErr(w, http.StatusRequestEntityTooLarge, "文件太大，最多 50 MB")
 		return
 	}
@@ -865,6 +898,12 @@ func (s *Server) handleKDocReplace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "读取文件失败，或文件超过 50 MB")
 		return
 	}
+	release, ok := beginKBConvert()
+	if !ok {
+		writeUploadBusy(w, "同时转换的文档太多，请稍后重试")
+		return
+	}
+	defer release()
 	conv, origin, err := s.convertUpload(r.Context(), fh.Filename, data, kb.Options{Header: savedHeader(d)})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -925,7 +964,7 @@ func (s *Server) handleKDocReconvert(w http.ResponseWriter, r *http.Request) {
 	}
 	release, ok := beginKBConvert()
 	if !ok {
-		writeErr(w, http.StatusTooManyRequests, "同时转换的文档太多，请稍后重试")
+		writeUploadBusy(w, "同时转换的文档太多，请稍后重试")
 		return
 	}
 	defer release()

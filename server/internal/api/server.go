@@ -58,6 +58,9 @@ type Options struct {
 	InstanceID string
 	// 管理模式里「小时」的长度，默认 1 小时；只给自动化测试缩短用。
 	AdminModeUnit time.Duration
+	// 上传/转换接口读请求体的总时限（默认见 upload_limits.go 的 packageBodyReadTimeout /
+	// kbBodyReadTimeout）；只给自动化测试缩短用，验证慢速请求体会被读超时打断。
+	UploadReadTimeout time.Duration
 	// 访问上游 npm registry 与 dshfind 目录的客户端；测试里可替换。
 	NpmUpstream *http.Client
 	// 上游 packument 缓存时间，默认 5 分钟。
@@ -435,6 +438,10 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 }
+
+// Unwrap 供 http.ResponseController 透过日志包装拿到底层连接：上传接口用
+// SetReadDeadline 限制读请求体的总时长（见 upload_limits.go）。
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code

@@ -331,30 +331,30 @@ func (s *Server) handleNpmPublish(w http.ResponseWriter, r *http.Request, c *npm
 	if !s.requirePublish(w, c) {
 		return
 	}
-	// npm publish 的请求体同样要把整包读进内存（base64 附件解码后还要再有一份解码结果），
-	// 与网页上传共用同一个并发名额：达到上限直接 429，不在内存里排队。
-	release, ok := beginPackageUpload()
-	if !ok {
-		writeErr(w, http.StatusTooManyRequests, "Too many concurrent package uploads; retry shortly")
-		return
-	}
-	defer release()
+	// 先读完请求体（有读时限、有大小上限），再占上传名额：请求体是客户端可控的慢速流，
+	// 读的时候占着名额会让其他发布/预检/上传全部 429。名额留给解码后的入库/解包。
 	limit := npmPublishBodyLimit(s.registry.MaxTarball)
 	// Content-Length 声明的长度已经超限时不必再读请求体，直接回 413。
 	if r.ContentLength > limit {
 		writeErr(w, http.StatusRequestEntityTooLarge, "Publish payload is too large")
 		return
 	}
+	stopRead := beginBodyReadDeadline(w, s.bodyReadTimeout(packageBodyReadTimeout))
 	// io.LimitReader 只限制我们读多少，超限的另一端仍会继续发数据；http.MaxBytesReader
 	// 在读满上限后截断连接。分块上传（Content-Length 未知）靠它发现超限。
 	var doc registry.PublishDoc
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(&doc); err != nil {
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(&doc)
+	stopRead()
+	if err != nil {
 		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
+		switch {
+		case bodyReadTimedOut(err):
+			writeErr(w, http.StatusRequestTimeout, "Timed out reading the publish payload; retry")
+		case errors.As(err, &tooLarge):
 			writeErr(w, http.StatusRequestEntityTooLarge, "Publish payload is too large")
-			return
+		default:
+			writeErr(w, http.StatusBadRequest, "Publish payload is not valid JSON: "+err.Error())
 		}
-		writeErr(w, http.StatusBadRequest, "Publish payload is not valid JSON: "+err.Error())
 		return
 	}
 	if doc.Name == "" {
@@ -364,7 +364,7 @@ func (s *Server) handleNpmPublish(w http.ResponseWriter, r *http.Request, c *npm
 		writeErr(w, http.StatusBadRequest, "Package name in the request path does not match the publish payload")
 		return
 	}
-	// 没有 tarball 的 PUT 是 npm deprecate / undeprecate
+	// 没有 tarball 的 PUT 是 npm deprecate / undeprecate：不把整包读进内存，不需要名额。
 	if len(doc.Attachments) == 0 {
 		n, err := s.registry.Deprecate(r.Context(), s.publisher(c), name, doc.Versions)
 		if err != nil {
@@ -374,6 +374,14 @@ func (s *Server) handleNpmPublish(w http.ResponseWriter, r *http.Request, c *npm
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "changed": n})
 		return
 	}
+	// 发布要把 base64 附件解码进内存（解码后还有一份 tarball），与网页上传共用名额：
+	// 达到上限直接 429，不在内存里排队。
+	release, ok := beginPackageUpload()
+	if !ok {
+		writeUploadBusy(w, "Too many concurrent package uploads; retry shortly")
+		return
+	}
+	defer release()
 	res, err := s.registry.Publish(r.Context(), s.publisher(c), &doc)
 	if err != nil {
 		s.registryErr(w, r, err)

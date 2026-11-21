@@ -14,7 +14,9 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/api"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
@@ -714,4 +716,152 @@ func TestKnowledgeNewlines(t *testing.T) {
 	if strings.Contains(string(body), `\r`) || !strings.Contains(string(body), "第二行改了") {
 		t.Fatalf("编辑后的正文 = %s", body)
 	}
+}
+
+// 慢速上传不该占住 KB 转换名额：名额是给 CPU 密集的转换用的，客户端慢慢发 multipart
+// body 时不该让其他人的上传/重传全部 429。修前名额在读 body 之前就占上了。
+func TestKnowledgeUploadSlowBodyKeepsConvertSlotsFree(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	box, _ := secret.NewBox(key)
+	srv := api.New(st, box, api.Options{DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	// 用 t.Cleanup 而不是 defer：清理顺序是后进先出，先断开慢请求再关服务。
+	t.Cleanup(ts.Close)
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "管理员登录", code, 200, body)
+	code, body = admin.do("POST", "/api/kb", map[string]any{"slug": "slow", "title": "慢速上传"}, nil)
+	expect(t, "建库", code, 201, body)
+	kbID := decodeAs[struct{ ID int64 }](t, body).ID
+
+	// 两个慢速上传：multipart 只写一半就停住（转换名额是 2 个）。
+	stops := make([]chan struct{}, 2) // 转换名额是 2 个
+	var wg sync.WaitGroup
+	for i := range stops {
+		stops[i] = make(chan struct{})
+		pr, pw := io.Pipe()
+		mw := multipart.NewWriter(pw)
+		contentType := mw.FormDataContentType()
+		wg.Add(1)
+		go func(stop <-chan struct{}) {
+			defer wg.Done()
+			defer pw.Close()
+			fw, err := mw.CreateFormFile("file", "slow.pdf")
+			if err != nil {
+				return
+			}
+			_, _ = fw.Write([]byte("%PDF-1.4\n% 慢速上传只发一半\n"))
+			<-stop
+			_ = mw.Close()
+		}(stops[i])
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/kb/"+itoa(kbID)+"/docs", pr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if resp, err := admin.hc.Do(req); err == nil {
+				resp.Body.Close()
+			}
+		}()
+	}
+	// 结束慢请求的清理必须挂在 t.Cleanup：断言失败时也要先把慢请求断开，
+	// 否则 httptest.Server.Close 会一直等这两个没有结尾的请求。
+	var abortOnce sync.Once
+	abort := func() {
+		abortOnce.Do(func() {
+			for _, stop := range stops {
+				close(stop)
+			}
+			wg.Wait()
+		})
+	}
+	t.Cleanup(abort)
+
+	// 给两个慢请求进入处理函数的时间（修前在 handler 入口就占名额，修后要读完 body 才占）。
+	time.Sleep(500 * time.Millisecond)
+
+	// 第三个正常小上传：修后名额还空着 → 201；修前两个名额被慢请求占住 → 429。
+	code, body = admin.upload("/api/kb/"+itoa(kbID)+"/docs", nil, map[string][]byte{"note.md": []byte("# 小文件\n")})
+	if code == http.StatusTooManyRequests {
+		t.Fatalf("慢速上传把转换名额占满了：正常上传被 429：%s", body)
+	}
+	if code != 201 {
+		t.Fatalf("正常上传失败：%d %s", code, body)
+	}
+
+	abort()
+}
+
+// 知识库上传的请求体读取要有总时限（Options.UploadReadTimeout 注入短时限）：
+// 慢速 multipart 请求超过时限后服务端回 408、连接关闭、转换名额不泄漏。
+func TestKnowledgeUploadSlowBodyReadDeadline(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	box, _ := secret.NewBox(key)
+	srv := api.New(st, box, api.Options{DataDir: t.TempDir(), UploadReadTimeout: 200 * time.Millisecond}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "管理员登录", code, 200, body)
+	code, body = admin.do("POST", "/api/kb", map[string]any{"slug": "slow-deadline", "title": "慢速超时"}, nil)
+	expect(t, "建库", code, 201, body)
+	kbID := decodeAs[struct{ ID int64 }](t, body).ID
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	contentType := mw.FormDataContentType()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	go func() {
+		defer pw.Close()
+		if fw, err := mw.CreateFormFile("file", "slow.md"); err == nil {
+			_, _ = fw.Write([]byte("# 只写一半"))
+		}
+		// 不再写剩下的 multipart 与结尾，模拟慢速客户端。
+		<-release
+	}()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/kb/"+itoa(kbID)+"/docs", pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	got := make(chan int, 1)
+	gotErr := make(chan error, 1)
+	go func() {
+		resp, err := admin.hc.Do(req)
+		if err != nil {
+			gotErr <- err
+			return
+		}
+		defer resp.Body.Close()
+		got <- resp.StatusCode
+	}()
+	select {
+	case status := <-got:
+		if status != http.StatusRequestTimeout {
+			t.Fatalf("读超时应返回 408，得到 %d", status)
+		}
+	case err := <-gotErr:
+		t.Fatalf("读超时后应在服务端回 408，而不是连接错误：%v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("慢速知识库上传没有被读超时打断")
+	}
+	// 名额没有泄漏：紧接着的正常上传还能成功。
+	code, body = admin.upload("/api/kb/"+itoa(kbID)+"/docs", nil, map[string][]byte{"note.md": []byte("# 正常\n")})
+	expect(t, "超时后的正常上传", code, 201, body)
 }

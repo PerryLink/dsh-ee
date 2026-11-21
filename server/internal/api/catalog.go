@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -565,13 +566,21 @@ func (s *Server) handleUploadPackage(w http.ResponseWriter, r *http.Request) {
 	if !s.registryReady(w) {
 		return
 	}
+	// 先读完请求体（有读时限、有大小上限），再占上传名额：慢速客户端读 body 时不该占着
+	// 名额让别人 429。解包与入库留在名额内。
+	stopRead := beginBodyReadDeadline(w, s.bodyReadTimeout(packageBodyReadTimeout))
+	raw, ok := s.readPackageTarball(w, r)
+	stopRead()
+	if !ok {
+		return
+	}
 	release, ok := beginPackageUpload()
 	if !ok {
-		writeErr(w, http.StatusTooManyRequests, "同时上传/预检的包太多，请稍后重试")
+		writeUploadBusy(w, "同时上传/预检的包太多，请稍后重试")
 		return
 	}
 	defer release()
-	raw, info, m, ok := s.readPackageTarball(w, r)
+	info, m, ok := parsePackageTarball(w, bytes.NewReader(raw))
 	if !ok {
 		return
 	}

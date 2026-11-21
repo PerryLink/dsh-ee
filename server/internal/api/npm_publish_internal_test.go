@@ -83,9 +83,12 @@ func TestNpmPublishConcurrencyLimit(t *testing.T) {
 	}
 	defer release()
 
-	// npm publish 与网页上传共用名额：名额占满时直接 429，不读请求体。
+	// npm publish 与网页上传共用名额：body 读完、解析出附件之后占名额，占满直接 429。
 	s := testNpmPublishServer(1 << 20)
-	body, err := json.Marshal(map[string]any{"_id": "@acme/big", "name": "@acme/big"})
+	body, err := json.Marshal(map[string]any{
+		"_id": "@acme/big", "name": "@acme/big",
+		"_attachments": map[string]any{"big-1.0.0.tgz": map[string]any{"data": ""}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +96,9 @@ func TestNpmPublishConcurrencyLimit(t *testing.T) {
 	s.handleNpmPublish(rec, testNpmPublishRequest(body), testNpmPublishCaller(), "@acme/big")
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("名额占满时应返回 429，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("名额占满的 429 应带 Retry-After")
 	}
 }
 
@@ -111,6 +117,26 @@ func TestNpmPublishReleasesUploadSlotOnFailure(t *testing.T) {
 	release, ok := beginPackageUpload()
 	if !ok {
 		t.Fatal("坏请求结束后上传名额没有释放")
+	}
+	release()
+}
+
+func TestNpmPublishReleasesUploadSlotAfterPublishError(t *testing.T) {
+	old := packageUploadSlots
+	packageUploadSlots = make(chan struct{}, 1)
+	t.Cleanup(func() { packageUploadSlots = old })
+
+	// 带附件（会占名额），但 versions 是空的：registry.Publish 在动数据库之前就 400。
+	s := testNpmPublishServer(1 << 20)
+	body := []byte(`{"_id":"@acme/big","name":"@acme/big","_attachments":{"big-1.0.0.tgz":{"data":""}}}`)
+	rec := httptest.NewRecorder()
+	s.handleNpmPublish(rec, testNpmPublishRequest(body), testNpmPublishCaller(), "@acme/big")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("发布失败应返回 400，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	release, ok := beginPackageUpload()
+	if !ok {
+		t.Fatal("发布失败后上传名额没有释放")
 	}
 	release()
 }

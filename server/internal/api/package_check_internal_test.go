@@ -10,7 +10,7 @@ func TestReadPackageTarballWithoutRegistry(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/me/packages/check", nil)
 	req.Header.Set("Content-Type", "application/octet-stream")
 	rec := httptest.NewRecorder()
-	_, _, _, ok := s.readPackageTarball(rec, req)
+	_, ok := s.readPackageTarball(rec, req)
 	if ok {
 		t.Fatal("registry 为 nil 时不应继续解析")
 	}
