@@ -46,6 +46,56 @@ function ctxWith(services: Record<string, any>) {
   } as any;
 }
 
+/**
+ * 带运行时注入的假 ctx：cordis 的 ctx.inject(deps, callback) 在依赖出现后执行回调，
+ * 这里按同样的语义把注入挂起，用 provide() 模拟服务晚到位 / 换实现。
+ */
+function injectableCtx(initial: Record<string, any> = {}) {
+  const services: Record<string, any> = { ...initial };
+  const hooks: Array<{ deps: string[]; run: (scope: any) => void }> = [];
+  let cleanups: Array<() => any> = [];
+  const scope = {
+    get: (name: string) => services[name],
+    effect: (fn: () => any) => {
+      const dispose = fn();
+      if (typeof dispose === "function") cleanups.push(dispose);
+    },
+  };
+  const ctx = {
+    get: (name: string) => services[name],
+    effect: (fn: () => any) => fn(),
+    on: () => () => undefined,
+    inject: (deps: string[], run: (scope: any) => void) => {
+      hooks.push({ deps, run });
+      return { dispose: async () => undefined };
+    },
+  } as any;
+  const provide = (name: string, value: any) => {
+    services[name] = value;
+    for (const hook of hooks) if (hook.deps.includes(name)) hook.run(scope);
+  };
+  const withdraw = (name: string) => {
+    delete services[name];
+    const pending = cleanups;
+    cleanups = [];
+    for (const cleanup of pending) cleanup();
+  };
+  return { ctx, services, hooks, provide, withdraw };
+}
+
+/** 等一轮宏任务，让注入回调里发起的异步补注册落地。 */
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** 先用一个可用管理器写入员工确认记录（模拟员工此前加过扩展），随后注销。 */
+async function seedExtension(options: { store: string }) {
+  const seed = fakeManager();
+  const writer = createLocalMcp(ctxWith({ mcpManager: seed.manager }), config, options);
+  const added = await writer.add(parseLocalCommand("add @acme/legacy-oa-local@0.1.0 --id acme/legacy-oa --yes"));
+  assert.equal(added.kind, "success");
+  writer.stop();
+  return seed;
+}
+
 function tempStore(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "dsh-ee-local-mcp-")), "local-mcp.json");
 }
@@ -286,4 +336,105 @@ test("员工改了 dsh-ee 地址：refresh 按新地址重新注册，令牌仍�
   } finally {
     config.base = "https://ee.example.com";
   }
+});
+
+// ---- 冷启动：#231 之后 mcpManager 不在 inject 里，它可能晚于插件就绪；启动时一次取不到不能就此放弃 ----
+
+test("冷启动：start 时 mcpManager 尚未就绪，管理器出现后自动补注册", async () => {
+  const options = baseOptions();
+  await seedExtension(options);
+
+  const fake = fakeManager();
+  const { ctx, provide } = injectableCtx();
+  const local = createLocalMcp(ctx, config, options);
+  const cold = await local.start();
+  assert.deepEqual(cold, { registered: [], skipped: [] }, "管理器没就绪时启动不抛错、也不假装注册");
+  assert.equal(fake.calls.length, 0);
+  assert.equal(local.available, false);
+
+  // DSH 冷启动：mcpManager 这时才挂载，员工没有手动执行任何命令
+  provide("mcpManager", fake.manager);
+  await flush();
+  assert.deepEqual(fake.calls.map(([name]) => name), ["acme-legacy-oa"], "管理器出现后应自动补注册");
+  assert.deepEqual(fake.calls[0][1].args, ["-y", "@acme/legacy-oa-local@0.1.0"]);
+  assert.equal(local.available, true);
+
+  local.stop();
+  assert.deepEqual(fake.disposed, ["acme-legacy-oa"], "stop 仍负责注销本次注册");
+});
+
+test("停止后管理器再出现也不自动注册", async () => {
+  const options = baseOptions();
+  await seedExtension(options);
+
+  const fake = fakeManager();
+  const { ctx, provide } = injectableCtx();
+  const local = createLocalMcp(ctx, config, options);
+  await local.start();
+  local.stop();
+  provide("mcpManager", fake.manager);
+  await flush();
+  assert.equal(fake.calls.length, 0);
+});
+
+test("补注册幂等：同名服务仍跳过、不覆盖；重复 ensure 不重复注册", async () => {
+  const options = baseOptions();
+  await seedExtension(options);
+
+  // 员工自己在 DSH 里配了同名服务：自动补注册也不能覆盖
+  const blocked = fakeManager(["acme-legacy-oa"]);
+  const local = createLocalMcp(ctxWith({ mcpManager: blocked.manager }), config, options);
+  const first = await local.ensure();
+  assert.deepEqual(first.registered, []);
+  assert.equal(first.skipped.length, 1);
+  assert.match(first.skipped[0].reason, /不覆盖/);
+  assert.equal(blocked.calls.length, 0);
+
+  // 幂等：再次调用不重复注册（同名冲突继续保持跳过）
+  const again = await local.ensure();
+  assert.deepEqual(again.registered, []);
+  assert.equal(again.skipped.length, 1);
+  assert.equal(blocked.calls.length, 0);
+  local.stop();
+});
+
+test("管理器换实现：旧注册项清掉，在新管理器上重新注册", async () => {
+  const options = baseOptions();
+  await seedExtension(options);
+
+  const first = fakeManager();
+  const { ctx, provide, withdraw } = injectableCtx();
+  const local = createLocalMcp(ctx, config, options);
+  await local.start();
+  provide("mcpManager", first.manager);
+  await flush();
+  assert.equal(first.registered.size, 1);
+
+  withdraw("mcpManager");
+  assert.deepEqual(first.disposed, ["acme-legacy-oa"], "旧管理器消失时不应再留着旧注册引用");
+
+  const second = fakeManager();
+  provide("mcpManager", second.manager);
+  await flush();
+  assert.equal(second.registered.size, 1, "新管理器上要重新注册");
+  local.stop();
+  assert.deepEqual(second.disposed, ["acme-legacy-oa"]);
+});
+
+test("宿主没有运行时注入：管理器后到位时，在首次 list 前补注册（惰性兜底）", async () => {
+  const options = baseOptions();
+  await seedExtension(options);
+
+  const fake = fakeManager();
+  const services: Record<string, any> = {};
+  const local = createLocalMcp(ctxWith(services), config, options);
+  assert.deepEqual(await local.start(), { registered: [], skipped: [] });
+
+  // 宿主没有 ctx.inject：只能等下一次使用；管理器此时才就绪
+  services.mcpManager = fake.manager;
+  const listed = await local.list();
+  assert.equal(fake.calls.length, 1, "首次使用前应把缺失的自动注册补齐");
+  assert.match(listed.text, /acme\/legacy-oa/);
+  local.stop();
+  assert.deepEqual(fake.disposed, ["acme-legacy-oa"]);
 });
