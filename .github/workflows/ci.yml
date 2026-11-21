@@ -244,7 +244,7 @@ jobs:
           npm run typecheck
           npm test
           npm pack --dry-run
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Python SDK（unittest / compileall / wheel）
