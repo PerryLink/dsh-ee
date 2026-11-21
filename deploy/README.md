@@ -147,6 +147,8 @@ WITH_DB=tidb make bundle VERSION=v0.1.0   # 只带 TiDB 镜像，包小一些
 
 产物在 `deploy/out/`。离线包仍手工构建、归档，不由 GHCR workflow 自动生成或上传。
 
+镜像的基础镜像版本由 `Dockerfile` 决定：Go 阶段固定为 `golang:1.27.4-alpine`（与 `server/go.mod` 的 `go 1.27.4` 对齐，避免浮动 tag 换 patch 后构建环境漂移），前端阶段用 `node:22-alpine`（与 CI 的 Node 22 一致），pnpm 由 `web/package.json` 的 `packageManager` 经 corepack 固定。升级 Go/Node 大版本时要把 `go.mod`、`Dockerfile` 与 CI 一起改，同一 commit 才能复现同一镜像。
+
 ## 开发环境直接用 compose
 
 ```bash

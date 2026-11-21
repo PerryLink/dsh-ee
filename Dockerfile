@@ -15,7 +15,9 @@ COPY scripts/ ./scripts/
 COPY dsh-plugin/src/ ./dsh-plugin/src/
 RUN cd web && pnpm build
 
-FROM golang:1.27-alpine AS server
+# Go 工具链按 server/go.mod 的 go 指令精确固定：浮动 1.27-alpine 会随上游换 patch 静默改变
+# 构建环境，且镜像低于 1.27.4 时 go 指令直接不满足。升级 Go 时 Dockerfile 与 go.mod 一起改。
+FROM golang:1.27.4-alpine AS server
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
