@@ -1,4 +1,9 @@
-import type { DshTarget } from "./types";
+import type { DshRelease, DshTarget } from "./types";
+
+export function officialInstallerReference(releases: DshRelease[], target: DshTarget, filename: string, version: string): DshRelease | undefined {
+  const kind = /\.dmg$/i.test(filename) ? "dmg" : target === "win-x64" ? "exe" : "zip";
+  return releases.find((r) => r.target === target && r.kind === kind && r.upstream_url && (!version.trim() || r.version === version.trim()));
+}
 
 export function installerDetails(filename: string): { version: string; target?: DshTarget } {
   const ext = filename.match(/\.(zip|dmg|exe|msi)$/i)?.[1].toLowerCase();

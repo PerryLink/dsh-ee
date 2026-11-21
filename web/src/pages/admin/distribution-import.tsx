@@ -5,7 +5,7 @@ import { Button, CopyBox, Notice } from "../../components/ui";
 import i18n from "../../i18n";
 import { resolveApiErrorText } from "../../lib/api-error-i18n";
 import type { DshRelease, DshTarget } from "../../lib/types";
-import { installerDetails, installerMatchesTarget, releaseFeedURL } from "../../lib/distribution-import";
+import { installerDetails, installerMatchesTarget, officialInstallerReference, releaseFeedURL } from "../../lib/distribution-import";
 
 export interface ImportedRelease { id: number; target: DshTarget; version: string }
 
@@ -18,9 +18,9 @@ export function ImportReleaseDialog({ releases, onClose, onSuccess }: { releases
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
   const mismatch = file !== null && !installerMatchesTarget(file.name, target);
-  const official = releases.find((r) => r.target === target && r.upstream_url && (!version || r.version === version));
+  const official = officialInstallerReference(releases, target, file?.name ?? "", version);
   const linkVersion = version.trim() || official?.version;
-  const installerURL = official?.upstream_url || (linkVersion && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(linkVersion) ? `https://download.deepseek.com/dsh-desk/bin/${target}/deepseek-harness-${linkVersion}-${target}.${target === "win-x64" ? "exe" : "zip"}` : "");
+  const installerURL = official?.upstream_url || (!/\.dmg$/i.test(file?.name ?? "") && linkVersion && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(linkVersion) ? `https://download.deepseek.com/dsh-desk/bin/${target}/deepseek-harness-${linkVersion}-${target}.${target === "win-x64" ? "exe" : "zip"}` : "");
   const upload = () => {
     if (!file || mismatch || progress !== null) return;
     setError(""); setProgress(0);
