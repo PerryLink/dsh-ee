@@ -435,6 +435,11 @@ func (s *Server) recoverDshReleases(ctx context.Context) error {
 		if part, err := s.releasePartPath(r); err == nil {
 			_ = os.Remove(part)
 		}
+		if r.UpstreamURL == "" {
+			if err := s.store.UpdateDshReleaseState(ctx, r.ID, store.ReleaseFailed, "", "导入中断，请重新导入"); err != nil {
+				return err
+			}
+		}
 	}
 	return s.store.RecoverDshReleases(ctx)
 }

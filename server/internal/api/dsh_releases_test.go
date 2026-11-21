@@ -394,6 +394,32 @@ func TestDshReleaseRecover(t *testing.T) {
 	}
 }
 
+func TestDshReleaseRecoverInterruptedImport(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	r := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "offline.zip", ReleasedAt: time.Now(), State: store.ReleaseDownloading, LocalPath: "previous.zip"}
+	if err := f.st.CreateDshRelease(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	part, _ := f.s.releasePartPath(r)
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.recoverDshReleases(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.st.DshReleaseByID(ctx, r.ID)
+	if err != nil || got.State != store.ReleaseFailed || got.Error != "导入中断，请重新导入" || got.LocalPath != "" {
+		t.Fatalf("interrupted import recovery: %+v %v", got, err)
+	}
+	if _, err := os.Stat(part); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial import retained: %v", err)
+	}
+}
+
 func TestDshReleaseCleanupKeepsRecommended(t *testing.T) {
 	f := newReleaseFixture(t, "notify")
 	var oldest *store.DshRelease
