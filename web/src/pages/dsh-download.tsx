@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Apple, CheckCircle2, Download, Monitor, RefreshCw, ShieldCheck, Terminal, PackageOpen } from "lucide-react";
+import { useLocation } from "react-router";
+import { Apple, CheckCircle2, Copy, Download, Monitor, RefreshCw, ShieldCheck, Terminal, PackageOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api, formatBytes, formatTime } from "../lib/api";
 import { useApi } from "../lib/use-api";
@@ -9,6 +10,7 @@ import { Badge, Card, CopyBox, PageHeader, Empty, buttonCls } from "../component
 import { LoadState } from "../components/api-ui";
 import { PageLink } from "../lib/menus";
 import { PublicUrlNotice } from "../components/public-url-notice";
+import { copyText } from "../lib/clipboard";
 
 type Architecture = "arm" | "x64" | "unknown";
 
@@ -27,6 +29,7 @@ function useArchitecture() {
 
 function DownloadRow({ release, title }: { release: DshRelease; title: string }) {
   const { t } = useTranslation();
+  const { notify } = useStore();
   return (
     <div className="flex flex-wrap items-center gap-4 border-t border-neutral-100 px-5 py-4">
       <div className="min-w-0 flex-1">
@@ -37,7 +40,10 @@ function DownloadRow({ release, title }: { release: DshRelease; title: string })
         <div className="mt-1 text-xs text-neutral-500">
           {formatTime(release.released_at)} · {formatBytes(release.size)} · sha512 {release.sha512.slice(0, 16)}…
         </div>
-        <div className="mt-1 text-xs text-neutral-500">{release.verified ? t("download.officialVerified") : t("download.unverifiedDmg")}</div>
+        <button type="button" className="mt-1 inline-flex items-center gap-1 text-xs text-neutral-600 hover:text-neutral-900" onClick={async () => {
+          notify(await copyText(release.sha512) ? t("common.copied") : t("common.copyFailed"));
+        }}><Copy size={12} /> {t("download.copySha512")}</button>
+        <div className="mt-1 text-xs text-neutral-500">{release.verified ? t(release.source === "import" ? "download.importVerified" : "download.officialVerified") : t(release.source === "import" ? "download.importUnverified" : "download.unverifiedDmg")}</div>
       </div>
       <a href={release.download_url} className={buttonCls("primary")}>
         <Download size={14} /> {t("download.download")}
@@ -81,6 +87,17 @@ export default function DshDownload() {
   const ci = useApi(api.connectInfo).data;
   const baseUrl = ci?.base_url || localBase;
   const { data, loading, error, reload } = useApi(api.dshReleases);
+  const location = useLocation();
+  const releaseLocation = useRef(location.key);
+  useEffect(() => {
+    if (releaseLocation.current === location.key) return;
+    releaseLocation.current = location.key;
+    reload();
+  }, [location.key, reload]);
+  useEffect(() => {
+    window.addEventListener("focus", reload);
+    return () => window.removeEventListener("focus", reload);
+  }, [reload]);
   const { connected, timedOut } = useConnection();
   const arch = useArchitecture();
   const isMac = /Mac/i.test(navigator.userAgent);

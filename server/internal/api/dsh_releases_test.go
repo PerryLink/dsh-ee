@@ -140,6 +140,214 @@ func TestDshReleaseNotifyDoesNotDownload(t *testing.T) {
 	}
 }
 
+func TestDshReleaseSyncSkipsImported(t *testing.T) {
+	f := newReleaseFixture(t, "mirror")
+	ctx := context.Background()
+	imported := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "offline.zip", ReleasedAt: time.Now(), State: store.ReleaseAvailable}
+	if err := f.st.CreateDshRelease(ctx, imported); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.syncDshReleases(ctx); err != nil {
+		t.Fatal(err)
+	}
+	row, err := f.st.DshReleaseByID(ctx, imported.ID)
+	if err != nil || row.UpstreamURL != "" || row.File != "offline.zip" || row.State != store.ReleaseAvailable {
+		t.Fatalf("import changed: %+v %v", row, err)
+	}
+	if f.downloads.Load() != 2 {
+		t.Fatalf("expected only other two platforms to download: %d", f.downloads.Load())
+	}
+}
+
+func TestDshReleaseVerificationSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, upstream, kind string
+		checked, want        bool
+	}{
+		{"unchecked import", "", "zip", false, false},
+		{"checked import", "", "zip", true, true},
+		{"checked dmg import", "", "dmg", true, true},
+		{"official zip", "https://download.deepseek.com/dsh.zip", "zip", false, true},
+		{"official dmg", "https://download.deepseek.com/dsh.dmg", "dmg", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &store.DshRelease{UpstreamURL: tc.upstream, Kind: tc.kind, ChecksumVerified: tc.checked}
+			if got := publicDshRelease(r, "http://ee")["verified"]; got != tc.want {
+				t.Fatalf("verified = %v want %v", got, tc.want)
+			}
+			wantSource := "official"
+			if tc.upstream == "" {
+				wantSource = "import"
+			}
+			if got := publicDshRelease(r, "http://ee")["source"]; got != wantSource {
+				t.Fatalf("source = %v want %s", got, wantSource)
+			}
+		})
+	}
+}
+
+func TestDshReleaseImportSizeAndLock(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	oldLimit := maxDshReleaseBytes
+	maxDshReleaseBytes = 4
+	defer func() { maxDshReleaseBytes = oldLimit }()
+	for _, tc := range []struct {
+		body   string
+		locked bool
+		want   int
+	}{{"12345", false, 413}, {"", false, 400}, {"abc", true, 409}} {
+		f.s.releaseJobs["mac-arm64"] = tc.locked
+		req := httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=test.zip", strings.NewReader(tc.body))
+		w := httptest.NewRecorder()
+		f.s.handleImportDshRelease(w, req)
+		if w.Code != tc.want {
+			t.Fatalf("status %d want %d: %s", w.Code, tc.want, w.Body)
+		}
+	}
+	rows, _ := f.st.ListDshReleases(context.Background(), "")
+	if len(rows) != 0 {
+		t.Fatalf("failed import kept rows: %+v", rows)
+	}
+}
+
+type blockedReleaseBody struct {
+	started chan struct{}
+	resume  chan struct{}
+}
+
+func (b *blockedReleaseBody) Read([]byte) (int, error) {
+	close(b.started)
+	<-b.resume
+	return 0, errors.New("upload interrupted")
+}
+
+func TestDshReleaseImportBlocksDeletionAndRestores(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	item := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "old.zip", ReleasedAt: time.Now(), State: store.ReleaseMirrored}
+	part, _ := f.s.releasePartPath(item)
+	item.LocalPath = strings.TrimSuffix(part, ".part")
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(item.LocalPath, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.CreateDshRelease(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	body := &blockedReleaseBody{started: make(chan struct{}), resume: make(chan struct{})}
+	resumed := false
+	defer func() {
+		if !resumed {
+			close(body.resume)
+		}
+	}()
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.s.handleImportDshRelease(w, httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=old.zip", body))
+	}()
+	select {
+	case <-body.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("import did not start reading")
+	}
+	deleteReq := httptest.NewRequest("DELETE", "/api/admin/dsh-releases/"+fmt.Sprint(item.ID), nil)
+	deleteReq.SetPathValue("id", fmt.Sprint(item.ID))
+	deleteResult := httptest.NewRecorder()
+	f.s.handleDeleteDshRelease(deleteResult, deleteReq)
+	if deleteResult.Code != http.StatusConflict {
+		t.Fatalf("delete during import: %d %s", deleteResult.Code, deleteResult.Body)
+	}
+	close(body.resume)
+	resumed = true
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("import did not stop")
+	}
+	if w.Code != 400 {
+		t.Fatalf("interrupted upload: %d %s", w.Code, w.Body)
+	}
+	row, err := f.st.DshReleaseByID(ctx, item.ID)
+	if err != nil || row.State != store.ReleaseMirrored || row.LocalPath != item.LocalPath {
+		t.Fatalf("original state not restored: %+v %v", row, err)
+	}
+	content, err := os.ReadFile(item.LocalPath)
+	if err != nil || string(content) != "original" {
+		t.Fatalf("original file changed: %q %v", content, err)
+	}
+}
+
+func TestDshReleaseImportFailureAfterRename(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	oldDir := filepath.Join(f.s.opts.DataDir, "nonempty")
+	if err := os.MkdirAll(oldDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "file"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	item := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "old.zip", LocalPath: oldDir, ReleasedAt: time.Now(), State: store.ReleaseMirrored}
+	if err := f.st.CreateDshRelease(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	f.s.handleImportDshRelease(w, httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=new.zip", strings.NewReader("new")))
+	if w.Code != 500 {
+		t.Fatalf("expected cleanup failure: %d %s", w.Code, w.Body)
+	}
+	row, err := f.st.DshReleaseByID(ctx, item.ID)
+	if err != nil || row.State != store.ReleaseFailed || row.Error == "" {
+		t.Fatalf("post-rename failure not recorded: %+v %v", row, err)
+	}
+}
+
+func TestDshReleaseImportSurvivesRetentionFailure(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	oldDir := filepath.Join(f.s.opts.DataDir, "nonempty")
+	if err := os.MkdirAll(oldDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "file"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	set, err := f.st.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.Distribution.KeepVersions = 1
+	if err := f.st.SaveSettings(ctx, set, 0); err != nil {
+		t.Fatal(err)
+	}
+	f.s.settings.v = nil
+	old := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.0.0", File: "old.zip", LocalPath: oldDir, ReleasedAt: time.Now().Add(-time.Hour), State: store.ReleaseMirrored}
+	if err := f.st.CreateDshRelease(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	f.s.handleImportDshRelease(w, httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=new.zip", strings.NewReader("new")))
+	if w.Code != 201 {
+		t.Fatalf("retention failure rejected completed import: %d %s", w.Code, w.Body)
+	}
+	row, err := f.st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
+	if err != nil || row.State != store.ReleaseMirrored || row.LocalPath == "" || row.Error != "" {
+		t.Fatalf("completed import changed: %+v %v", row, err)
+	}
+	content, err := os.ReadFile(row.LocalPath)
+	if err != nil || string(content) != "new" {
+		t.Fatalf("imported file: %q %v", content, err)
+	}
+	oldRow, err := f.st.DshReleaseByID(ctx, old.ID)
+	if err != nil || oldRow.State != store.ReleaseMirrored {
+		t.Fatalf("retention failure was not exercised: %+v %v", oldRow, err)
+	}
+}
+
 func TestDshReleaseMirrorAndValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -232,6 +440,32 @@ func TestDshReleaseRecover(t *testing.T) {
 	}
 	if _, err := os.Stat(part); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("重启后应删除 .part：%v", err)
+	}
+}
+
+func TestDshReleaseRecoverInterruptedImport(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	r := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "offline.zip", ReleasedAt: time.Now(), State: store.ReleaseDownloading, LocalPath: "previous.zip"}
+	if err := f.st.CreateDshRelease(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	part, _ := f.s.releasePartPath(r)
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.recoverDshReleases(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.st.DshReleaseByID(ctx, r.ID)
+	if err != nil || got.State != store.ReleaseFailed || got.Error != "导入中断，请重新导入" || got.LocalPath != "" {
+		t.Fatalf("interrupted import recovery: %+v %v", got, err)
+	}
+	if _, err := os.Stat(part); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial import retained: %v", err)
 	}
 }
 

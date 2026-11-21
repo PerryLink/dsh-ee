@@ -201,6 +201,9 @@ func (s *Server) upsertDshRelease(ctx context.Context, r *store.DshRelease) erro
 		return err
 	}
 	r.ID = old.ID
+	if old.UpstreamURL == "" {
+		return nil
+	}
 	return s.store.UpdateDshReleaseMetadata(ctx, r)
 }
 
@@ -253,12 +256,15 @@ func (s *Server) syncDshReleases(ctx context.Context) error {
 		// 自动镜像只下载每种安装包的最新版本；被清理或删除（removed）的旧版本不会被拉回来。
 		newest := map[string]time.Time{}
 		for _, item := range items {
+			if item.UpstreamURL == "" {
+				continue
+			}
 			if item.ReleasedAt.After(newest[item.Kind]) {
 				newest[item.Kind] = item.ReleasedAt
 			}
 		}
 		for _, item := range items {
-			if (item.State == store.ReleaseAvailable || item.State == store.ReleaseFailed) && item.ReleasedAt.Equal(newest[item.Kind]) {
+			if item.UpstreamURL != "" && (item.State == store.ReleaseAvailable || item.State == store.ReleaseFailed) && item.ReleasedAt.Equal(newest[item.Kind]) {
 				if err := s.downloadDshRelease(ctx, item.ID); err != nil {
 					errs = append(errs, err)
 				}
@@ -292,7 +298,11 @@ func (s *Server) downloadDshRelease(ctx context.Context, id int64) error {
 		delete(s.releaseJobs, r.Target)
 		s.releaseMu.Unlock()
 	}()
-	if r.State == store.ReleaseMirrored || r.State == store.ReleaseDownloading {
+	r, err = s.store.DshReleaseByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if r.UpstreamURL == "" || r.State == store.ReleaseMirrored || r.State == store.ReleaseDownloading {
 		return nil
 	}
 	if err := s.store.UpdateDshReleaseState(ctx, r.ID, store.ReleaseDownloading, "", ""); err != nil {
@@ -424,6 +434,11 @@ func (s *Server) recoverDshReleases(ctx context.Context) error {
 		}
 		if part, err := s.releasePartPath(r); err == nil {
 			_ = os.Remove(part)
+		}
+		if r.UpstreamURL == "" {
+			if err := s.store.UpdateDshReleaseState(ctx, r.ID, store.ReleaseFailed, "", "导入中断，请重新导入"); err != nil {
+				return err
+			}
 		}
 	}
 	return s.store.RecoverDshReleases(ctx)

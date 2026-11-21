@@ -187,6 +187,7 @@ export default {
         vote: "Avaliação de feedback",
       },
       dsh_release: {
+        import: "Imported offline installer",
         check: "Verificar versão oficial",
         mirror: "Baixar pacote de instalação",
         mirror_failed: "Falha na verificação do pacote de instalação",

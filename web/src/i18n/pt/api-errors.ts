@@ -3,6 +3,15 @@ import type zhNs from "../zh/api-errors";
 import type { Messages } from "../types";
 
 export default {
+  release: {
+    checksum_format: "Formato SHA-512 inválido. Cole apenas o valor sha512 completo.",
+    checksum_mismatch: "SHA-512 não confere. Confira o nome e a versão do arquivo no manifesto.",
+    invalid: "Invalid platform, version or installer filename.",
+    busy: "This platform is busy or the filename belongs to another version.",
+    checksum: "Invalid SHA-512 or checksum mismatch.",
+    body: "The package is empty, too large, or the upload was interrupted.",
+    imported: "Offline packages cannot be mirrored. Import the package again.",
+  },
   upstream: {
     auth_failed: "Falha na autenticação do repositório de origem. Verifique o token, usuário, senha e permissões.",
   },

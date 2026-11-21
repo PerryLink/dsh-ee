@@ -187,6 +187,7 @@ export default {
         "vote": "Valoró una respuesta"
       },
       "dsh_release": {
+        import: "Imported offline installer",
         "check": "Comprobó las versiones oficiales",
         "mirror": "Descargó el instalador",
         "mirror_failed": "Error de verificación del instalador",

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +21,136 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
+
+func TestDshReleaseImportAPI(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	box, _ := secret.NewBox(bytes.Repeat([]byte{11}, 32))
+	dir := t.TempDir()
+	ts := httptest.NewServer(api.New(st, box, api.Options{DataDir: dir}, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	defer ts.Close()
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "login", code, 200, body)
+	upload := func(target, version, file, hash, content string, want int) []byte {
+		t.Helper()
+		q := url.Values{"target": {target}, "version": {version}, "file": {file}, "sha512": {hash}}
+		req, _ := http.NewRequest("POST", ts.URL+"/api/admin/dsh-releases/import?"+q.Encode(), strings.NewReader(content))
+		resp, err := admin.hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		expect(t, "import "+file, resp.StatusCode, want, b)
+		return b
+	}
+	for _, tc := range []struct{ target, version, file string }{
+		{"mac-arm64", "1.2.3", "dsh.exe"}, {"mac-x64", "1.2.3", "dsh.msi"}, {"win-x64", "1.2.3", "dsh.zip"}, {"win-x64", "1.2.3", "dsh.dmg"},
+		{"linux", "1.2.3", "dsh.zip"}, {"mac-arm64", "1.2.3", "dsh.tar"}, {"mac-arm64", "1.2.3", "../dsh.zip"}, {"mac-arm64", "1.2.3", `x\dsh.zip`}, {"mac-arm64", "", "dsh.zip"}, {"mac-arm64", "bad version", "dsh.zip"}, {"mac-arm64", strings.Repeat("a", 65), "dsh.zip"},
+	} {
+		upload(tc.target, tc.version, tc.file, "", "bytes", 400)
+	}
+	upload("mac-arm64", "1.2.3", "empty.zip", "", "", 400)
+	badFormat := upload("mac-arm64", "1.2.3", "bad.zip", "sha512: incomplete", "bad", 400)
+	if !bytes.Contains(badFormat, []byte(`"code":"release.checksum_format"`)) {
+		t.Fatalf("format error: %s", badFormat)
+	}
+	mismatch := upload("mac-arm64", "1.2.3", "bad.zip", strings.Repeat("0", 128), "bad", 400)
+	if !bytes.Contains(mismatch, []byte(`"code":"release.checksum_mismatch"`)) {
+		t.Fatalf("mismatch error: %s", mismatch)
+	}
+	if rows, _ := st.ListDshReleases(ctx, ""); len(rows) != 0 {
+		t.Fatalf("rejected imports kept rows: %+v", rows)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dsh-releases", "mac-arm64", "bad.zip")); !os.IsNotExist(err) {
+		t.Fatalf("mismatch kept file: %v", err)
+	}
+	sum := sha512.Sum512([]byte("first"))
+	encoded := base64.StdEncoding.EncodeToString(sum[:])
+	upload("mac-arm64", " 1.2.3 ", "first.zip", " \nsha512: \n"+encoded[:40]+"\n  "+encoded[40:]+"\n", "first", 201)
+	item, err := st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.State != store.ReleaseMirrored || item.UpstreamURL != "" || item.Size != 5 || item.MirroredAt == nil || !item.ChecksumVerified {
+		t.Fatalf("invalid row: %+v", item)
+	}
+	b, err := os.ReadFile(item.LocalPath)
+	if err != nil || string(b) != "first" {
+		t.Fatalf("stored file: %q %v", b, err)
+	}
+	code, body = admin.do("GET", "/dl/mac-arm64/first.zip", nil, nil)
+	expect(t, "download", code, 200, body)
+	if string(body) != "first" {
+		t.Fatalf("download: %q", body)
+	}
+	code, body = admin.do("GET", "/api/admin/dsh-releases", nil, nil)
+	expect(t, "list", code, 200, body)
+	if !bytes.Contains(body, []byte(`"source":"import"`)) {
+		t.Fatalf("missing source: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"verified":true`)) {
+		t.Fatalf("checksummed import not verified: %s", body)
+	}
+	code, body = admin.do("POST", "/api/admin/dsh-releases/"+fmtInt(item.ID)+"/mirror", nil, nil)
+	expect(t, "mirror import", code, 400, body)
+	upload("mac-arm64", "1.2.4", "first.zip", "", "conflict", 409)
+	upload("mac-arm64", "1.2.3", "first.zip", strings.Repeat("0", 128), "bad", 400)
+	restored, err := st.DshReleaseByID(ctx, item.ID)
+	if err != nil || restored.State != item.State || restored.LocalPath != item.LocalPath || restored.Error != item.Error || restored.MirroredAt == nil || !restored.MirroredAt.Equal(*item.MirroredAt) {
+		t.Fatalf("failed replacement did not restore row: %+v %v", restored, err)
+	}
+	b, _ = os.ReadFile(item.LocalPath)
+	if string(b) != "first" {
+		t.Fatal("mismatch replaced existing file")
+	}
+	upload("mac-arm64", "1.2.3", "second.zip", "", "second", 201)
+	updated, _ := st.DshReleaseByVersion(ctx, "mac-arm64", "zip", "1.2.3")
+	if updated.ID != item.ID || updated.File != "second.zip" || updated.Size != 6 || updated.ChecksumVerified {
+		t.Fatalf("replacement: %+v", updated)
+	}
+	if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
+		t.Fatalf("old file retained: %v", err)
+	}
+	b, _ = os.ReadFile(updated.LocalPath)
+	if string(b) != "second" {
+		t.Fatal("replacement contents")
+	}
+	code, body = admin.do("GET", "/api/admin/dsh-releases", nil, nil)
+	expect(t, "unverified list", code, 200, body)
+	if !bytes.Contains(body, []byte(`"verified":false`)) {
+		t.Fatalf("unchecked import verified: %s", body)
+	}
+	upload("mac-arm64", "1.2.3", "DSH #1.2.3.zip", "", "escaped", 201)
+	code, body = admin.do("GET", "/api/dsh/releases", nil, nil)
+	expect(t, "employee release URLs", code, 200, body)
+	listing := decode[struct {
+		Releases []struct {
+			DownloadURL string `json:"download_url"`
+			Verified    bool   `json:"verified"`
+		} `json:"releases"`
+	}](t, body)
+	if len(listing.Releases) != 1 || listing.Releases[0].Verified {
+		t.Fatalf("employee list: %s", body)
+	}
+	downloadURL := listing.Releases[0].DownloadURL
+	if !strings.Contains(downloadURL, "DSH%20%231.2.3.zip") {
+		t.Fatalf("filename not escaped: %s", downloadURL)
+	}
+	resp, err := admin.hc.Get(downloadURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err = io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 200 || string(b) != "escaped" {
+		t.Fatalf("escaped download: %d %q %v", resp.StatusCode, b, err)
+	}
+}
 
 func TestDshReleaseAPI(t *testing.T) {
 	st := openTestStore(t)
