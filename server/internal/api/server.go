@@ -243,6 +243,9 @@ type Server struct {
 	// OIDC 登录：发现配置与公钥缓存（一次性 state/PKCE 在共享表 ephemeral_states 里）
 	oidcOnce   sync.Once
 	oidcClient *oidc.Client
+	// LLM 网关的每用户在途请求闸与预留 token 记账（零值可用，见 llm_inflight.go）。
+	// 放在 Server 上而不是包级变量，测试/多实例各自独立。
+	llmInflight llmInflight
 }
 
 func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Server {

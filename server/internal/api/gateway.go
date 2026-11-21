@@ -218,38 +218,39 @@ func (s *Server) openaiUpstreamErrorWriter(w http.ResponseWriter) llmErrWriter {
 	return func(status int, typ, code, msg string) { writeOpenAIErr(w, status, typ, code, msg) }
 }
 
-// checkLLMQuota 校验账号与令牌的月度额度。生成参数（max_tokens / n）的校验在调用前
-// 由各端点自己完成：OpenAI 网关用 completionLimitError，Anthropic 端点在转换请求时校验。
-func (s *Server) checkLLMQuota(w http.ResponseWriter, r *http.Request, k *Principal, quota *store.UserQuota, writeErr llmErrWriter) bool {
-	if quota.MonthlyTokenLimit != nil {
-		used, err := s.store.MonthTokensByUser(r.Context(), k.User.ID)
-		if err != nil {
-			s.log.Error("month tokens", "user", k.User.ID, "err", err)
-			writeErr(http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
-			return false
-		}
-		if used >= *quota.MonthlyTokenLimit {
-			msg := "本月 token 额度已用完，请联系管理员"
-			if *quota.MonthlyTokenLimit == 0 {
-				msg = "管理员还没有给你分配额度，请联系管理员"
-			}
-			writeErr(http.StatusTooManyRequests, "insufficient_quota", "monthly_quota_exceeded", msg)
-			return false
+// requestedMaxTokens 返回请求声明的最大输出 token 数（max_tokens /
+// max_completion_tokens / max_output_tokens），用于额度预留。
+//
+// 没声明或声明不合法时返回 0：各端点会把不合法的生成参数拦在准入之前（OpenAI 网关用
+// completionLimitError，Anthropic 转换层与 Responses 转换层各自校验），native 透传
+// 路径则交给上游报错；这里只做保守预留，不改变既有错误契约。超过单次上限的值按
+// maxTokensPerRequest 封顶，避免一个离谱的 max_tokens 让账号永远无法命中额度。
+func requestedMaxTokens(body map[string]any) int64 {
+	var n int64
+	for _, field := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
+		if v, present, ok := intParam(body, field); present && ok && v > 0 && v > n {
+			n = v
 		}
 	}
-	if k.Limit != nil {
-		used, err := s.store.TokenMonthUsage(r.Context(), k.TokenID)
-		if err != nil {
-			s.log.Error("token month tokens", "token", k.TokenID, "err", err)
-			writeErr(http.StatusInternalServerError, "server_error", "internal_error", "服务器内部错误")
-			return false
-		}
-		if used >= *k.Limit {
-			writeErr(http.StatusTooManyRequests, "insufficient_quota", "monthly_quota_exceeded", "本月 token 额度已用完（此令牌），请联系管理员")
-			return false
-		}
+	if n > maxTokensPerRequest {
+		n = maxTokensPerRequest
 	}
-	return true
+	return n
+}
+
+// checkLLMQuota 校验账号与令牌的月度额度，并在放行时登记在途名额与 max_tokens 预留。
+// 生成参数（max_tokens / n）的校验在调用前由各端点自己完成：OpenAI 网关用
+// completionLimitError，Anthropic 端点在转换请求时校验。
+//
+// 返回的 lease 由调用方用 defer lease.release() 释放。请求结束路径（成功、失败、
+// 流式中断、客户端断开）都必须覆盖，否则并发闸与额度预留会泄漏。
+func (s *Server) checkLLMQuota(w http.ResponseWriter, r *http.Request, k *Principal, quota *store.UserQuota, maxTokens int64, writeErr llmErrWriter) (*llmQuotaLease, bool) {
+	lease, status, typ, code, msg := s.reserveLLMQuota(r, k, quota, maxTokens)
+	if lease != nil {
+		return lease, true
+	}
+	writeErr(status, typ, code, msg)
+	return nil, false
 }
 
 // loadModelCandidates 读对外模型的候选线路；出错或没有线路时已经按 writeErr 写好响应。
@@ -403,9 +404,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, r, http.StatusBadRequest, "invalid_request_error", code, msg)
 		return
 	}
-	if !s.checkLLMQuota(w, r, k, quota, s.openaiErrorWriter(w, r)) {
+	lease, ok := s.checkLLMQuota(w, r, k, quota, requestedMaxTokens(body), s.openaiErrorWriter(w, r))
+	if !ok {
 		return
 	}
+	defer lease.release()
 
 	// 流式请求要求上游在最后一个分块里带上用量，否则统计不到 token。
 	stream, _ := body["stream"].(bool)

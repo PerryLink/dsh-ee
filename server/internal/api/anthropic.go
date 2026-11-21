@@ -163,9 +163,11 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	nativeCands, convertedCands := splitAnthropicCandidates(cands)
 	if anthropicNativeVendorAllowed(cands[0].Provider) {
 		// 原生路径：不解析/不改写请求内容块，只改 model；响应逐字节转发 + usage 旁路。
-		if !s.checkLLMQuota(w, r, k, quota, s.anthropicErrorWriter(w)) {
+		lease, ok := s.checkLLMQuota(w, r, k, quota, requestedMaxTokens(body), s.anthropicErrorWriter(w))
+		if !ok {
 			return
 		}
+		defer lease.release()
 		s.handleAnthropicNative(w, r, k, model, raw, body, start, nativeCands)
 		return
 	}
@@ -181,9 +183,11 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	if !s.checkLLMQuota(w, r, k, quota, s.anthropicErrorWriter(w)) {
+	lease, ok := s.checkLLMQuota(w, r, k, quota, requestedMaxTokens(body), s.anthropicErrorWriter(w))
+	if !ok {
 		return
 	}
+	defer lease.release()
 
 	stream, _ := chatBody["stream"].(bool)
 	if stream {

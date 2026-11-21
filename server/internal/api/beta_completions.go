@@ -96,9 +96,11 @@ func (s *Server) serveBeta(w http.ResponseWriter, r *http.Request, ep betaEndpoi
 		return
 	}
 	// 额度口径与 /v1 网关共用同一套实现（checkLLMQuota）：两条路径的准入规则不能跑偏。
-	if !s.checkLLMQuota(w, r, k, quota, s.openaiErrorWriter(w, r)) {
+	lease, ok := s.checkLLMQuota(w, r, k, quota, requestedMaxTokens(body), s.openaiErrorWriter(w, r))
+	if !ok {
 		return
 	}
+	defer lease.release()
 
 	// 上游选择：只认一个 vendor=deepseek 的启用上游，不做跨上游故障转移。
 	p, unavailable, err := s.betaProvider(r.Context())

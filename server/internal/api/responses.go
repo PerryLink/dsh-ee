@@ -1497,9 +1497,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 				"当前账号不能引用已上传的文件（file_id）；DeepSeek 文件默认只允许管理员与机器人账号使用")
 			return
 		}
-		if !s.checkLLMQuota(w, r, k, quota, s.responsesErrorWriter(w)) {
+		lease, ok := s.checkLLMQuota(w, r, k, quota, requestedMaxTokens(body), s.responsesErrorWriter(w))
+		if !ok {
 			return
 		}
+		defer lease.release()
 		s.handleResponsesNative(w, r, k, model, raw, body, start, nativeCands)
 		return
 	}
@@ -1510,9 +1512,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		perr.write(w)
 		return
 	}
-	if !s.checkLLMQuota(w, r, k, quota, s.responsesErrorWriter(w)) {
+	lease, ok := s.checkLLMQuota(w, r, k, quota, requestedMaxTokens(body), s.responsesErrorWriter(w))
+	if !ok {
 		return
 	}
+	defer lease.release()
 	// 转换层复用 gateway.go 的候选线路 helper（与 chat / Anthropic 端点同一套冷却、
 	// 故障转移与失败记账），只传非 DeepSeek 候选，保证不跨协议。
 	upstreamResp, provider, ok := s.openChatUpstreamCandidates(w, r, k, model, chatBody, false, start, convertedCands, s.responsesErrorWriter(w), nil)
