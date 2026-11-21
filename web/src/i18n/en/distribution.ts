@@ -15,6 +15,7 @@ export default {
     empty: "No downloadable releases have been synced yet.",
     hashNote: "The installer sha512 matches the official manifest. The hash is shown so you can verify it after downloading.",
     officialVerified: "Verified against the official sha512",
+    importVerified: "Verified against an administrator-provided sha512",
     unverifiedDmg: "No official hash is available; dsh-ee calculated this sha512 while downloading",
     winInstall: "Run the exe to install. If Windows shows 'Windows protected your PC' on first launch, choose More info → Run anyway.",
     winQuitDesc: "After installing, open DSH once and quit it completely: right-click the tray icon → Quit.",

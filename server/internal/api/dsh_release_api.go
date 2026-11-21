@@ -23,8 +23,13 @@ func dshReleaseVerified(r *store.DshRelease) bool {
 }
 
 func publicDshRelease(r *store.DshRelease, base string) map[string]any {
+	source := "official"
+	if r.UpstreamURL == "" {
+		source = "import"
+	}
 	return map[string]any{
-		"id": r.ID, "target": r.Target, "kind": r.Kind, "version": r.Version, "released_at": r.ReleasedAt,
+		"source": source,
+		"id":     r.ID, "target": r.Target, "kind": r.Kind, "version": r.Version, "released_at": r.ReleasedAt,
 		"size": r.Size, "sha512": r.SHA512, "recommended": r.Recommended, "verified": dshReleaseVerified(r),
 		"download_url": base + "/dl/" + r.Target + "/" + url.PathEscape(r.File),
 	}

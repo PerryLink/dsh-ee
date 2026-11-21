@@ -13,6 +13,7 @@ export default {
     empty: "管理员还没有同步可下载的版本。",
     hashNote: "安装包的 sha512 已与官方清单核对；页面同时提供哈希，便于下载后自行复核。",
     officialVerified: "已通过官方 sha512 校验",
+    importVerified: "已通过 sha512 校验（管理员提供）",
     unverifiedDmg: "未经官方哈希校验；sha512 由 dsh-ee 下载时计算",
     winInstall: "双击 exe 安装即可；首次运行若提示「已保护你的电脑」，点「更多信息 → 仍要运行」。",
     winQuitDesc: "装好后先打开一次再完全退出：任务栏图标右键 → 退出。",

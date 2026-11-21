@@ -175,6 +175,13 @@ func TestDshReleaseVerificationSource(t *testing.T) {
 			if got := publicDshRelease(r, "http://ee")["verified"]; got != tc.want {
 				t.Fatalf("verified = %v want %v", got, tc.want)
 			}
+			wantSource := "official"
+			if tc.upstream == "" {
+				wantSource = "import"
+			}
+			if got := publicDshRelease(r, "http://ee")["source"]; got != wantSource {
+				t.Fatalf("source = %v want %s", got, wantSource)
+			}
 		})
 	}
 }

@@ -20,6 +20,7 @@ export default {
     empty: "O administrador ainda não sincronizou versões para download.",
     hashNote: "O sha512 do pacote foi conferido com o manifesto oficial; a página também mostra o hash para você poder conferir depois do download.",
     officialVerified: "Verificado pelo sha512 oficial",
+    importVerified: "Verificado com sha512 fornecido pelo administrador",
     unverifiedDmg: "Sem verificação de hash oficial; o sha512 foi calculado pelo dsh-ee no momento do download",
     winInstall: "Instale com duplo clique no exe. Na primeira execução, se aparecer «O Windows protegeu seu PC», clique em «Mais informações → Executar assim mesmo».",
     winQuitDesc: "Depois de instalar, abra uma vez e saia completamente: clique com o botão direito no ícone da bandeja → Sair.",

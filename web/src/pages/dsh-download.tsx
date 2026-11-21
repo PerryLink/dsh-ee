@@ -37,7 +37,7 @@ function DownloadRow({ release, title }: { release: DshRelease; title: string })
         <div className="mt-1 text-xs text-neutral-500">
           {formatTime(release.released_at)} · {formatBytes(release.size)} · sha512 {release.sha512.slice(0, 16)}…
         </div>
-        <div className="mt-1 text-xs text-neutral-500">{release.verified ? t("download.officialVerified") : t("download.unverifiedDmg")}</div>
+        <div className="mt-1 text-xs text-neutral-500">{release.verified ? t(release.source === "import" ? "download.importVerified" : "download.officialVerified") : t("download.unverifiedDmg")}</div>
       </div>
       <a href={release.download_url} className={buttonCls("primary")}>
         <Download size={14} /> {t("download.download")}
