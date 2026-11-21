@@ -1,9 +1,11 @@
 package store
 
 import (
+	"context"
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 迁移文件是按行尾分号切分后逐条执行的（Migrate 里用 splitStatements）；
@@ -280,5 +282,146 @@ func TestProviderKeyOriginMigration(t *testing.T) {
 		if !strings.Contains(stmt, want) {
 			t.Fatalf("0042 迁移缺少 %q：%s", want, stmt)
 		}
+	}
+}
+
+// legacyScopeBackfillMigration 回填升级前遗留范围申请的快照标识（scope_requested_at）。
+const legacyScopeBackfillMigration = "0050_backfill_legacy_scope_requested_at"
+
+// 0050：升级前提交、还没被审批的范围申请没有快照标识（pending_scope 非空但
+// scope_requested_at 为 NULL），审批人拿不到令牌，只能一直 400/409。
+// 迁移用 updated_at 回填：申请写入时 pending_scope 与 scope_requested_at 是同一条 UPDATE
+// 写的同一个时间点，两列都是 DATETIME(3)，精度一致。
+func TestMigrationLegacyScopeBackfillSQL(t *testing.T) {
+	body, err := migrationFS.ReadFile("migrations/" + legacyScopeBackfillMigration + ".sql")
+	if err != nil {
+		t.Fatalf("读 0050 迁移: %v", err)
+	}
+	stmts := splitStatements(string(body))
+	if len(stmts) != 1 {
+		t.Fatalf("0050 迁移应只有一条 UPDATE，实际 %d 条", len(stmts))
+	}
+	stmt := strings.Join(strings.Fields(stmts[0]), " ")
+	for _, want := range []string{
+		"UPDATE assets SET scope_requested_at = updated_at",
+		"WHERE pending_scope IS NOT NULL",
+		"pending_scope <> ''",
+		"scope_requested_at IS NULL",
+	} {
+		if !strings.Contains(stmt, want) {
+			t.Fatalf("0050 迁移缺少 %q：%s", want, stmt)
+		}
+	}
+}
+
+// 在真实库上走一遍升级路径：先造升级前遗留的数据，再把 0050 从 schema_migrations 摘掉
+// 重新 Migrate（等价于「升级到含这条迁移的版本时库里已经有旧数据」）。
+// 只回填仍在审且标识为 NULL 的行：已有标识的行、没有在审申请的行都不能被动。
+func TestMigrationLegacyScopeBackfillApplies(t *testing.T) {
+	st := openTokenTestStore(t)
+	ctx := context.Background()
+
+	// 遗留申请：在审，但没有快照标识
+	legacyAt := time.Date(2026, 11, 1, 9, 30, 0, 456_000_000, time.UTC)
+	legacy := scopeTestAsset(t, st, "legacy-scope-pending", Scope{Users: []int64{1}})
+	setLegacyScopeRequest(t, st, legacy.ID, `{"departments":["销售部"]}`, legacyAt)
+
+	// 已有标识的行：updated_at 与标识故意不同，回填不能覆盖标识
+	existingAt := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	existing := scopeTestAsset(t, st, "legacy-scope-existing", Scope{Users: []int64{2}})
+	if _, err := st.DB().ExecContext(ctx,
+		"UPDATE assets SET pending_scope = ?, scope_requested_at = ?, updated_at = ? WHERE id = ?",
+		`{"all":true}`, existingAt, existingAt.Add(time.Second), existing.ID); err != nil {
+		t.Fatalf("造已有标识的申请：%v", err)
+	}
+
+	// 没有在审申请的行：不能凭空造出一个令牌
+	noPendingAt := time.Date(2026, 11, 3, 11, 0, 0, 0, time.UTC)
+	noPending := scopeTestAsset(t, st, "legacy-scope-none", Scope{Users: []int64{3}})
+	if _, err := st.DB().ExecContext(ctx, "UPDATE assets SET updated_at = ? WHERE id = ?", noPendingAt, noPending.ID); err != nil {
+		t.Fatalf("改无申请行的 updated_at：%v", err)
+	}
+	// pending_scope 为空串按「没有在审申请」处理（和 scanAsset 一致），不能回填
+	emptyPending := scopeTestAsset(t, st, "legacy-scope-empty", Scope{Users: []int64{4}})
+	if _, err := st.DB().ExecContext(ctx,
+		"UPDATE assets SET pending_scope = '', scope_requested_at = NULL, updated_at = ? WHERE id = ?",
+		noPendingAt.Add(time.Second), emptyPending.ID); err != nil {
+		t.Fatalf("造 pending_scope 为空串的行：%v", err)
+	}
+
+	replayMigration(t, st, legacyScopeBackfillMigration)
+
+	got, err := st.GetAsset(ctx, legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ScopeRequestedAt == nil || !got.ScopeRequestedAt.Equal(legacyAt) {
+		t.Fatalf("遗留申请应回填 updated_at 作为快照标识：got %v want %v", got.ScopeRequestedAt, legacyAt)
+	}
+	if got.PendingScope == nil || len(got.PendingScope.Departments) != 1 || got.PendingScope.Departments[0] != "销售部" {
+		t.Fatalf("回填不能改动申请本身：pending=%+v", got.PendingScope)
+	}
+
+	got, err = st.GetAsset(ctx, existing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ScopeRequestedAt == nil || !got.ScopeRequestedAt.Equal(existingAt) {
+		t.Fatalf("已有标识不能被回填覆盖：got %v want %v", got.ScopeRequestedAt, existingAt)
+	}
+
+	for _, tc := range []struct {
+		name string
+		id   int64
+	}{{"没有在审申请", noPending.ID}, {"pending_scope 为空串", emptyPending.ID}} {
+		got, err := st.GetAsset(ctx, tc.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ScopeRequestedAt != nil {
+			t.Fatalf("%s 的行不应回填：%+v", tc.name, got.ScopeRequestedAt)
+		}
+	}
+
+	// 迁移可重复执行：再回填一次，所有行的标识都不变
+	replayMigration(t, st, legacyScopeBackfillMigration)
+	again, err := st.GetAsset(ctx, legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ScopeRequestedAt == nil || !again.ScopeRequestedAt.Equal(legacyAt) {
+		t.Fatalf("重复执行回填不应改变已回填的标识：got %v want %v", again.ScopeRequestedAt, legacyAt)
+	}
+	again, err = st.GetAsset(ctx, existing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ScopeRequestedAt == nil || !again.ScopeRequestedAt.Equal(existingAt) {
+		t.Fatalf("重复执行回填不应覆盖已有标识：got %v want %v", again.ScopeRequestedAt, existingAt)
+	}
+}
+
+// setLegacyScopeRequest 造一条「升级前遗留」的范围申请：申请在审（pending_scope 非空），
+// 但快照标识 scope_requested_at 还是 NULL。
+func setLegacyScopeRequest(t *testing.T, st *Store, id int64, pendingScope string, updatedAt time.Time) {
+	t.Helper()
+	if _, err := st.DB().ExecContext(context.Background(),
+		"UPDATE assets SET pending_scope = ?, scope_requested_at = NULL, updated_at = ? WHERE id = ?",
+		pendingScope, updatedAt, id); err != nil {
+		t.Fatalf("造遗留范围申请：%v", err)
+	}
+}
+
+// replayMigration 把一条已登记的迁移从 schema_migrations 摘掉再 Migrate 一次。
+// 测试库建好时迁移都跑过了，这样做等价于「升级到含这条迁移的版本时库里已经有旧数据」，
+// 走的是生产升级同一条路径（Migrate 执行迁移文件里的 SQL 并重新登记版本）。
+func replayMigration(t *testing.T, st *Store, version string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = ?", version); err != nil {
+		t.Fatalf("摘掉迁移登记 %s：%v", version, err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatalf("重跑迁移 %s：%v", version, err)
 	}
 }

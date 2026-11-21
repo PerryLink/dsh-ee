@@ -82,6 +82,7 @@ export default {
     "to": "Solicitado",
     "approved": "Uso compartido de «{{title}}» aprobado",
     "rejected": "Uso compartido de «{{title}}» rechazado",
-    "hint": "Una vez aprobado, todo el mundo en el nuevo ámbito lo ve en DSH de inmediato. El motivo del rechazo se muestra al propietario."
+    "hint": "Una vez aprobado, todo el mundo en el nuevo ámbito lo ve en DSH de inmediato. El motivo del rechazo se muestra al propietario.",
+    "legacyHint": "Esta solicitud de uso compartido es anterior a la actualización y no tiene la marca de tiempo necesaria para revisarla. La actualización la rellena automáticamente: actualiza la página para revisarla. Si persiste, comprueba que se ha ejecutado la última migración de la base de datos."
   }
 } satisfies Messages<typeof zhNs>;
