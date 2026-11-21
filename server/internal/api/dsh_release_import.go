@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
@@ -74,6 +75,35 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 		s.internalErr(w, r, err)
 		return
 	}
+	if old != nil {
+		if err = s.store.UpdateDshReleaseState(ctx, old.ID, store.ReleaseDownloading, old.LocalPath, ""); err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+	}
+	renamed, finished := false, false
+	defer func() {
+		if finished {
+			return
+		}
+		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		var stateErr error
+		if renamed && item.ID != 0 {
+			message := "离线安装包导入失败"
+			if err != nil {
+				message = err.Error()
+			}
+			stateErr = s.store.UpdateDshReleaseState(recoveryCtx, item.ID, store.ReleaseFailed, "", message)
+		} else if !renamed && old != nil {
+			stateErr = s.store.RestoreDshReleaseState(recoveryCtx, old)
+		} else if renamed {
+			stateErr = os.Remove(item.LocalPath)
+		}
+		if stateErr != nil {
+			s.log.Error("恢复离线导入状态失败", "id", item.ID, "err", stateErr)
+		}
+	}()
 	if err = os.MkdirAll(filepath.Dir(part), 0700); err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -114,7 +144,9 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 		s.internalErr(w, r, err)
 		return
 	}
+	renamed = true
 	if old == nil {
+		item.State = store.ReleaseDownloading
 		err = s.store.CreateDshRelease(ctx, item)
 	} else {
 		err = s.store.UpdateImportedDshReleaseMetadata(ctx, item)
@@ -136,6 +168,7 @@ func (s *Server) handleImportDshRelease(w http.ResponseWriter, r *http.Request) 
 		s.internalErr(w, r, err)
 		return
 	}
+	finished = true
 	s.audit(r, auditDshReleaseImport, item.Target+"/"+item.File, map[string]any{"version": item.Version})
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "id": item.ID})
 }

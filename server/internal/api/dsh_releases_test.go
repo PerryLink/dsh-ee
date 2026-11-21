@@ -203,6 +203,102 @@ func TestDshReleaseImportSizeAndLock(t *testing.T) {
 	}
 }
 
+type blockedReleaseBody struct {
+	started chan struct{}
+	resume  chan struct{}
+}
+
+func (b *blockedReleaseBody) Read([]byte) (int, error) {
+	close(b.started)
+	<-b.resume
+	return 0, errors.New("upload interrupted")
+}
+
+func TestDshReleaseImportBlocksDeletionAndRestores(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	item := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "old.zip", ReleasedAt: time.Now(), State: store.ReleaseMirrored}
+	part, _ := f.s.releasePartPath(item)
+	item.LocalPath = strings.TrimSuffix(part, ".part")
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(item.LocalPath, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.CreateDshRelease(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	body := &blockedReleaseBody{started: make(chan struct{}), resume: make(chan struct{})}
+	resumed := false
+	defer func() {
+		if !resumed {
+			close(body.resume)
+		}
+	}()
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.s.handleImportDshRelease(w, httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=old.zip", body))
+	}()
+	select {
+	case <-body.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("import did not start reading")
+	}
+	deleteReq := httptest.NewRequest("DELETE", "/api/admin/dsh-releases/"+fmt.Sprint(item.ID), nil)
+	deleteReq.SetPathValue("id", fmt.Sprint(item.ID))
+	deleteResult := httptest.NewRecorder()
+	f.s.handleDeleteDshRelease(deleteResult, deleteReq)
+	if deleteResult.Code != http.StatusConflict {
+		t.Fatalf("delete during import: %d %s", deleteResult.Code, deleteResult.Body)
+	}
+	close(body.resume)
+	resumed = true
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("import did not stop")
+	}
+	if w.Code != 400 {
+		t.Fatalf("interrupted upload: %d %s", w.Code, w.Body)
+	}
+	row, err := f.st.DshReleaseByID(ctx, item.ID)
+	if err != nil || row.State != store.ReleaseMirrored || row.LocalPath != item.LocalPath {
+		t.Fatalf("original state not restored: %+v %v", row, err)
+	}
+	content, err := os.ReadFile(item.LocalPath)
+	if err != nil || string(content) != "original" {
+		t.Fatalf("original file changed: %q %v", content, err)
+	}
+}
+
+func TestDshReleaseImportFailureAfterRename(t *testing.T) {
+	f := newReleaseFixture(t, "off")
+	ctx := context.Background()
+	oldDir := filepath.Join(f.s.opts.DataDir, "nonempty")
+	if err := os.MkdirAll(oldDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "file"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	item := &store.DshRelease{Target: "mac-arm64", Kind: "zip", Version: "1.2.3", File: "old.zip", LocalPath: oldDir, ReleasedAt: time.Now(), State: store.ReleaseMirrored}
+	if err := f.st.CreateDshRelease(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	f.s.handleImportDshRelease(w, httptest.NewRequest("POST", "/api/admin/dsh-releases/import?target=mac-arm64&version=1.2.3&file=new.zip", strings.NewReader("new")))
+	if w.Code != 500 {
+		t.Fatalf("expected cleanup failure: %d %s", w.Code, w.Body)
+	}
+	row, err := f.st.DshReleaseByID(ctx, item.ID)
+	if err != nil || row.State != store.ReleaseFailed || row.Error == "" {
+		t.Fatalf("post-rename failure not recorded: %+v %v", row, err)
+	}
+}
+
 func TestDshReleaseMirrorAndValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

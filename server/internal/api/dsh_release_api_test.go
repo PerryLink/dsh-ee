@@ -90,6 +90,10 @@ func TestDshReleaseImportAPI(t *testing.T) {
 	expect(t, "mirror import", code, 400, body)
 	upload("mac-arm64", "1.2.4", "first.zip", "", "conflict", 409)
 	upload("mac-arm64", "1.2.3", "first.zip", strings.Repeat("0", 128), "bad", 400)
+	restored, err := st.DshReleaseByID(ctx, item.ID)
+	if err != nil || restored.State != item.State || restored.LocalPath != item.LocalPath || restored.Error != item.Error || restored.MirroredAt == nil || !restored.MirroredAt.Equal(*item.MirroredAt) {
+		t.Fatalf("failed replacement did not restore row: %+v %v", restored, err)
+	}
 	b, _ = os.ReadFile(item.LocalPath)
 	if string(b) != "first" {
 		t.Fatal("mismatch replaced existing file")

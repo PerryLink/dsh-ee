@@ -120,6 +120,11 @@ func (s *Store) UpdateDshReleaseState(ctx context.Context, id int64, state, loca
 	return err
 }
 
+func (s *Store) RestoreDshReleaseState(ctx context.Context, r *DshRelease) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE dsh_releases SET state = ?, local_path = ?, error = ?, mirrored_at = ? WHERE id = ?`, r.State, nullableReleaseText(r.LocalPath), nullableReleaseText(r.Error), r.MirroredAt, r.ID)
+	return err
+}
+
 func (s *Store) UpdateDshReleaseMetadata(ctx context.Context, r *DshRelease) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE dsh_releases SET released_at = ?, file = ?, size = ?, sha512 = ?, upstream_url = ?
 		WHERE id = ? AND state IN ('available', 'failed', 'removed')`, r.ReleasedAt, r.File, r.Size, r.SHA512, r.UpstreamURL, r.ID)
