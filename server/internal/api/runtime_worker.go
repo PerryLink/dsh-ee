@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -221,7 +223,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		return "", nil, err
 	}
 	defer revoke()
-	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary."
+	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
 	args := make([]string, len(opts.Command))
 	for i, arg := range opts.Command {
 		switch arg {
@@ -248,8 +250,25 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil {
 		return "", nil, err
 	}
-	summary := strings.TrimSpace(strings.ToValidUTF8(strings.ReplaceAll(result.Stdout, token, "[redacted]"), "�"))
-	return feishu.Clip(summary, 2400), artifacts, nil
+	return runtimeSummary(result.Stdout, token, slices.Contains(opts.Command, "--json")), artifacts, nil
+}
+
+func runtimeSummary(stdout, token string, jsonOutput bool) string {
+	if jsonOutput {
+		events := stdout
+		stdout = ""
+		for line := range strings.SplitSeq(events, "\n") {
+			var event struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Type == "final" {
+				stdout = event.Text
+			}
+		}
+	}
+	summary := strings.TrimSpace(strings.ToValidUTF8(strings.ReplaceAll(stdout, token, "[redacted]"), "�"))
+	return feishu.Clip(summary, 2400)
 }
 
 func (s *Server) collectCloudFiles(ctx context.Context, sandbox runtime.Sandbox) ([]store.RuntimeArtifact, error) {

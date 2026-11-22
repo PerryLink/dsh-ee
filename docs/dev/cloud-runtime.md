@@ -24,7 +24,7 @@ dsh-ee 保存机器人定义、队列、状态事件和文件；执行在 OpenSa
 | `DSH_EE_RUNTIME_IMAGE` | 预构建的可信 Linux 镜像，建议按 digest 固定。应包含 DSH CLI（如 `@deepseek-ai/dsh@0.2.2-rc.5`，自带同版本 MCP 客户端）和 Node.js 24.9.0 或以上 |
 | `DSH_EE_RUNTIME_GATEWAY_URL` | 沙箱内可访问的 dsh-ee origin；生产用 HTTPS。执行器在此调用 `/v1/chat/completions` 和 `/mcp` |
 | `DSH_EE_RUNTIME_MODEL` | 网关对外模型名，员工本身也须有使用权限 |
-| `DSH_EE_RUNTIME_COMMAND` | 可选 JSON argv，默认 `["dsh","--profile","headless","--patch","{patch}","{prompt}"]`，支持独立参数占位符 `{patch}`、`{prompt}`、`{output}` |
+| `DSH_EE_RUNTIME_COMMAND` | 可选 JSON argv，默认 `["dsh","--profile","headless","--json","--patch","{patch}","{prompt}"]`，支持独立参数占位符 `{patch}`、`{prompt}`、`{output}`。DSH 命令带 `--json` 时，最近运行只显示最终回复；自定义纯文本命令应只将摘要写到 stdout |
 
 部署时让 OpenSandbox 强制执行出站策略（Docker bridge、`dns+nft`，或等效的网络隔离），只放行沙箱到企业网关；不要把 sandbox/execd 端口公开。使用专用网关 origin，不与其他服务或同主机的其他开放端口混用。运行前在目标镜像验证 headless profile 能加载配置和 MCP 客户端。
 

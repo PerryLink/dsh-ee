@@ -39,7 +39,12 @@ func (m *memoryRuntime) Exec(_ context.Context, c runtime.Command) (runtime.Resu
 		return runtime.Result{}, err
 	}
 	m.files[runtimeOutputDir+"/summary.txt"] = "pilot summary"
-	return runtime.Result{Stdout: "pilot summary"}, nil
+	return runtime.Result{Stdout: `{"type":"session","sessionId":"test"}
+{"type":"thinking","text":"Checking the request"}
+{"type":"text","text":"I will query the enterprise source"}
+{"type":"tool_result","content":"Intermediate tool output"}
+{"type":"final","sessionId":"test","reason":{"kind":"completed"},"text":"pilot summary"}
+`}, nil
 }
 
 func (m *memoryRuntime) WriteFile(_ context.Context, name string, value []byte) error {
@@ -62,7 +67,7 @@ func (m *memoryRuntime) Destroy(context.Context) error {
 
 func TestCloudRuntimePilot(t *testing.T) {
 	m := &memoryRuntime{}
-	runRuntimePilot(t, m, "unused-image", []string{"dsh", "--patch", "{patch}", "{prompt}"}, func(s *Server, employee int64) {
+	runRuntimePilot(t, m, "unused-image", []string{"dsh", "--json", "--patch", "{patch}", "{prompt}"}, func(s *Server, employee int64) {
 		m.run = func(c runtime.Command) error {
 			token := c.Env["DSH_EE_RUNTIME_TOKEN"]
 			patch := m.files[runtimePatchPath]
@@ -89,6 +94,27 @@ func TestCloudRuntimePilot(t *testing.T) {
 	})
 	if !m.destroyed {
 		t.Fatal("sandbox was not destroyed")
+	}
+}
+
+func TestRuntimeSummary(t *testing.T) {
+	const token = "ee_at_rt_test"
+	for _, tc := range []struct {
+		name, stdout, want string
+		jsonOutput         bool
+	}{
+		{"missing final", `{"type":"text","text":"not an answer"}`, "", true},
+		{"truncated final", "{\"type\":\"text\",\"text\":\"progress\"}\n{\"type\":\"final\",\"text\":\"partial", "", true},
+		{"multiline final", `{"type":"final","text":"  报告已生成\n下载文件。  "}`, "报告已生成\n下载文件。", true},
+		{"redacted final", `{"type":"final","text":"` + token + `"}`, "[redacted]", true},
+		{"clipped final", `{"type":"final","text":"` + strings.Repeat("报", 2401) + `"}`, strings.Repeat("报", 2400) + "…", true},
+		{"custom plain stdout", "  pilot summary\n", "pilot summary", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runtimeSummary(tc.stdout, token, tc.jsonOutput); got != tc.want {
+				t.Fatalf("summary = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
