@@ -41,6 +41,12 @@ type Config struct {
 	Metrics bool
 	// 公开协议面（/v1/*、/beta/* 与 /mcp）的每令牌限流，单位「次/分钟」；默认 60，0 或 off 关闭。
 	RateLimitPerMinute int
+	// npm 源（/npm/*）的每令牌限流，单位「次/分钟」；默认 600，0 或 off 关闭。
+	// 与公开协议面分开计数、额度独立：npm install 并发大，阈值比模型接口宽。
+	NpmRateLimitPerMinute int
+	// npm 缓存（blobs 目录）总字节上限，默认 20 GiB（DSH_EE_NPM_CACHE_MAX_BYTES）；
+	// 0 表示不限。超限后拒绝新的写盘（上游回源、发布、离线导入），已缓存/已上架内容照常可读。
+	NpmCacheMaxBytes int64
 	// API 客户端（client_credentials）的每 IP 每分钟签发次数（DSH_EE_CLIENT_TOKEN_PER_MINUTE）；
 	// 默认 120，0 或 off 关闭。只防用错误 secret 撞库 / 刷库，正常集成远低于这个量。
 	ClientTokenPerMinute int
@@ -161,12 +167,16 @@ func Load() (*Config, error) {
 		LoginIPLimit:           50,
 		LoginIPWindow:          15 * time.Minute,
 		RateLimitPerMinute:     60,
-		ClientTokenPerMinute:   120,
-		DataDir:                getenv("DSH_EE_DATA_DIR", "./data"),
-		PublicURL:              strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
-		DBWait:                 2 * time.Minute,
-		BackgroundLease:        true,
-		BackgroundLeaseTTL:     90 * time.Second,
+		NpmRateLimitPerMinute:  600,
+		// npm 缓存默认上限 20 GiB：单机数据盘通常远大于此，超限时拒绝新的回源下载
+		// 而不是写满磁盘（0 = 不限，只给明确知道自己磁盘足够大的部署用）。
+		NpmCacheMaxBytes:     20 << 30,
+		ClientTokenPerMinute: 120,
+		DataDir:              getenv("DSH_EE_DATA_DIR", "./data"),
+		PublicURL:            strings.TrimRight(os.Getenv("DSH_EE_PUBLIC_URL"), "/"),
+		DBWait:               2 * time.Minute,
+		BackgroundLease:      true,
+		BackgroundLeaseTTL:   90 * time.Second,
 		// 刷新令牌的默认参数：access 1 小时、refresh 空闲 30 天、族绝对 180 天、宽限严格。
 		RefreshAccessTTL: time.Hour,
 		RefreshTokenTTL:  30 * 24 * time.Hour,
@@ -328,6 +338,25 @@ func Load() (*Config, error) {
 			}
 			c.RateLimitPerMinute = n
 		}
+	}
+	if v := os.Getenv("DSH_EE_NPM_RATE_LIMIT"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "off", "false":
+			c.NpmRateLimitPerMinute = 0
+		default:
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("DSH_EE_NPM_RATE_LIMIT 要是正整数（次/分钟），或 0/off 关闭")
+			}
+			c.NpmRateLimitPerMinute = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("DSH_EE_NPM_CACHE_MAX_BYTES")); v != "" {
+		n, err := parseByteSize(v)
+		if err != nil {
+			return nil, fmt.Errorf("DSH_EE_NPM_CACHE_MAX_BYTES: %w", err)
+		}
+		c.NpmCacheMaxBytes = n
 	}
 	if v := os.Getenv("DSH_EE_CLIENT_TOKEN_PER_MINUTE"); v != "" {
 		switch strings.ToLower(strings.TrimSpace(v)) {
@@ -504,6 +533,41 @@ func positiveIntEnv(key string, def int) (int, error) {
 		return 0, fmt.Errorf("%s: 要是 1–100000 之间的整数", key)
 	}
 	return n, nil
+}
+
+// parseByteSize 解析字节数配置：纯数字，或带单位后缀（B / K / KB / KiB / M / MB / MiB / G / GB / GiB / T / TB / TiB，
+// 大小写不敏感；不带 B 的 K/M/G/T 按 1024 进制）。0、off、false 表示不限。
+func parseByteSize(raw string) (int64, error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "", "0", "off", "false":
+		return 0, nil
+	}
+	units := []struct {
+		suffix string
+		mult   int64
+	}{
+		{"kib", 1 << 10}, {"mib", 1 << 20}, {"gib", 1 << 30}, {"tib", 1 << 40},
+		{"kb", 1000}, {"mb", 1000 * 1000}, {"gb", 1000 * 1000 * 1000}, {"tb", 1000 * 1000 * 1000 * 1000},
+		{"k", 1 << 10}, {"m", 1 << 20}, {"g", 1 << 30}, {"t", 1 << 40},
+		{"b", 1},
+	}
+	mult := int64(1)
+	for _, u := range units {
+		if strings.HasSuffix(v, u.suffix) {
+			mult = u.mult
+			v = strings.TrimSpace(strings.TrimSuffix(v, u.suffix))
+			break
+		}
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		return 0, errors.New("要写成字节数（如 21474836480）或带单位（如 20GiB、512MiB），0/off 表示不限")
+	}
+	if n > (1<<62)/mult {
+		return 0, errors.New("数值太大")
+	}
+	return n * mult, nil
 }
 
 func getenv(k, def string) string {

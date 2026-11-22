@@ -158,6 +158,46 @@ func (g *syncGate) release(by int64, keys []string) {
 	}
 }
 
+// 按需回源（GET /npm/... 触发的 mirror）的并发上限。同步/预载任务有自己的
+// syncGate 与 mirrorWorkers，不占用这里的名额；已缓存/已上架的 tarball 直接读盘，
+// 同样不经过这里。默认 4：足够跟上一次 npm install 的并发，又不会让脚本用一个
+// 员工令牌同时拉起任意多个上游下载、把带宽与磁盘 IO 占满。
+const defaultOnDemandMirrors = 4
+
+// onDemandGate 是请求触发的回源下载的全局并发闸门（进程内生效）。
+// 名额满时立即拒绝（503），不排队：请求是同步的，排队只会把连接和 goroutine 一起堆住；
+// npm CLI 对 5xx 会自己退避重试。
+type onDemandGate struct {
+	mu      sync.Mutex
+	running int
+}
+
+func (g *onDemandGate) limit(configured int) int {
+	if configured > 0 {
+		return configured
+	}
+	return defaultOnDemandMirrors
+}
+
+// acquire 尝试占一个名额；满时返回 false。成功返回的 release 必须调用一次。
+func (g *onDemandGate) acquire(configured int) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.running >= g.limit(configured) {
+		return false
+	}
+	g.running++
+	return true
+}
+
+func (g *onDemandGate) release() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.running > 0 {
+		g.running--
+	}
+}
+
 // dedupeSyncRoots 按 (name, version) 去掉请求里重复的根包，保留第一次出现的顺序。
 func dedupeSyncRoots(roots []SyncRoot) []SyncRoot {
 	seen := make(map[string]bool, len(roots))

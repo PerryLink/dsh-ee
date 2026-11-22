@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -14,11 +15,15 @@ import (
 
 // rateLimitFixture 起一个只含协议面假处理函数的 Server，用来验证中间件本身：
 // 不需要数据库，也不依赖真实令牌，Authorization 里随便放一个字符串就是一个「令牌」。
+// npm 与协议面两份额度分开注入（NpmRateLimitPerMinute）。
 func rateLimitFixture(t *testing.T, opts Options) *httptest.Server {
 	t.Helper()
 	s := &Server{opts: opts, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
+	}
+	if opts.NpmRateLimitPerMinute > 0 {
+		s.npmTokenRate = newTokenRate(opts.NpmRateLimitPerMinute, opts.RateLimitWindow)
 	}
 	ok := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -27,6 +32,8 @@ func rateLimitFixture(t *testing.T, opts Options) *httptest.Server {
 		{pattern: "GET /healthz", h: ok},
 		{pattern: "GET /v1/models", h: ok},
 		{pattern: "POST /mcp", h: ok},
+		{pattern: "GET /npm/left-pad", h: ok},
+		{pattern: "GET /npm/left-pad/-/left-pad-1.0.0.tgz", h: ok},
 	}
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -258,6 +265,91 @@ func TestRateLimitOnlyProtocolPaths(t *testing.T) {
 		r := doRateRequest(t, ts.URL, "GET", "/api/没有这个接口", "ee_at_token_a", nil)
 		if r.code != http.StatusNotFound {
 			t.Fatalf("不存在的接口应 404：第 %d 次 %d", i+1, r.code)
+		}
+		wantNoHeader(t, r.header, "X-RateLimit-Limit")
+	}
+}
+
+// /npm/* 纳入每令牌限流：额度与协议面独立（互不占用），429 用 npm 能读的普通 JSON
+// 错误体（不是 OpenAI / Anthropic / JSON-RPC 壳），并带 Retry-After 与 X-RateLimit-*。
+func TestRateLimitNpmSeparateBudget(t *testing.T) {
+	ts := rateLimitFixture(t, Options{RateLimitPerMinute: 1, NpmRateLimitPerMinute: 2, RateLimitWindow: time.Minute})
+	const token = "ee_npm_rate_token"
+
+	first := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", token, nil)
+	if first.code != http.StatusOK {
+		t.Fatalf("npm 额度内第一次应 200：%d %s", first.code, first.body)
+	}
+	wantHeader(t, first.header, "X-RateLimit-Limit", "2")
+	wantHeader(t, first.header, "X-RateLimit-Remaining", "1")
+	wantNoHeader(t, first.header, "Retry-After")
+
+	// packument 与 tarball 共用一个 npm 令牌额度（npm install 一次安装会同时打这两类请求）。
+	second := doRateRequest(t, ts.URL, "GET", "/npm/left-pad/-/left-pad-1.0.0.tgz", token, nil)
+	if second.code != http.StatusOK {
+		t.Fatalf("npm 额度内第二次应 200：%d %s", second.code, second.body)
+	}
+	wantHeader(t, second.header, "X-RateLimit-Remaining", "0")
+
+	third := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", token, nil)
+	if third.code != http.StatusTooManyRequests {
+		t.Fatalf("npm 超额度应 429：%d %s", third.code, third.body)
+	}
+	wantHeader(t, third.header, "X-RateLimit-Limit", "2")
+	wantHeader(t, third.header, "X-RateLimit-Remaining", "0")
+	retryAfter(t, third.header)
+	var npmErr struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(third.body, &npmErr); err != nil || npmErr.Error == "" {
+		t.Fatalf("npm 的 429 应是普通 JSON 错误体：%v %s", err, third.body)
+	}
+	if strings.Contains(string(third.body), "rate_limit_error") || strings.Contains(string(third.body), "jsonrpc") {
+		t.Fatalf("npm 的 429 不该套模型协议的错误壳：%s", third.body)
+	}
+
+	// 协议面额度独立：npm 已用光，不影响 /v1 自己的 1 次额度。
+	if r := doRateRequest(t, ts.URL, "GET", "/v1/models", token, nil); r.code != http.StatusOK {
+		t.Fatalf("npm 超限不该占用 /v1 的额度：%d %s", r.code, r.body)
+	}
+	if r := doRateRequest(t, ts.URL, "GET", "/v1/models", token, nil); r.code != http.StatusTooManyRequests {
+		t.Fatalf("/v1 自己的额度用完后应 429：%d %s", r.code, r.body)
+	}
+	// 反过来，/v1 超限也不该把 npm 的 429 变成 200。
+	if r := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", token, nil); r.code != http.StatusTooManyRequests {
+		t.Fatalf("npm 额度已用完，仍应 429：%d %s", r.code, r.body)
+	}
+	// 另一个令牌有自己的 npm 额度。
+	if r := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", "ee_npm_other_token", nil); r.code != http.StatusOK {
+		t.Fatalf("另一个令牌的 npm 额度不该受影响：%d %s", r.code, r.body)
+	}
+	t.Logf("修后：npm 额度 2 次/分钟 → 第 3 次 429（Retry-After + X-RateLimit-*），且与 /v1 额度互不占用")
+}
+
+// npm CLI 只配 _auth（Basic，密码位放令牌）时也要按令牌计数，而不是退回按 IP。
+func TestRateLimitNpmBasicAuthToken(t *testing.T) {
+	ts := rateLimitFixture(t, Options{NpmRateLimitPerMinute: 1, RateLimitWindow: time.Minute})
+	basic := func(token string) map[string]string {
+		return map[string]string{"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:"+token))}
+	}
+	if r := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", "", basic("ee_npm_basic_a")); r.code != http.StatusOK {
+		t.Fatalf("Basic 令牌第一次应 200：%d %s", r.code, r.body)
+	}
+	if r := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", "", basic("ee_npm_basic_a")); r.code != http.StatusTooManyRequests {
+		t.Fatalf("同一个 Basic 令牌超限应 429：%d %s", r.code, r.body)
+	}
+	if r := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", "", basic("ee_npm_basic_b")); r.code != http.StatusOK {
+		t.Fatalf("另一个 Basic 令牌应有自己的额度：%d %s", r.code, r.body)
+	}
+}
+
+// 只开协议面限流时，/npm 不受影响（默认关闭 npm 限流）：npm install 不会被模型额度误伤。
+func TestRateLimitNpmDisabledByDefault(t *testing.T) {
+	ts := rateLimitFixture(t, Options{RateLimitPerMinute: 1, RateLimitWindow: time.Minute})
+	for i := 0; i < 5; i++ {
+		r := doRateRequest(t, ts.URL, "GET", "/npm/left-pad", "ee_npm_unlimited", nil)
+		if r.code != http.StatusOK {
+			t.Fatalf("没开 npm 限流时不该 429：第 %d 次 %d %s", i+1, r.code, r.body)
 		}
 		wantNoHeader(t, r.header, "X-RateLimit-Limit")
 	}

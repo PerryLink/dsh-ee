@@ -497,3 +497,93 @@ func TestSecretKeyGeneratedInDataDir(t *testing.T) {
 		t.Fatal("密钥文件损坏时应拒绝启动，而不是覆盖")
 	}
 }
+
+// npm 源的限流与缓存上限：默认 600 次/分钟、20 GiB；都可用环境变量调整或关闭。
+func TestNpmLimitsConfig(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.NpmRateLimitPerMinute != 600 {
+		t.Fatalf("npm 限流默认应为 600，得到 %d", c.NpmRateLimitPerMinute)
+	}
+	if c.NpmCacheMaxBytes != 20<<30 {
+		t.Fatalf("npm 缓存上限默认应为 20 GiB，得到 %d", c.NpmCacheMaxBytes)
+	}
+
+	t.Setenv("DSH_EE_NPM_RATE_LIMIT", "240")
+	t.Setenv("DSH_EE_NPM_CACHE_MAX_BYTES", "512MiB")
+	c, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.NpmRateLimitPerMinute != 240 {
+		t.Fatalf("DSH_EE_NPM_RATE_LIMIT 没生效：%d", c.NpmRateLimitPerMinute)
+	}
+	if c.NpmCacheMaxBytes != 512<<20 {
+		t.Fatalf("DSH_EE_NPM_CACHE_MAX_BYTES 没生效：%d", c.NpmCacheMaxBytes)
+	}
+
+	for _, off := range []string{"0", "off", "false"} {
+		t.Setenv("DSH_EE_NPM_RATE_LIMIT", off)
+		t.Setenv("DSH_EE_NPM_CACHE_MAX_BYTES", off)
+		c, err = Load()
+		if err != nil {
+			t.Fatalf("%q: %v", off, err)
+		}
+		if c.NpmRateLimitPerMinute != 0 || c.NpmCacheMaxBytes != 0 {
+			t.Fatalf("%q 应关闭 npm 限流与缓存上限，得到 %d / %d", off, c.NpmRateLimitPerMinute, c.NpmCacheMaxBytes)
+		}
+	}
+
+	for _, tc := range []struct{ key, value string }{
+		{"DSH_EE_NPM_RATE_LIMIT", "-1"},
+		{"DSH_EE_NPM_RATE_LIMIT", "abc"},
+		{"DSH_EE_NPM_CACHE_MAX_BYTES", "-1"},
+		{"DSH_EE_NPM_CACHE_MAX_BYTES", "20XB"},
+	} {
+		setRequiredEnv(t)
+		// 先把另一项设回合法值，确保是当前这一项触发的错误。
+		t.Setenv("DSH_EE_NPM_RATE_LIMIT", "600")
+		t.Setenv("DSH_EE_NPM_CACHE_MAX_BYTES", "20GiB")
+		t.Setenv(tc.key, tc.value)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("%s=%q 应报错，得到 %v", tc.key, tc.value, err)
+		}
+	}
+}
+
+func TestParseByteSize(t *testing.T) {
+	cases := map[string]int64{
+		"":            0,
+		"0":           0,
+		"off":         0,
+		"false":       0,
+		"1024":        1024,
+		"512KiB":      512 << 10,
+		"512kib":      512 << 10,
+		"20GiB":       20 << 30,
+		"2gib":        2 << 30,
+		"1MB":         1000 * 1000,
+		"1M":          1 << 20,
+		"3gb":         3 * 1000 * 1000 * 1000,
+		" 4 G ":       4 << 30,
+		"10737418240": 10 << 30,
+	}
+	for in, want := range cases {
+		got, err := parseByteSize(in)
+		if err != nil {
+			t.Errorf("parseByteSize(%q) 报错：%v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseByteSize(%q) = %d，期望 %d", in, got, want)
+		}
+	}
+	for _, bad := range []string{"-1", "abc", "20XB", "1.5G", "99999999999999999999999"} {
+		if _, err := parseByteSize(bad); err == nil {
+			t.Errorf("parseByteSize(%q) 应报错", bad)
+		}
+	}
+}

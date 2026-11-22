@@ -121,6 +121,8 @@ go run ./cmd/seed                  # 可选：演示数据（角色、员工、�
 | `DSH_EE_DATA_READ_DSN` | 自动创建只读账号 | 否 | 数据中台只读账号；账号没权限建用户时由 DBA 提供 |
 | `DSH_EE_ADMIN_MODE_UNIT` | `1h` | 否 | **只给自动化测试**调整「管理模式 1/8 小时」里「1 小时」的长度，生产不要设 |
 | `DSH_EE_RATE_LIMIT` | `60` | 否 | `/v1/*` 与 `/mcp` 的每令牌限流，单位「次/分钟」；计数在数据库 `shared_rate_limits` 里，多实例部署时是所有实例合计的一份额度，`0` 或 `off` 关闭 |
+| `DSH_EE_NPM_RATE_LIMIT` | `600` | 否 | `/npm/*` 的每令牌限流，单位「次/分钟」；与 `DSH_EE_RATE_LIMIT` 分开计数、额度独立，`0` 或 `off` 关闭。npm install 并发大，所以默认比模型接口宽 |
+| `DSH_EE_NPM_CACHE_MAX_BYTES` | `20GiB` | 否 | npm 缓存（`blobs` 目录全部 tarball）总量上限，支持 `KiB/MiB/GiB/TiB` 或纯字节数，`0`/`off` 不限。达到上限后拒绝新的写盘：上游按需回源、同步预载、发布、离线导入都返回 507，已缓存/已上架内容照常可读、不删除；不做自动淘汰。用量启动时扫盘 + 写入累加，写盘前距上次全量扫描超过 5 分钟会重扫一次（多实例共享盘时低估最多一个周期）。磁盘较小的部署按实际数据盘容量调整 |
 | `DSH_EE_DEMO_MODE` 等 `DSH_EE_DEMO_*` | 关闭 | 否 | 仅公开演示站使用（登录页显示初始账号、限制访问本机等）；`server/internal/config/config.go` 有完整列表 |
 | `DSH_EE_CSP` | `enforce` | 否 | 内容安全策略：`off` / `report` / `enforce`。不设置时默认 `enforce`（下发内置基线策略，见 §10.1）；`off` 显式关闭完整策略、只保留 `frame-ancestors` 嵌入收口（升级前行为，回滚用）；`report` 用 `Content-Security-Policy-Report-Only` 只报告。非法值启动失败 |
 | `DSH_EE_CSP_REPORT_URI` | 空 | 否 | CSP 违规报告地址（`http(s)://…`，可选）。`DSH_EE_CSP` 不是 `off` 时写进策略的 `report-uri`；非法地址启动失败 |

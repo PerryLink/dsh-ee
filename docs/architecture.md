@@ -169,7 +169,8 @@ tarball 按 sha512 存进 DSH_EE_DATA_DIR/blobs；download 记 npm_downloads
 
 ### 4.3 进程内状态（不持久化）
 
-- 登录失败限流（按用户名 5 次失败锁 15 分钟、按登录 IP 固定窗口）与设备码按 IP 限流，仍在进程内存；`/v1/*` 与 `/mcp` 的每令牌限流已改为数据库共享固定窗口（`shared_rate_limits`），多实例合计一份额度。
+- 登录失败限流（按用户名 5 次失败锁 15 分钟、按登录 IP 固定窗口）与设备码按 IP 限流，仍在进程内存；`/v1/*`、`/mcp` 与 `/npm/*` 的每令牌限流已改为数据库共享固定窗口（`shared_rate_limits`），多实例合计一份额度（协议面用 `DSH_EE_RATE_LIMIT`，npm 源用 `DSH_EE_NPM_RATE_LIMIT`，两份额度分开计数）。
+- npm 按需回源的并发闸门（默认 4）与缓存用量计数是进程内的：闸门每实例一份；缓存总量上限（`DSH_EE_NPM_CACHE_MAX_BYTES`）按「启动扫描 `blobs/` + 本实例新增写入累加」统计，并在写盘前距上次全量扫描超过 5 分钟时同步重扫一次，多实例共用同一块盘时低估最多持续一个扫描周期（仍非实时精确；扫盘会阻塞那一次写请求，目录越大越明显）。
 - 上游 packument 内存缓存、知识库关键词索引、流式响应、MCP 事件流。
 - 预载/导入任务：任务记录在 `sync_jobs`，进程重启时启动阶段会把本实例「运行中」的任务标为失败（`FailRunningJobs`，按 `sync_jobs.owner` 归属），不会自动续跑。
 - **已经不在进程内**：一次性状态（从 DSH 打开网页的 handoff code、开始使用接入码、OIDC state/PKCE）存在共享表 `ephemeral_states`，多个实例共享同一份语义；一次性和过期判断都在数据库上做，数据库不可用时直接失败（见 [operations.md](./operations.md) §9.2）。
