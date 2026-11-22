@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -130,5 +131,40 @@ func TestCommandStreamRequiresTerminalEvent(t *testing.T) {
 	result, err := parseCommandStream(strings.NewReader(`{"type":"error","error":{"exit_code":42}}`))
 	if err != nil || result.ExitCode != 42 {
 		t.Fatalf("unexpected result: %+v, %v", result, err)
+	}
+}
+
+func TestLiveOpenSandbox(t *testing.T) {
+	base := os.Getenv("DSH_EE_TEST_OPENSANDBOX_URL")
+	if base == "" {
+		t.Skip("DSH_EE_TEST_OPENSANDBOX_URL is not set")
+	}
+	p, err := NewOpenSandbox(base, os.Getenv("DSH_EE_TEST_OPENSANDBOX_KEY"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	image := os.Getenv("DSH_EE_TEST_OPENSANDBOX_IMAGE")
+	if image == "" {
+		image = "alpine:3.22"
+	}
+	s, err := p.Create(ctx, SandboxSpec{Image: image, Timeout: 3 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		if err := s.Destroy(ctx); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := s.WriteFile(ctx, "/tmp/dsh-ee-runtime-smoke.txt", []byte("sandbox smoke")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Exec(ctx, Command{Args: []string{"cat", "/tmp/dsh-ee-runtime-smoke.txt"}, Timeout: 10 * time.Second})
+	if err != nil || got.ExitCode != 0 || got.Stdout != "sandbox smoke" {
+		t.Fatalf("unexpected smoke command: %+v %v", got, err)
 	}
 }
