@@ -143,6 +143,29 @@ func TestCommandStreamRequiresTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestCommandStreamDecodesExecdExitError(t *testing.T) {
+	stream := strings.NewReader(`{"type":"stderr","text":"diagnostic"}
+{"type":"error","error":{"ename":"CommandExecError","evalue":"1","traceback":["exit status 1"]}}`)
+	result, err := parseCommandStream(stream, nil)
+	if err != nil || result.ExitCode != 1 || result.Stderr != "diagnostic" {
+		t.Fatalf("unexpected result: %+v, %v", result, err)
+	}
+}
+
+func TestCommandStreamReadsDSHRecordsWithoutNewlines(t *testing.T) {
+	var final DSHFinalOutput
+	stream := strings.NewReader(`{"type":"stdout","text":"{\"type\":\"session\",\"sessionId\":\"test\"}"}
+{"type":"stdout","text":"{\"type\":\"text\",\"text\":\"progress\"}"}
+{"type":"stdout","text":"{\"type\":\"final\",\"text\":\"report\"}"}
+{"type":"execution_complete","exit_code":0}`)
+	if _, err := parseCommandStream(stream, final.Add); err != nil {
+		t.Fatal(err)
+	}
+	if reply := final.Reply(); reply != "report" {
+		t.Fatalf("final reply = %q, want report", reply)
+	}
+}
+
 func TestCommandStreamKeepsSplitDSHFinalAfterOutputLimit(t *testing.T) {
 	encodeChunk := func(chunk string) string {
 		encoded, err := json.Marshal(chunk)

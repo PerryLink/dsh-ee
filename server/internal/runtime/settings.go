@@ -34,7 +34,7 @@ func LoadSettings(env func(string) string) (Settings, error) {
 		Provider: p, Image: strings.TrimSpace(env("DSH_EE_RUNTIME_IMAGE")),
 		BaseURL: strings.TrimRight(strings.TrimSpace(env("DSH_EE_RUNTIME_GATEWAY_URL")), "/"),
 		Model:   strings.TrimSpace(env("DSH_EE_RUNTIME_MODEL")),
-		Command: []string{"dsh", "--profile", "headless", "--json", "--patch", "{patch}", "{prompt}"},
+		Command: []string{"dsh", "--profile", "headless", "--patch", "{patch}", "--json", "{prompt}"},
 	}
 	base, err := parseGatewayURL(out.BaseURL)
 	if err != nil || out.Image == "" || out.Model == "" {

@@ -71,7 +71,7 @@ func (m *memoryRuntime) Destroy(context.Context) error {
 
 func TestCloudRuntimePilot(t *testing.T) {
 	m := &memoryRuntime{}
-	runRuntimePilot(t, m, "unused-image", []string{"dsh", "--json", "--patch", "{patch}", "{prompt}"}, func(s *Server, employee int64) {
+	runRuntimePilot(t, m, "unused-image", []string{"dsh", "--profile", "headless", "--patch", "{patch}", "--json", "{prompt}"}, func(s *Server, employee int64) {
 		m.run = func(c runtime.Command) error {
 			if c.OnStdout == nil {
 				t.Fatal("DSH JSON output must be read from the stdout stream")
@@ -128,6 +128,22 @@ func TestRuntimeSummary(t *testing.T) {
 				t.Fatalf("summary = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRuntimeExecError(t *testing.T) {
+	const token = "ee_at_rt_test"
+	withStderr := runtime.Result{ExitCode: 1, Stderr: "dsh: " + token}
+	if got := runtimeExecError(withStderr, nil, "", token).Error(); got != "headless DSH exited with status 1: dsh: [redacted]" {
+		t.Fatalf("stderr diagnostic = %q", got)
+	}
+	var final runtime.DSHFinalOutput
+	final.Add(`{"type":"error","message":"unknown option '--patch'"}`)
+	if got := runtimeExecError(runtime.Result{ExitCode: 1}, nil, final.Failure(), token).Error(); got != "headless DSH exited with status 1: unknown option '--patch'" {
+		t.Fatalf("JSON diagnostic = %q", got)
+	}
+	if got := runtimeExecError(runtime.Result{}, errors.New("OpenSandbox POST returned HTTP 502"), "", token).Error(); got != "headless DSH execution failed: OpenSandbox POST returned HTTP 502" {
+		t.Fatalf("exec diagnostic = %q", got)
 	}
 }
 

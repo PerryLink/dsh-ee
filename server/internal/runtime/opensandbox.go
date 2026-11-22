@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -280,7 +281,9 @@ func parseCommandStream(r io.Reader, onStdout func(string)) (Result, error) {
 			Text     string `json:"text"`
 			ExitCode *int   `json:"exit_code"`
 			Error    struct {
-				ExitCode *int `json:"exit_code"`
+				ExitCode *int   `json:"exit_code"`
+				Name     string `json:"ename"`
+				Value    string `json:"evalue"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
@@ -303,7 +306,12 @@ func parseCommandStream(r io.Reader, onStdout func(string)) (Result, error) {
 			if event.Error.ExitCode != nil && *event.Error.ExitCode != 0 {
 				return out(*event.Error.ExitCode), nil
 			}
-			return Result{}, errors.New("OpenSandbox command failed")
+			if event.Error.Name == "CommandExecError" {
+				if code, err := strconv.Atoi(event.Error.Value); err == nil && code != 0 {
+					return out(code), nil
+				}
+			}
+			return out(0), errors.New("OpenSandbox command failed")
 		}
 	}
 	if err := scanner.Err(); err != nil {

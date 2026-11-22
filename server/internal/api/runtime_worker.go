@@ -244,11 +244,8 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		cmd.OnStdout = final.Add
 	}
 	result, err := sandbox.Exec(ctx, cmd)
-	if err != nil {
-		return "", nil, errors.New("headless DSH execution failed")
-	}
-	if result.ExitCode != 0 {
-		return "", nil, fmt.Errorf("headless DSH exited with status %d", result.ExitCode)
+	if err != nil || result.ExitCode != 0 {
+		return "", nil, runtimeExecError(result, err, final.Failure(), token)
 	}
 	artifacts, err := s.collectCloudFiles(ctx, sandbox)
 	if err != nil {
@@ -262,8 +259,30 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 }
 
 func runtimeSummary(reply, token string) string {
-	summary := strings.TrimSpace(strings.ToValidUTF8(strings.ReplaceAll(reply, token, "[redacted]"), "�"))
-	return feishu.Clip(summary, 2400)
+	return cleanRuntimeOutput(reply, token, 2400)
+}
+
+func runtimeExecError(result runtime.Result, err error, dshError, token string) error {
+	prefix := "headless DSH execution failed"
+	if err == nil {
+		prefix = fmt.Sprintf("headless DSH exited with status %d", result.ExitCode)
+	}
+	detail := cleanRuntimeOutput(result.Stderr, token, 512)
+	if detail == "" {
+		detail = cleanRuntimeOutput(dshError, token, 512)
+	}
+	if detail == "" && err != nil {
+		detail = cleanRuntimeOutput(err.Error(), token, 512)
+	}
+	if detail == "" {
+		return errors.New(prefix)
+	}
+	return fmt.Errorf("%s: %s", prefix, detail)
+}
+
+func cleanRuntimeOutput(output, token string, limit int) string {
+	text := strings.TrimSpace(strings.ToValidUTF8(strings.ReplaceAll(output, token, "[redacted]"), "�"))
+	return feishu.Clip(text, limit)
 }
 
 func (s *Server) collectCloudFiles(ctx context.Context, sandbox runtime.Sandbox) ([]store.RuntimeArtifact, error) {
