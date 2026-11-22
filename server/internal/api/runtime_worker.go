@@ -79,7 +79,7 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 		switch {
 		case errors.Is(runErr, context.DeadlineExceeded):
 			message = "cloud task timed out"
-		case task.Attempts < runtimeAttempts && !errors.Is(err, errCloudEmployee):
+		case task.Attempts < runtimeAttempts && !errors.Is(err, errCloudEmployee) && !errors.Is(err, errCloudQuota):
 			status = store.RuntimeQueued
 		}
 	}
@@ -99,7 +99,38 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 	}
 }
 
-var errCloudEmployee = errors.New("run identity is not an eligible employee")
+var (
+	errCloudEmployee = errors.New("run identity is not an eligible employee")
+	// errCloudQuota 是终态失败：额度未分配或已用完，重试不会改变结果。
+	errCloudQuota = errors.New("cloud task run-as employee has no model quota")
+)
+
+// cloudQuotaPreflight 在分配沙箱和短期凭证之前检查运行身份的月度额度，规则与模型网关
+// checkLLMQuota 一致（nil 不限；0 未分配；已用 >= 正数上限即用完）。它只是尽早给出
+// 可读的失败原因，不预留额度，也不替代网关的逐请求校验。读库出错是可重试的普通错误。
+func (s *Server) cloudQuotaPreflight(ctx context.Context, id int64) error {
+	u, err := s.runtimeEmployee(ctx, id)
+	if err != nil {
+		if notFound(err) {
+			return errCloudEmployee
+		}
+		return errors.New("checking cloud task identity failed")
+	}
+	if u.MonthlyTokenLimit == nil {
+		return nil
+	}
+	if *u.MonthlyTokenLimit == 0 {
+		return fmt.Errorf("%w: monthly token quota is unallocated (0); ask an administrator to allocate a nonzero or unlimited quota", errCloudQuota)
+	}
+	used, err := s.store.MonthTokensByUser(ctx, id)
+	if err != nil {
+		return errors.New("checking cloud task quota failed")
+	}
+	if used >= *u.MonthlyTokenLimit {
+		return fmt.Errorf("%w: monthly token quota is exhausted (%d of %d used); ask an administrator to raise it", errCloudQuota, used, *u.MonthlyTokenLimit)
+	}
+	return nil
+}
 
 func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (string, func(), error) {
 	if _, err := s.runtimeEmployee(ctx, task.RunAsID); err != nil {
@@ -162,6 +193,9 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	gateway, err := url.Parse(opts.BaseURL)
 	if err != nil || gateway.Hostname() == "" {
 		return "", nil, errors.New("invalid cloud task gateway")
+	}
+	if err := s.cloudQuotaPreflight(ctx, task.RunAsID); err != nil {
+		return "", nil, err
 	}
 	timeout := time.Duration(task.TimeoutSeconds) * time.Second
 	sandbox, err := opts.Provider.Create(ctx, runtime.SandboxSpec{Image: opts.Image, Timeout: timeout + 30*time.Second, AllowedHosts: []string{gateway.Hostname()}})
