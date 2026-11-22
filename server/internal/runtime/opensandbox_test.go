@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -101,9 +102,15 @@ func TestOpenSandboxLifecycleAndExecd(t *testing.T) {
 	if err := sandbox.WriteFile(ctx, "/out/prompt.txt", []byte("prompt")); err != nil {
 		t.Fatal(err)
 	}
-	result, err := sandbox.Exec(ctx, Command{Args: []string{"print", "a b", "x';y"}, Timeout: time.Second})
+	var streamed strings.Builder
+	result, err := sandbox.Exec(ctx, Command{Args: []string{"print", "a b", "x';y"}, Timeout: time.Second, OnStdout: func(chunk string) {
+		streamed.WriteString(chunk)
+	}})
 	if err != nil || result.Stdout != "ok\n" || result.ExitCode != 0 {
 		t.Fatalf("unexpected execution: %+v, %v", result, err)
+	}
+	if streamed.String() != result.Stdout {
+		t.Fatalf("streamed stdout = %q, want %q", streamed.String(), result.Stdout)
 	}
 	files, err := sandbox.ListFiles(ctx, "/out")
 	if err != nil || len(files) != 1 || files[0].Size != 2 || files[0].Type != "file" {
@@ -127,12 +134,41 @@ func TestOpenSandboxLifecycleAndExecd(t *testing.T) {
 }
 
 func TestCommandStreamRequiresTerminalEvent(t *testing.T) {
-	if _, err := parseCommandStream(strings.NewReader(`{"type":"stdout","text":"partial"}`)); err == nil {
+	if _, err := parseCommandStream(strings.NewReader(`{"type":"stdout","text":"partial"}`), nil); err == nil {
 		t.Fatal("an interrupted stream must not be reported as success")
 	}
-	result, err := parseCommandStream(strings.NewReader(`{"type":"error","error":{"exit_code":42}}`))
+	result, err := parseCommandStream(strings.NewReader(`{"type":"error","error":{"exit_code":42}}`), nil)
 	if err != nil || result.ExitCode != 42 {
 		t.Fatalf("unexpected result: %+v, %v", result, err)
+	}
+}
+
+func TestCommandStreamKeepsSplitDSHFinalAfterOutputLimit(t *testing.T) {
+	encodeChunk := func(chunk string) string {
+		encoded, err := json.Marshal(chunk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("data: {\"type\":\"stdout\",\"text\":%s}\n\n", encoded)
+	}
+	progress := `{"type":"thinking","text":"` + strings.Repeat("x", 8192) + "\"}\n"
+	stream := strings.Repeat(encodeChunk(progress), 1+maxOutput/len(progress))
+	stream += encodeChunk("{\"type\":\"final\",\"text\":\"earlier reply\"}\n")
+	stream += encodeChunk(strings.Repeat("x", maxDSHRecord)) + encodeChunk("too long\n")
+	stream += encodeChunk(`{"type":"fin`) + encodeChunk(`al","text":"报告已生成`) + encodeChunk("\"}\n")
+	stream += encodeChunk("{\"type\":\"text\",\"text\":\"not the reply\"}\n")
+	stream += "{\"type\":\"execution_complete\",\"exit_code\":0}\n"
+
+	var final DSHFinalOutput
+	result, err := parseCommandStream(iotest.HalfReader(strings.NewReader(stream)), final.Add)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Stdout) != maxOutput || strings.Contains(result.Stdout, "报告已生成") {
+		t.Fatalf("raw stdout capture was not capped at %d bytes", maxOutput)
+	}
+	if got := final.Reply(); got != "报告已生成" {
+		t.Fatalf("final reply = %q, want %q", got, "报告已生成")
 	}
 }
 

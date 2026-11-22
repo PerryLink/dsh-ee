@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -237,9 +236,14 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		args[i] = arg
 	}
 	deadline, _ := ctx.Deadline()
-	result, err := sandbox.Exec(ctx, runtime.Command{Args: args, Dir: "/tmp", Timeout: time.Until(deadline), Env: map[string]string{
+	var final runtime.DSHFinalOutput
+	cmd := runtime.Command{Args: args, Dir: "/tmp", Timeout: time.Until(deadline), Env: map[string]string{
 		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": "/tmp/dsh-ee-home", "DSH_EE_OUTPUT_DIR": runtimeOutputDir,
-	}})
+	}}
+	if slices.Contains(opts.Command, "--json") {
+		cmd.OnStdout = final.Add
+	}
+	result, err := sandbox.Exec(ctx, cmd)
 	if err != nil {
 		return "", nil, errors.New("headless DSH execution failed")
 	}
@@ -250,24 +254,15 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil {
 		return "", nil, err
 	}
-	return runtimeSummary(result.Stdout, token, slices.Contains(opts.Command, "--json")), artifacts, nil
+	reply := result.Stdout
+	if cmd.OnStdout != nil {
+		reply = final.Reply()
+	}
+	return runtimeSummary(reply, token), artifacts, nil
 }
 
-func runtimeSummary(stdout, token string, jsonOutput bool) string {
-	if jsonOutput {
-		events := stdout
-		stdout = ""
-		for line := range strings.SplitSeq(events, "\n") {
-			var event struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}
-			if json.Unmarshal([]byte(line), &event) == nil && event.Type == "final" {
-				stdout = event.Text
-			}
-		}
-	}
-	summary := strings.TrimSpace(strings.ToValidUTF8(strings.ReplaceAll(stdout, token, "[redacted]"), "�"))
+func runtimeSummary(reply, token string) string {
+	summary := strings.TrimSpace(strings.ToValidUTF8(strings.ReplaceAll(reply, token, "[redacted]"), "�"))
 	return feishu.Clip(summary, 2400)
 }
 

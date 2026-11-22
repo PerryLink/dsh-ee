@@ -39,12 +39,16 @@ func (m *memoryRuntime) Exec(_ context.Context, c runtime.Command) (runtime.Resu
 		return runtime.Result{}, err
 	}
 	m.files[runtimeOutputDir+"/summary.txt"] = "pilot summary"
-	return runtime.Result{Stdout: `{"type":"session","sessionId":"test"}
+	if c.OnStdout != nil {
+		c.OnStdout(`{"type":"session","sessionId":"test"}
 {"type":"thinking","text":"Checking the request"}
 {"type":"text","text":"I will query the enterprise source"}
 {"type":"tool_result","content":"Intermediate tool output"}
 {"type":"final","sessionId":"test","reason":{"kind":"completed"},"text":"pilot summary"}
-`}, nil
+`)
+		return runtime.Result{}, nil
+	}
+	return runtime.Result{Stdout: "pilot summary"}, nil
 }
 
 func (m *memoryRuntime) WriteFile(_ context.Context, name string, value []byte) error {
@@ -69,6 +73,9 @@ func TestCloudRuntimePilot(t *testing.T) {
 	m := &memoryRuntime{}
 	runRuntimePilot(t, m, "unused-image", []string{"dsh", "--json", "--patch", "{patch}", "{prompt}"}, func(s *Server, employee int64) {
 		m.run = func(c runtime.Command) error {
+			if c.OnStdout == nil {
+				t.Fatal("DSH JSON output must be read from the stdout stream")
+			}
 			token := c.Env["DSH_EE_RUNTIME_TOKEN"]
 			patch := m.files[runtimePatchPath]
 			if !strings.HasPrefix(token, runtimeTokenPrefix) || !strings.Contains(patch, "- insert:\n    - id: dsh-ee-runtime-mcp") ||
@@ -111,7 +118,13 @@ func TestRuntimeSummary(t *testing.T) {
 		{"custom plain stdout", "  pilot summary\n", "pilot summary", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := runtimeSummary(tc.stdout, token, tc.jsonOutput); got != tc.want {
+			reply := tc.stdout
+			if tc.jsonOutput {
+				var final runtime.DSHFinalOutput
+				final.Add(tc.stdout)
+				reply = final.Reply()
+			}
+			if got := runtimeSummary(reply, token); got != tc.want {
 				t.Fatalf("summary = %q, want %q", got, tc.want)
 			}
 		})

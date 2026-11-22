@@ -257,10 +257,10 @@ func (s *openSandboxInstance) Exec(ctx context.Context, cmd Command) (Result, er
 		return Result{}, err
 	}
 	defer response.Close()
-	return parseCommandStream(response)
+	return parseCommandStream(response, cmd.OnStdout)
 }
 
-func parseCommandStream(r io.Reader) (Result, error) {
+func parseCommandStream(r io.Reader, onStdout func(string)) (Result, error) {
 	var stdout, stderr strings.Builder
 	out := func(exitCode int) Result { return Result{stdout.String(), stderr.String(), exitCode} }
 	scanner := bufio.NewScanner(r)
@@ -288,6 +288,9 @@ func parseCommandStream(r io.Reader) (Result, error) {
 		}
 		switch event.Type {
 		case "stdout":
+			if onStdout != nil {
+				onStdout(event.Text)
+			}
 			stdout.WriteString(event.Text[:min(len(event.Text), maxOutput-stdout.Len())])
 		case "stderr":
 			stderr.WriteString(event.Text[:min(len(event.Text), maxOutput-stderr.Len())])

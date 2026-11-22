@@ -30,6 +30,9 @@ type Command struct {
 	Dir     string
 	Env     map[string]string
 	Timeout time.Duration
+
+	// OnStdout receives stdout chunks in order during Exec, before any capture limit.
+	OnStdout func(string)
 }
 
 type Result struct {
