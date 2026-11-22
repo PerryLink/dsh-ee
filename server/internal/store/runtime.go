@@ -13,6 +13,13 @@ const (
 	RuntimeSucceeded = "succeeded"
 	RuntimeFailed    = "failed"
 	RuntimeCanceled  = "canceled"
+
+	RuntimeTaskQueueLimit = 5
+)
+
+var (
+	ErrRuntimeQueueFull = errors.New("runtime task queue is full")
+	ErrRuntimeBotBusy   = errors.New("runtime bot already has an active task")
 )
 
 type RuntimeBot struct {
@@ -113,25 +120,46 @@ func scanRuntimeTask(row interface{ Scan(...any) error }) (*RuntimeTask, error) 
 }
 
 func (s *Store) EnqueueRuntimeTask(ctx context.Context, t RuntimeTask) (*RuntimeTask, error) {
-	created := now()
+	return s.enqueueRuntimeTask(ctx, t, false)
+}
+
+func (s *Store) EnqueueScheduledRuntimeTask(ctx context.Context, t RuntimeTask) (*RuntimeTask, error) {
+	return s.enqueueRuntimeTask(ctx, t, true)
+}
+
+func (s *Store) enqueueRuntimeTask(ctx context.Context, t RuntimeTask, scheduled bool) (*RuntimeTask, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	// Serialize admissions for the same owner across instances.
+	var owner int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=? FOR UPDATE`, t.OwnerID).Scan(&owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if t.IdempotencyKey != "" {
+		existing, err := scanRuntimeTask(tx.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+`
+			FROM runtime_tasks WHERE owner_id=? AND idempotency_key=? FOR UPDATE`, t.OwnerID, t.IdempotencyKey))
+		switch {
+		case err == nil:
+			if !sameRuntimeTask(existing, &t) {
+				return nil, ErrConflict
+			}
+			return existing, nil
+		case !errors.Is(err, ErrNotFound):
+			return nil, err
+		}
+	}
+	if err := checkRuntimeQueue(ctx, tx, t, scheduled); err != nil {
+		return nil, err
+	}
+	created := now()
 	r, err := tx.ExecContext(ctx, `INSERT INTO runtime_tasks (owner_id, run_as_id, bot_id, prompt, status, idempotency_key, timeout_seconds, error, summary, created_at, updated_at)
 		VALUES (?,?,?,?,?,NULLIF(?,''),?,'','',?,?)`, t.OwnerID, t.RunAsID, t.BotID, t.Prompt, RuntimeQueued, t.IdempotencyKey, t.TimeoutSeconds, created, created)
-	if isDuplicate(err) && t.IdempotencyKey != "" {
-		_ = tx.Rollback()
-		existing, e := scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks WHERE owner_id=? AND idempotency_key=?`, t.OwnerID, t.IdempotencyKey))
-		if e != nil {
-			return nil, e
-		}
-		if !sameRuntimeTask(existing, &t) {
-			return nil, ErrConflict
-		}
-		return existing, nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +174,33 @@ func (s *Store) EnqueueRuntimeTask(ctx context.Context, t RuntimeTask) (*Runtime
 		return nil, err
 	}
 	return s.RuntimeTask(ctx, id, t.OwnerID)
+}
+
+func checkRuntimeQueue(ctx context.Context, tx *sql.Tx, t RuntimeTask, scheduled bool) error {
+	rows, err := tx.QueryContext(ctx, `SELECT bot_id FROM runtime_tasks
+		WHERE owner_id=? AND status IN (?,?) LIMIT ? FOR UPDATE`, t.OwnerID, RuntimeQueued, RuntimeRunning, RuntimeTaskQueueLimit)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	active := 0
+	for rows.Next() {
+		var botID sql.NullInt64
+		if err := rows.Scan(&botID); err != nil {
+			return err
+		}
+		if scheduled && t.BotID != nil && botID.Valid && botID.Int64 == *t.BotID {
+			return ErrRuntimeBotBusy
+		}
+		active++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if active >= RuntimeTaskQueueLimit {
+		return ErrRuntimeQueueFull
+	}
+	return nil
 }
 
 func sameRuntimeTask(a, b *RuntimeTask) bool {

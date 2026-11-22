@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -201,6 +202,58 @@ func TestRuntimeBotCanRetireAfterEmployeeLosesEligibility(t *testing.T) {
 	got, err := s.store.RuntimeBot(ctx, bot.ID)
 	if err != nil || got.Enabled {
 		t.Fatalf("bot was not retired: %v (%v)", got, err)
+	}
+}
+
+func TestRuntimeTaskAdmissionLimits(t *testing.T) {
+	s, employee, admin := newRuntimeBotTest(t)
+	ctx := context.Background()
+	request := runtimeTestClient(t, s, employee.ID)
+	rec := admin("POST", runtimeBotsTestPath, runtimeBotTestBody(t, employee.ID, true))
+	var bot store.RuntimeBot
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &bot) != nil {
+		t.Fatalf("create bot: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	runPath := runtimeBotsTestPath + "/" + strconv.FormatInt(bot.ID, 10) + "/run"
+	if rec := admin("POST", runPath, ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("run bot: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	const slot = "2026-11-22T09:00"
+	if _, err := s.enqueueCloudBot(ctx, &bot, slot); !errors.Is(err, store.ErrRuntimeBotBusy) {
+		t.Fatalf("scheduler did not skip queued bot: %v", err)
+	}
+	running, err := s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.enqueueCloudBot(ctx, &bot, slot); !errors.Is(err, store.ErrRuntimeBotBusy) {
+		t.Fatalf("scheduler did not skip running bot: %v", err)
+	}
+	const tasks = "/api/runtime/tasks"
+	const same = `{"prompt":"Summary","idempotency_key":"same"}`
+	for i := 1; i < store.RuntimeTaskQueueLimit; i++ {
+		body := `{"prompt":"Summary"}`
+		if i == 1 {
+			body = same
+		}
+		if rec := request("POST", tasks, body); rec.Code != http.StatusAccepted {
+			t.Fatalf("enqueue below limit: HTTP %d, %s", rec.Code, rec.Body.String())
+		}
+	}
+	if rec := request("POST", tasks, same); rec.Code != http.StatusAccepted {
+		t.Fatalf("idempotent replay at capacity: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	if rec := request("POST", tasks, `{"prompt":"Overflow"}`); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("submit at capacity: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	if rec := admin("POST", runPath, ""); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("bot run at capacity: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	if err := s.store.FinishRuntimeTask(ctx, running, store.RuntimeSucceeded, "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.enqueueCloudBot(ctx, &bot, slot); err != nil {
+		t.Fatalf("scheduler could not enqueue after old run finished: %v", err)
 	}
 }
 

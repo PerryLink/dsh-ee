@@ -61,6 +61,8 @@ func (s *Server) runtimeError(w http.ResponseWriter, r *http.Request, err error)
 		writeErr(w, http.StatusNotFound, "任务、机器人或产物不存在")
 	case errors.Is(err, store.ErrConflict):
 		writeErr(w, http.StatusConflict, "任务状态或幂等键冲突")
+	case errors.Is(err, store.ErrRuntimeQueueFull):
+		writeErr(w, http.StatusTooManyRequests, "排队或运行中的云任务已达上限")
 	default:
 		s.internalErr(w, r, err)
 	}
@@ -308,8 +310,12 @@ func (s *Server) enqueueCloudBot(ctx context.Context, b *store.RuntimeBot, slot 
 	if slot != "" {
 		key = fmt.Sprintf("bot:%d:%s", b.ID, slot)
 	}
-	return s.store.EnqueueRuntimeTask(ctx, store.RuntimeTask{OwnerID: b.OwnerID, RunAsID: b.RunAsID, BotID: &b.ID, Prompt: b.Prompt,
-		IdempotencyKey: key, TimeoutSeconds: int(runtimeTimeout.Seconds())})
+	task := store.RuntimeTask{OwnerID: b.OwnerID, RunAsID: b.RunAsID, BotID: &b.ID, Prompt: b.Prompt,
+		IdempotencyKey: key, TimeoutSeconds: int(runtimeTimeout.Seconds())}
+	if slot != "" {
+		return s.store.EnqueueScheduledRuntimeTask(ctx, task)
+	}
+	return s.store.EnqueueRuntimeTask(ctx, task)
 }
 
 func (s *Server) runCloudScheduler(ctx context.Context) {
@@ -324,7 +330,8 @@ func (s *Server) runCloudScheduler(ctx context.Context) {
 		for _, b := range bots {
 			hour, minute, valid := runtimeDailySchedule(b.Schedule)
 			if valid && hour == now.Hour() && minute == now.Minute() {
-				if _, err := s.enqueueCloudBot(ctx, &b, now.Format("2006-01-02T15:04")); err != nil && !errors.Is(err, store.ErrConflict) {
+				if _, err := s.enqueueCloudBot(ctx, &b, now.Format("2006-01-02T15:04")); err != nil &&
+					!errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrRuntimeBotBusy) && !errors.Is(err, store.ErrRuntimeQueueFull) {
 					s.log.Warn("机器人定时任务未入队", "bot_id", b.ID, "err", err)
 				}
 			}
