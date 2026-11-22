@@ -45,6 +45,14 @@ func validEndpoint(u *url.URL) bool {
 		u.Hostname() != "" && u.User == nil && u.Fragment == ""
 }
 
+func parseGatewayURL(base string) (string, error) {
+	u, err := url.Parse(base)
+	if err != nil || !validEndpoint(u) || u.RawQuery != "" || (u.Path != "" && u.Path != "/") {
+		return "", errors.New("invalid runtime gateway origin")
+	}
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
 type sandboxStatus struct {
 	ID     string `json:"id"`
 	Status struct {
@@ -76,6 +84,13 @@ func (p *OpenSandbox) Create(ctx context.Context, spec SandboxSpec) (Sandbox, er
 	}
 	if len(spec.Env) > 0 {
 		input["env"] = spec.Env
+	}
+	if spec.AllowedHosts != nil {
+		rules := make([]map[string]string, 0, len(spec.AllowedHosts))
+		for _, host := range spec.AllowedHosts {
+			rules = append(rules, map[string]string{"action": "allow", "target": host})
+		}
+		input["networkPolicy"] = map[string]any{"defaultAction": "deny", "egress": rules}
 	}
 	err := p.lifecycle(ctx, http.MethodPost, "/sandboxes", input, &status)
 	if err != nil {
@@ -129,6 +144,22 @@ func (p *OpenSandbox) Create(ctx context.Context, spec SandboxSpec) (Sandbox, er
 	s.headers = make(http.Header, len(endpoint.Headers))
 	for name, value := range endpoint.Headers {
 		s.headers.Set(name, value)
+	}
+	for {
+		response, err := p.request(ctx, http.MethodGet, s.execBase+"/ping", "", s.headers, nil)
+		if err == nil {
+			response.Close()
+			break
+		}
+		var status *httpStatusError
+		if errors.As(err, &status) && status.status >= 400 && status.status < 500 && status.status != http.StatusNotFound {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-tick.C:
+		}
 	}
 	ready = true
 	return s, nil
@@ -200,8 +231,15 @@ func (s *openSandboxInstance) Exec(ctx context.Context, cmd Command) (Result, er
 	if len(cmd.Args) == 0 || cmd.Timeout <= 0 {
 		return Result{}, errors.New("command argv and timeout are required")
 	}
+	argv := make([]string, len(cmd.Args))
+	for i, arg := range cmd.Args {
+		if strings.ContainsRune(arg, 0) {
+			return Result{}, errors.New("command argv contains a NUL byte")
+		}
+		argv[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+	}
 	input := map[string]any{
-		"argv":    cmd.Args,
+		"command": "exec " + strings.Join(argv, " "),
 		"timeout": max(1, cmd.Timeout.Milliseconds()), "background": false,
 	}
 	if cmd.Dir != "" {
@@ -275,7 +313,7 @@ func (s *openSandboxInstance) WriteFile(ctx context.Context, path string, data [
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
 	h := textproto.MIMEHeader{
-		"Content-Disposition": {`form-data; name="metadata"`},
+		"Content-Disposition": {`form-data; name="metadata"; filename="metadata.json"`},
 		"Content-Type":        {"application/json"},
 	}
 	meta, err := form.CreatePart(h)

@@ -26,6 +26,7 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/oidc"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/registry"
+	"github.com/hikariming/dsh-ee/server/internal/runtime"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
@@ -43,6 +44,7 @@ type Options struct {
 	Web http.Handler
 	// npm 源的数据目录（tarball、上游缓存）；为空时用临时目录（测试）。
 	DataDir string
+	Runtime runtime.Settings
 	// 对外地址，用于生成 tarball 下载地址；为空时按请求推断。
 	PublicURL string
 	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单，逗号分隔的完整 origin
@@ -392,7 +394,7 @@ func (s *Server) Handler() http.Handler {
 	// securityHeaders 在最外层，harnessAPI 直接写出的响应同样带文档安全头。
 	// 每令牌限流（DSH_EE_RATE_LIMIT）放在 cors 里面，429 也带 CORS 头，浏览器能读到 Retry-After；
 	// requestID 在最外层，日志与响应用同一个请求号。
-	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(mux))))))
+	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(runtimeTokenRoute(mux)))))))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -608,6 +610,10 @@ func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
 
 // RunBackground 跑定时任务：LDAP、飞书组织同步、插件更新、接入插件与 Desktop 版本同步。
 func (s *Server) RunBackground(ctx context.Context) {
+	if s.opts.Runtime.Provider != nil && s.opts.DemoSite == nil {
+		go s.runCloudWorker(ctx)
+		go s.runCloudScheduler(ctx)
+	}
 	go s.runLDAPSync(ctx)
 	go s.runFeishuSync(ctx)
 	go s.runDingTalkSync(ctx)

@@ -11,9 +11,10 @@ type Provider interface {
 }
 
 type SandboxSpec struct {
-	Image   string
-	Env     map[string]string
-	Timeout time.Duration
+	Image        string
+	Env          map[string]string
+	Timeout      time.Duration
+	AllowedHosts []string
 }
 
 type Sandbox interface {

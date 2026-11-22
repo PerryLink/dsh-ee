@@ -25,12 +25,14 @@ func TestOpenSandboxLifecycleAndExecd(t *testing.T) {
 			t.Error("wrong file path")
 		}
 		switch r.Method + " " + r.URL.Path {
+		case "GET /sandbox/ping":
+			w.WriteHeader(http.StatusOK)
 		case "POST /sandbox/command":
 			var input struct {
-				Argv    []string
+				Command string
 				Timeout int
 			}
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil || strings.Join(input.Argv, "|") != "print|a b" || input.Timeout != 1000 {
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Command != `exec 'print' 'a b' 'x'"'"';y'` || input.Timeout != 1000 {
 				t.Errorf("incorrect command: %+v (%v)", input, err)
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -53,7 +55,7 @@ func TestOpenSandboxLifecycleAndExecd(t *testing.T) {
 				if err != nil || part.FormName() != want {
 					t.Errorf("invalid multipart part %q: %v", want, err)
 				}
-				if want == "metadata" && !strings.Contains(string(b), `"path":"/out/prompt.txt"`) || want == "file" && string(b) != "prompt" {
+				if want == "metadata" && (!strings.Contains(string(b), `"path":"/out/prompt.txt"`) || part.FileName() != "metadata.json") || want == "file" && string(b) != "prompt" {
 					t.Errorf("incorrect multipart content: %s", b)
 				}
 			}
@@ -99,7 +101,7 @@ func TestOpenSandboxLifecycleAndExecd(t *testing.T) {
 	if err := sandbox.WriteFile(ctx, "/out/prompt.txt", []byte("prompt")); err != nil {
 		t.Fatal(err)
 	}
-	result, err := sandbox.Exec(ctx, Command{Args: []string{"print", "a b"}, Timeout: time.Second})
+	result, err := sandbox.Exec(ctx, Command{Args: []string{"print", "a b", "x';y"}, Timeout: time.Second})
 	if err != nil || result.Stdout != "ok\n" || result.ExitCode != 0 {
 		t.Fatalf("unexpected execution: %+v, %v", result, err)
 	}
@@ -119,7 +121,7 @@ func TestOpenSandboxLifecycleAndExecd(t *testing.T) {
 	if err := sandbox.Destroy(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lifecycle.Load() != 4 || execd.Load() != 4 {
+	if lifecycle.Load() != 4 || execd.Load() != 5 {
 		t.Errorf("lifecycle calls = %d, execd calls = %d", lifecycle.Load(), execd.Load())
 	}
 }

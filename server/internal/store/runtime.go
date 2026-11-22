@@ -16,23 +16,24 @@ const (
 )
 
 type RuntimeBot struct {
-	ID        int64     `json:"id"`
-	OwnerID   int64     `json:"owner_id"`
-	RunAsID   int64     `json:"run_as_id"`
-	Name      string    `json:"name"`
-	Prompt    string    `json:"prompt"`
-	Schedule  string    `json:"schedule"`
-	Enabled   bool      `json:"enabled"`
-	ReadOnly  bool      `json:"read_only"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	OwnerID        int64     `json:"owner_id"`
+	RunAsID        int64     `json:"run_as_id"`
+	Name           string    `json:"name"`
+	Prompt         string    `json:"prompt"`
+	Schedule       string    `json:"schedule"`
+	Enabled        bool      `json:"enabled"`
+	ReadOnly       bool      `json:"read_only"`
+	DeliveryTarget string    `json:"delivery_target"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-const runtimeBotColumns = `id, owner_id, run_as_id, name, prompt, schedule, enabled, read_only, created_at, updated_at`
+const runtimeBotColumns = `id, owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, created_at, updated_at`
 
 func scanRuntimeBot(row interface{ Scan(...any) error }) (*RuntimeBot, error) {
 	var b RuntimeBot
-	err := row.Scan(&b.ID, &b.OwnerID, &b.RunAsID, &b.Name, &b.Prompt, &b.Schedule, &b.Enabled, &b.ReadOnly, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.OwnerID, &b.RunAsID, &b.Name, &b.Prompt, &b.Schedule, &b.Enabled, &b.ReadOnly, &b.DeliveryTarget, &b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -42,16 +43,16 @@ func scanRuntimeBot(row interface{ Scan(...any) error }) (*RuntimeBot, error) {
 func (s *Store) SaveRuntimeBot(ctx context.Context, b *RuntimeBot) error {
 	t := now()
 	if b.ID == 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bots (owner_id, run_as_id, name, prompt, schedule, enabled, read_only, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?)`, b.OwnerID, b.RunAsID, b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, t, t)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bots (owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?)`, b.OwnerID, b.RunAsID, b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, t, t)
 		if err != nil {
 			return err
 		}
 		b.ID, err = res.LastInsertId()
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE runtime_bots SET owner_id=?, run_as_id=?, name=?, prompt=?, schedule=?, enabled=?, read_only=?, updated_at=? WHERE id=?`,
-		b.OwnerID, b.RunAsID, b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, t, b.ID)
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_bots SET name=?, prompt=?, schedule=?, enabled=?, read_only=?, delivery_target=?, updated_at=? WHERE id=? AND owner_id=? AND run_as_id=?`,
+		b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, t, b.ID, b.OwnerID, b.RunAsID)
 	return runtimeAffected(res, err)
 }
 
@@ -113,9 +114,15 @@ func scanRuntimeTask(row interface{ Scan(...any) error }) (*RuntimeTask, error) 
 
 func (s *Store) EnqueueRuntimeTask(ctx context.Context, t RuntimeTask) (*RuntimeTask, error) {
 	created := now()
-	r, err := s.db.ExecContext(ctx, `INSERT INTO runtime_tasks (owner_id, run_as_id, bot_id, prompt, status, idempotency_key, timeout_seconds, error, summary, created_at, updated_at)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	r, err := tx.ExecContext(ctx, `INSERT INTO runtime_tasks (owner_id, run_as_id, bot_id, prompt, status, idempotency_key, timeout_seconds, error, summary, created_at, updated_at)
 		VALUES (?,?,?,?,?,NULLIF(?,''),?,'','',?,?)`, t.OwnerID, t.RunAsID, t.BotID, t.Prompt, RuntimeQueued, t.IdempotencyKey, t.TimeoutSeconds, created, created)
 	if isDuplicate(err) && t.IdempotencyKey != "" {
+		_ = tx.Rollback()
 		existing, e := scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks WHERE owner_id=? AND idempotency_key=?`, t.OwnerID, t.IdempotencyKey))
 		if e != nil {
 			return nil, e
@@ -130,6 +137,12 @@ func (s *Store) EnqueueRuntimeTask(ctx context.Context, t RuntimeTask) (*Runtime
 	}
 	id, err := r.LastInsertId()
 	if err != nil {
+		return nil, err
+	}
+	if err := appendRuntimeEvent(ctx, tx, id, RuntimeQueued, 0, created); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return s.RuntimeTask(ctx, id, t.OwnerID)
@@ -163,8 +176,7 @@ func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask,
 
 func (s *Store) ClaimRuntimeTask(ctx context.Context, attemptLimit int, grace time.Duration) (*RuntimeTask, error) {
 	t := now()
-	if _, err := s.db.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, error='worker did not finish', finished_at=?, updated_at=?, lease_until=NULL
-		WHERE status=? AND lease_until<=? AND attempts>=?`, RuntimeFailed, t, t, RuntimeRunning, t, attemptLimit); err != nil {
+	if err := s.expireRuntimeTasks(ctx, t, attemptLimit); err != nil {
 		return nil, err
 	}
 	for {
@@ -174,10 +186,10 @@ func (s *Store) ClaimRuntimeTask(ctx context.Context, attemptLimit int, grace ti
 			return nil, err
 		}
 		lease := t.Add(time.Duration(task.TimeoutSeconds)*time.Second + grace)
-		res, err := s.db.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, attempts=attempts+1, started_at=?, updated_at=?, lease_until=?
+		err = s.recordRuntimeTransition(ctx, task.ID, RuntimeRunning, t, `UPDATE runtime_tasks SET status=?, attempts=attempts+1, started_at=?, updated_at=?, lease_until=?
 			WHERE id=? AND attempts=? AND (status=? OR (status=? AND lease_until<=?))`,
 			RuntimeRunning, t, t, lease, task.ID, task.Attempts, RuntimeQueued, RuntimeRunning, t)
-		switch err := runtimeAffected(res, err); {
+		switch {
 		case errors.Is(err, ErrConflict):
 			continue
 		case err != nil:
@@ -190,9 +202,85 @@ func (s *Store) ClaimRuntimeTask(ctx context.Context, attemptLimit int, grace ti
 
 func (s *Store) CancelRuntimeTask(ctx context.Context, id, ownerID int64) error {
 	t := now()
-	res, err := s.db.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, updated_at=?, finished_at=?, lease_until=NULL
+	return s.recordRuntimeTransition(ctx, id, RuntimeCanceled, t, `UPDATE runtime_tasks SET status=?, updated_at=?, finished_at=?, lease_until=NULL
 		WHERE id=? AND (?=0 OR owner_id=?) AND status IN (?,?)`, RuntimeCanceled, t, t, id, ownerID, ownerID, RuntimeQueued, RuntimeRunning)
-	return runtimeAffected(res, err)
+}
+
+func (s *Store) expireRuntimeTasks(ctx context.Context, t time.Time, attemptLimit int) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM runtime_tasks WHERE status=? AND lease_until<=? AND attempts>=?`, RuntimeRunning, t, attemptLimit)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		err := s.recordRuntimeTransition(ctx, id, RuntimeFailed, t, `UPDATE runtime_tasks SET status=?, error='worker did not finish', finished_at=?, updated_at=?, lease_until=NULL
+			WHERE id=? AND status=? AND lease_until<=? AND attempts>=?`, RuntimeFailed, t, t, id, RuntimeRunning, t, attemptLimit)
+		if err != nil && !errors.Is(err, ErrConflict) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) recordRuntimeTransition(ctx context.Context, id int64, status string, t time.Time, query string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := runtimeAffected(tx.ExecContext(ctx, query, args...)); err != nil {
+		return err
+	}
+	var attempt int
+	if err := tx.QueryRowContext(ctx, `SELECT attempts FROM runtime_tasks WHERE id=?`, id).Scan(&attempt); err != nil {
+		return err
+	}
+	if err := appendRuntimeEvent(ctx, tx, id, status, attempt, t); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func appendRuntimeEvent(ctx context.Context, tx *sql.Tx, id int64, status string, attempt int, t time.Time) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO runtime_task_events (task_id, status, attempt, created_at) VALUES (?,?,?,?)`, id, status, attempt, t)
+	return err
+}
+
+type RuntimeTaskEvent struct {
+	ID        int64     `json:"id"`
+	Status    string    `json:"status"`
+	Attempt   int       `json:"attempt"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Store) RuntimeTaskEvents(ctx context.Context, id, owner int64) ([]RuntimeTaskEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.status,e.attempt,e.created_at FROM runtime_task_events e
+		JOIN runtime_tasks t ON t.id=e.task_id WHERE t.id=? AND (?=0 OR t.owner_id=?) ORDER BY e.id`, id, owner, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RuntimeTaskEvent{}
+	for rows.Next() {
+		var event RuntimeTaskEvent
+		if err := rows.Scan(&event.ID, &event.Status, &event.Attempt, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
 }
 
 type RuntimeArtifact struct {
@@ -225,6 +313,9 @@ func (s *Store) FinishRuntimeTask(ctx context.Context, task *RuntimeTask, status
 			task.ID, a.Name, a.StorageKey, a.Size, t); err != nil {
 			return err
 		}
+	}
+	if err := appendRuntimeEvent(ctx, tx, task.ID, status, task.Attempts, t); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
