@@ -71,6 +71,12 @@ func TestDemoSite(t *testing.T) {
 	expect(t, "演示站加模型接入", code, 403, body)
 	code, body = anon.do("PUT", "/npm/some-pkg", map[string]any{}, nil)
 	expect(t, "演示站 npm 发布", code, 403, body)
+	// 导入安装包会把任意请求体写成 /dl 下的公共文件：演示站必须拒绝
+	code, body = admin.do("POST", "/api/admin/dsh-releases/import", map[string]any{}, nil)
+	expect(t, "演示站导入安装包", code, 403, body)
+	if !strings.Contains(string(body), "演示站") {
+		t.Fatalf("应说明是演示站的限制：%s", body)
+	}
 
 	// 示例连接从服务端访问自己，演示站里也要能建成
 	code, body = admin.do("POST", "/api/admin/demo", nil, nil)

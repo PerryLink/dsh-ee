@@ -71,8 +71,11 @@ var demoSiteBlocked = map[string]bool{
 	// 企业目录安装会下载扩展包、从上游同步插件：演示站不替访客往外拉东西
 	"POST /api/admin/directory/entries/{id}/install": true,
 	"POST /api/admin/directory/entries/{id}/upgrade": true,
-	"POST /api/admin/dsh-releases/check":             true,
-	"POST /api/admin/dsh-releases/{id}/mirror":       true,
+	// 导入安装包会把请求体原样写成 dsh-releases 下的文件，并经 /dl/... 对外下载；
+	// 演示站是公共可写环境，等于给访客提供任意文件托管。
+	"POST /api/admin/dsh-releases/import":      true,
+	"POST /api/admin/dsh-releases/check":       true,
+	"POST /api/admin/dsh-releases/{id}/mirror": true,
 }
 
 const demoSiteMsg = "演示站不开放这个操作。想完整体验，可以自己部署一套：见 deploy/README.md"
