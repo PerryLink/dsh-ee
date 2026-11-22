@@ -228,6 +228,13 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 	if !s.runtimeAvailable(w) {
 		return
 	}
+	var id int64
+	if r.Method == http.MethodPut {
+		var ok bool
+		if id, ok = pathID(w, r); !ok {
+			return
+		}
+	}
 	var bot store.RuntimeBot
 	if !readJSON(w, r, &bot) {
 		return
@@ -235,7 +242,7 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 	if bot.DeliveryTarget == "" {
 		bot.DeliveryTarget = runtimeFeishuOwner
 	}
-	bot.ID = runtimeID(r, "id")
+	bot.ID = id
 	bot.Name, bot.Prompt, bot.Schedule = strings.TrimSpace(bot.Name), strings.TrimSpace(bot.Prompt), strings.TrimSpace(bot.Schedule)
 	_, _, validSchedule := runtimeDailySchedule(bot.Schedule)
 	if bot.Name == "" || utf8.RuneCountInString(bot.Name) > 128 || bot.Prompt == "" || len(bot.Prompt) > 8000 || strings.ContainsRune(bot.Prompt, 0) ||

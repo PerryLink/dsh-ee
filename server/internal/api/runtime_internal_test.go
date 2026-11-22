@@ -103,6 +103,80 @@ func TestLiveCloudRuntimePilot(t *testing.T) {
 	runRuntimePilot(t, provider, "alpine:3.22", []string{"sh", "-c", `printf 'pilot summary' > "$DSH_EE_OUTPUT_DIR/summary.txt"; printf 'pilot summary'`}, nil)
 }
 
+func newRuntimeBotTest(t *testing.T) (*Server, *store.User, func(string, string, string) *httptest.ResponseRecorder) {
+	t.Helper()
+	st := openAuthenticateTestStore(t)
+	ctx := context.Background()
+	if _, err := Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := st.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := st.GetRoleByCode(ctx, rbac.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	employee := &store.User{Username: "runtime-owner", DisplayName: "Runtime Owner"}
+	if err := st.CreateUser(ctx, employee); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserRoles(ctx, employee.ID, []int64{role.ID}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, nil, Options{DataDir: t.TempDir(), Runtime: runtime.Settings{Provider: &memoryRuntime{}}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return s, employee, runtimeTestClient(t, s, admin.ID)
+}
+
+func runtimeTestClient(t *testing.T, s *Server, id int64) func(string, string, string) *httptest.ResponseRecorder {
+	t.Helper()
+	token := secret.Token()
+	if err := s.store.CreateSession(context.Background(), secret.Hash(token), id, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	return func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+		r.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec
+	}
+}
+
+const runtimeBotsTestPath = "/api/admin/runtime/bots"
+
+func runtimeBotTestBody(t *testing.T, owner int64, enabled bool) string {
+	t.Helper()
+	body, err := json.Marshal(store.RuntimeBot{OwnerID: owner, RunAsID: owner, Name: "Daily summary",
+		Prompt: "Summarize", Schedule: "0 9 * * *", ReadOnly: true, Enabled: enabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+func TestRuntimeBotUpdateRejectsMalformedIDs(t *testing.T) {
+	s, employee, request := newRuntimeBotTest(t)
+	body := runtimeBotTestBody(t, employee.ID, true)
+	for _, id := range []string{"0", "-1", "invalid"} {
+		rec := request("PUT", runtimeBotsTestPath+"/"+id, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("update %q: HTTP %d, %s", id, rec.Code, rec.Body.String())
+		}
+	}
+	bots, err := s.store.RuntimeBots(context.Background(), false)
+	if err != nil || len(bots) != 0 {
+		t.Fatalf("invalid update created a bot: %v (%v)", bots, err)
+	}
+	if rec := request("POST", runtimeBotsTestPath, body); rec.Code != http.StatusOK {
+		t.Fatalf("create bot: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+}
+
 func runRuntimePilot(t *testing.T, provider runtime.Provider, image string, command []string, setup func(*Server, int64)) {
 	t.Helper()
 	st := openAuthenticateTestStore(t)
