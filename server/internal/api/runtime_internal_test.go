@@ -177,6 +177,33 @@ func TestRuntimeBotUpdateRejectsMalformedIDs(t *testing.T) {
 	}
 }
 
+func TestRuntimeBotCanRetireAfterEmployeeLosesEligibility(t *testing.T) {
+	s, employee, request := newRuntimeBotTest(t)
+	enabled := runtimeBotTestBody(t, employee.ID, true)
+	rec := request("POST", runtimeBotsTestPath, enabled)
+	var bot store.RuntimeBot
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &bot) != nil || !bot.Enabled {
+		t.Fatalf("create enabled bot: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	disabled := true
+	ctx := context.Background()
+	if err := s.store.UpdateUser(ctx, employee.ID, store.UserPatch{Disabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	path := runtimeBotsTestPath + "/" + strconv.FormatInt(bot.ID, 10)
+	rec = request("PUT", path, runtimeBotTestBody(t, employee.ID, false))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable bot: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	if rec := request("PUT", path, enabled); rec.Code != http.StatusNotFound {
+		t.Fatalf("re-enable ineligible bot: HTTP %d, %s", rec.Code, rec.Body.String())
+	}
+	got, err := s.store.RuntimeBot(ctx, bot.ID)
+	if err != nil || got.Enabled {
+		t.Fatalf("bot was not retired: %v (%v)", got, err)
+	}
+}
+
 func runRuntimePilot(t *testing.T, provider runtime.Provider, image string, command []string, setup func(*Server, int64)) {
 	t.Helper()
 	st := openAuthenticateTestStore(t)

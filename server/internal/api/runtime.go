@@ -250,9 +250,11 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "机器人必须以所有者身份运行，只读，且使用 UTC 每日 cron（分钟 小时 * * *）")
 		return
 	}
-	if _, err := s.runtimeEmployee(r.Context(), bot.RunAsID); err != nil {
-		s.runtimeError(w, r, err)
-		return
+	if id == 0 || bot.Enabled {
+		if _, err := s.runtimeEmployee(r.Context(), bot.RunAsID); err != nil {
+			s.runtimeError(w, r, err)
+			return
+		}
 	}
 	if err := s.store.SaveRuntimeBot(r.Context(), &bot); err != nil {
 		s.runtimeError(w, r, err)
