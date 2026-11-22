@@ -64,7 +64,9 @@ func TestCloudRuntimePilot(t *testing.T) {
 	runRuntimePilot(t, m, "unused-image", []string{"dsh", "--patch", "{patch}", "{prompt}"}, func(s *Server, employee int64) {
 		m.run = func(c runtime.Command) error {
 			token := c.Env["DSH_EE_RUNTIME_TOKEN"]
-			if !strings.HasPrefix(token, runtimeTokenPrefix) || !strings.Contains(m.files[runtimePatchPath], "https://gateway.example/mcp") {
+			patch := m.files[runtimePatchPath]
+			if !strings.HasPrefix(token, runtimeTokenPrefix) || !strings.Contains(patch, "- insert:\n    - id: dsh-ee-runtime-mcp") ||
+				!strings.Contains(patch, "https://gateway.example/mcp") {
 				t.Fatal("missing per-run credential or gateway patch")
 			}
 			if _, err := s.resolveBearer(context.Background(), token, ""); err == nil {

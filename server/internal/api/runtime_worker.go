@@ -144,15 +144,16 @@ func runtimeDSHPatch(base, model string) []byte {
   config:
     provider: dsh-ee
     model: %s
-- id: dsh-ee-runtime-mcp
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: ee
-    transport: streamable-http
-    url: %s
-    failOnStartupError: true
-    headers:
-      Authorization: !!js "'Bearer ' + process.env.DSH_EE_RUNTIME_TOKEN"
+- insert:
+    - id: dsh-ee-runtime-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: ee
+        transport: streamable-http
+        url: %s
+        failOnStartupError: true
+        headers:
+          Authorization: !!js "'Bearer ' + process.env.DSH_EE_RUNTIME_TOKEN"
 `, yamlQuote(base+"/v1"), yamlQuote(model), maxTokensPerRequest, yamlQuote(model), yamlQuote(base+"/mcp")))
 }
 
@@ -186,7 +187,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		return "", nil, err
 	}
 	defer revoke()
-	prompt := task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary."
+	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary."
 	args := make([]string, len(opts.Command))
 	for i, arg := range opts.Command {
 		switch arg {
