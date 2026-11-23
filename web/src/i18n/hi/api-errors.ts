@@ -227,4 +227,10 @@ export default {
     risk_unconfirmed: "पूर्ण पहुँच चालू करने से पहले जोखिमों की पुष्टि करें।",
     locked: "आपके व्यवस्थापक ने आपको इस बॉट का अनुमोदन मोड बदलने की अनुमति नहीं दी है।",
   },
+  runtime_computer: {
+    busy: "The cloud computer is working or being changed right now. Try again shortly.",
+    unsupported: "This runtime doesn't keep cloud computers; every task uses a fresh one.",
+    provider_failed: "The sandbox service couldn't complete the operation. Try again later.",
+    not_found: "This bot doesn't have a cloud computer yet.",
+  },
 } satisfies Messages<typeof zh>;

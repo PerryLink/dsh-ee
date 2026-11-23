@@ -227,4 +227,10 @@ export default {
     risk_unconfirmed: "Confirme os riscos antes de ativar o acesso total.",
     locked: "Seu administrador não permite que você altere o modo de aprovação deste bot.",
   },
+  runtime_computer: {
+    busy: "The cloud computer is working or being changed right now. Try again shortly.",
+    unsupported: "This runtime doesn't keep cloud computers; every task uses a fresh one.",
+    provider_failed: "The sandbox service couldn't complete the operation. Try again later.",
+    not_found: "This bot doesn't have a cloud computer yet.",
+  },
 } satisfies Messages<typeof zhNs>;

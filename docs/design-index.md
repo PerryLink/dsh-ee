@@ -1,4 +1,4 @@
-# 设计文档索引（43 篇）
+# 设计文档索引（44 篇）
 
 > `docs/` 下的 Markdown 混着四类东西：**设计稿**、**实施方案**、**完成报告/交接单**、**验证清单**。这一页给每篇标注分类、当前状态、适用版本、是否已实现、从哪进，免得把设计稿当现状、把报告当承诺。
 >
@@ -43,7 +43,7 @@
 | [named-shared-credentials.md](./named-shared-credentials.md) | ✅ | v0.2 | 连接级多份命名共享凭据已实现；按应用指定哪一份**未做** | `server/README.md`「企业连接」 |
 | [l1-client.md](./l1-client.md) | ✅ | v0.1 | 非 DSH 客户端（L1）接 `/v1` + `/mcp` 的用法；发现/能力/版本头属独立 PR #123，合入后以该分支内容为准 | 无旧入链；配套文档（`docs/dev/harness.md`、`docs/architecture.md`、`docs/harness-integration.md`）合入后互链 |
 
-## 三、DSH 深度联动（8）
+## 三、DSH 深度联动（9）
 
 > 文档标题里的「v0.3 草案」是当时的规划名；阶段 A～D 已在 v0.1 前实现并留下报告。后续「支持其他 Agent」仍在 v0.3（见 roadmap 阶段 E）。
 
@@ -57,6 +57,7 @@
 | [agent-connect-phase-b-report.md](./agent-connect-phase-b-report.md) | 📜 | v0.1 | 阶段 B 完成报告（员工侧 `ee_*` 工具、诊断） | 技术规划 |
 | [agent-connect-phase-c-report.md](./agent-connect-phase-c-report.md) | 📜 | v0.1 | 阶段 C 完成报告（管理模式、管理侧 Agent） | 技术规划 |
 | [agent-connect-phase-d-report.md](./agent-connect-phase-d-report.md) | 📜 | v0.1 | 阶段 D 完成报告（管理员向导、巡检）；阶段 A～D 到此完成 | 技术规划 |
+| [dev/cloud-runtime.md](./dev/cloud-runtime.md) | ✅ | 云端运行试点 | OpenSandbox 常驻电脑、按轮签发凭证、休眠与唤醒、管理员回收 | 站内 `/docs/cloud-runtime` |
 
 ## 四、能力中心、工作台与知识库（10）
 
@@ -122,7 +123,7 @@
 | 管理员（发布/审核/权限） | [enterprise-publishing.md](./enterprise-publishing.md) | [feishu.md](./feishu.md)、[troubleshooting.md](./troubleshooting.md) |
 | 评审设计稿 | 本页「状态」列 + [design.md](./design.md) 历史提示 | 对应验证清单（workbench/knowledge/nav/plugin-install） |
 
-## 本批新增文档（不属于上述 43 篇索引条目）
+## 本批新增文档（不属于上述 44 篇索引条目）
 
 | 文档 | 类型 | 状态 | 说明 |
 |---|---|---|---|
@@ -132,7 +133,7 @@
 | [cross-site-embedding.md](./cross-site-embedding.md) | 设计说明 / 实现参考 | ✅ 已实现（#118，默认关闭） | 跨站嵌入 v1：一次性 code + 内存 Bearer + postMessage 握手已落地；管理端设置页、扩展消息、fit=auto sticky、移动端自动策略、多实例共享 code 未做 |
 | [plugin-signing.md](./plugin-signing.md) | 设计 | **设计，未实现** | 插件/扩展签名、企业目录、自助分发、回滚的选项与风险 |
 
-配套的使用/开发文档（除上表的数据权限指南）不在本页的 43 篇内，随各自 PR 合入：`docs/dev/`（#120）、`docs/plugin-dev/`（#119/#121）、`docs/extension-protocol/` 与 `docs/enterprise-publishing.md`（#125）、`docs/embedding.md`（#118）、`docs/architecture.md`、`docs/operations.md`、`docs/cli.md`、`docs/troubleshooting.md`、`docs/examples-walkthrough.md`（#126）。合入后这些页面由 `docs/dev/README.md` 与根 README 负责索引，本页不重复维护。
+配套的使用/开发文档（除上表的数据权限指南）不在本页的 44 篇内，随各自 PR 合入：`docs/dev/`（#120）、`docs/plugin-dev/`（#119/#121）、`docs/extension-protocol/` 与 `docs/enterprise-publishing.md`（#125）、`docs/embedding.md`（#118）、`docs/architecture.md`、`docs/operations.md`、`docs/cli.md`、`docs/troubleshooting.md`、`docs/examples-walkthrough.md`（#126）。合入后这些页面由 `docs/dev/README.md` 与根 README 负责索引，本页不重复维护。
 
 ## 维护约定
 

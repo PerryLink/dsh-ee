@@ -226,8 +226,8 @@ func TestRuntimeWebChat(t *testing.T) {
 	if done.ID != turn.ID || !c.m.destroyed {
 		t.Fatalf("worker ran task %d (destroyed=%v)", done.ID, c.m.destroyed)
 	}
-	if !strings.HasPrefix(prompt, "Bot instructions:\nPersona of Analyst\n") || !strings.HasSuffix(prompt, "\nFirst question") ||
-		!strings.Contains(prompt, "oldest first):\n[]\n") || !strings.Contains(prompt, runtimeOutputDir) || !strings.Contains(prompt, "read-only") ||
+	if !strings.HasPrefix(prompt, runtimeEphemeralNote+"Bot instructions:\nPersona of Analyst\n") || !strings.HasSuffix(prompt, "\nFirst question") ||
+		!strings.Contains(prompt, "oldest first):\n[]\n") || !strings.Contains(prompt, runtimeFileRule) || !strings.Contains(prompt, "read-only") ||
 		!strings.Contains(prompt, "language of that message") || strings.Contains(prompt, "short final summary") || strings.Contains(prompt, "Enterprise task:") {
 		t.Fatalf("first chat prompt: %q", prompt)
 	}
@@ -260,7 +260,7 @@ func TestRuntimeWebChat(t *testing.T) {
 		detail.Messages[0].Status != store.RuntimeSucceeded || detail.Messages[0].Summary != "pilot summary" || detail.Conversation.Title != "First question" {
 		t.Fatalf("detail after reply: %+v", detail)
 	}
-	if done, prompt := c.runNext(); done.ID != parallel.ID || !strings.HasPrefix(prompt, "Bot instructions:\nPersona of Writer\n") || strings.Contains(prompt, "First question") {
+	if done, prompt := c.runNext(); done.ID != parallel.ID || !strings.HasPrefix(prompt, runtimeEphemeralNote+"Bot instructions:\nPersona of Writer\n") || strings.Contains(prompt, "First question") {
 		t.Fatalf("second conversation ran task %d with prompt %q", done.ID, prompt)
 	}
 
@@ -324,7 +324,7 @@ func TestRuntimeWebChat(t *testing.T) {
 	if tasks := decodeRuntimeChat[[]store.RuntimeTask](t, "admin task list", admin("GET", "/api/runtime/tasks", ""), http.StatusOK); len(tasks) != 1 || tasks[0].ID != scheduled.ID {
 		t.Fatalf("admin task view: %+v", tasks)
 	}
-	if _, prompt := c.runNext(); !strings.HasPrefix(prompt, "Enterprise task:\nPersona of Analyst\n") || !strings.Contains(prompt, "short final summary") {
+	if _, prompt := c.runNext(); !strings.HasPrefix(prompt, runtimeEphemeralNote+"Enterprise task:\nPersona of Analyst\n") || !strings.Contains(prompt, "short final summary") {
 		t.Fatalf("scheduled prompt changed: %q", prompt)
 	}
 

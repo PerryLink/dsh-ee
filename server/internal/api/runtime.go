@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -206,9 +207,9 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 		}
 		defer f.Close()
 		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Name}))
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(a.Name)}))
 		w.Header().Set("Cache-Control", "private, no-store")
-		http.ServeContent(w, r, a.Name, a.CreatedAt, f)
+		http.ServeContent(w, r, path.Base(a.Name), a.CreatedAt, f)
 		return
 	}
 	s.runtimeError(w, r, store.ErrNotFound)
@@ -324,6 +325,10 @@ func (s *Server) handleRuntimeRunBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "runtime.bot.run", strconv.FormatInt(bot.ID, 10), nil)
+	if task.PrivateResult && task.OwnerID != currentUser(r).ID {
+		// The worker may have finished before enqueue read the row back.
+		task.Summary, task.Error = "", ""
+	}
 	writeJSON(w, http.StatusAccepted, task)
 }
 

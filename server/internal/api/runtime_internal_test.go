@@ -33,7 +33,7 @@ func (m *memoryRuntime) Create(context.Context, runtime.SandboxSpec) (runtime.Sa
 }
 
 func (m *memoryRuntime) Exec(_ context.Context, c runtime.Command) (runtime.Result, error) {
-	if c.Args[0] == "mkdir" {
+	if c.Args[0] == "mkdir" || c.Args[0] == "rm" {
 		return runtime.Result{}, nil
 	}
 	if err := m.run(c); err != nil {

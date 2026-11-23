@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hikariming/dsh-ee/server/internal/feishu"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
@@ -27,6 +28,12 @@ const (
 	runtimeMaxFile   = 8 << 20
 	runtimeMaxFiles  = 8
 	runtimeAttempts  = 2
+)
+
+const (
+	runtimeFileRule = "Save every requested deliverable in the deliverables directory specified for this turn; " +
+		"only files in that directory are published to the employee's file library."
+	runtimeEphemeralNote = "Your current working directory is " + runtimeOutputDir + "; it is also the deliverables directory.\n\n"
 )
 
 func (s *Server) runCloudWorker(ctx context.Context) {
@@ -79,9 +86,9 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 	if err != nil {
 		status, message = store.RuntimeFailed, err.Error()
 		switch {
-		case errors.Is(runErr, context.DeadlineExceeded):
+		case errors.Is(runErr, context.DeadlineExceeded) && !errors.Is(err, errCloudCreateRetryable):
 			message = "cloud task timed out"
-		case task.Attempts < runtimeAttempts && !errors.Is(err, errCloudEmployee) && !errors.Is(err, errCloudQuota):
+		case task.Attempts < runtimeAttempts && !errors.Is(err, errCloudEmployee) && !errors.Is(err, errCloudQuota) && !errors.Is(err, errCloudDisk):
 			status = store.RuntimeQueued
 		}
 	}
@@ -104,6 +111,8 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 
 var (
 	errCloudEmployee = errors.New("run identity is not an eligible employee")
+	// Creation failed before the attempt deadline; recovery may finish after it.
+	errCloudCreateRetryable = errors.New("creating cloud sandbox failed")
 	// errCloudQuota 是终态失败：额度未分配或已用完，重试不会改变结果。
 	errCloudQuota = errors.New("cloud task run-as employee has no model quota")
 )
@@ -135,7 +144,7 @@ func (s *Server) cloudQuotaPreflight(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (string, func(), error) {
+func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (string, func() bool, error) {
 	if _, err := s.runtimeEmployee(ctx, task.RunAsID); err != nil {
 		if notFound(err) {
 			return "", nil, errCloudEmployee
@@ -144,6 +153,9 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 	}
 	raw := runtimeTokenPrefix + secret.Token()
 	expires := time.Now().UTC().Add(time.Duration(task.TimeoutSeconds) * time.Second)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(expires) {
+		expires = deadline.UTC()
+	}
 	t := &store.AccessToken{
 		UserID: task.RunAsID, Name: "cloud runtime", Prefix: raw[:12], Source: "runtime", ClientKind: store.ClientKindThirdParty,
 		Scopes: []string{rbac.ScopeModels, rbac.ScopeConnections}, AllowedModels: []string{s.opts.Runtime.Model}, ExpiresAt: &expires,
@@ -152,12 +164,14 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 	if err := s.store.CreateAccessToken(ctx, t, secret.Hash(raw)); err != nil {
 		return "", nil, errors.New("creating cloud task credential failed")
 	}
-	revoke := func() {
+	revoke := func() bool {
 		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
-		if err := s.store.RevokeToken(c, t.ID); err != nil {
+		if err := s.store.RevokeToken(c, t.ID); err != nil && !notFound(err) {
 			s.log.Warn("吊销云任务短期令牌失败", "task_id", task.ID, "err", err)
+			return false
 		}
+		return true
 	}
 	// 记下这一轮的凭证：/mcp 按它找回任务和机器人的审批模式（runtime_approval.go）
 	if err := s.store.SetRuntimeTaskCredential(ctx, task.ID, t.ID); err != nil {
@@ -206,18 +220,24 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		return "", nil, err
 	}
 	timeout := time.Duration(task.TimeoutSeconds) * time.Second
-	sandbox, err := opts.Provider.Create(ctx, runtime.SandboxSpec{Image: opts.Image, Timeout: timeout + 30*time.Second, AllowedHosts: []string{gateway.Hostname()}})
+	computer, err := s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: opts.Image, Timeout: timeout + 30*time.Second, AllowedHosts: []string{gateway.Hostname()}})
 	if err != nil {
-		return "", nil, errors.New("creating cloud sandbox failed")
+		return "", nil, err
 	}
-	defer func() {
-		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer stop()
-		if err := sandbox.Destroy(c); err != nil {
-			s.log.Warn("销毁云任务沙箱失败", "task_id", task.ID, "err", err)
+	releaseComputer := true
+	defer func() { computer.close(releaseComputer) }()
+	sandbox := computer.sandbox
+	workDir, outputDir := runtimeOutputDir, runtimeOutputDir
+	if computer.persistent {
+		task.PrivateResult = true
+		// bwrap only binds the workspace back through its private /tmp mount.
+		workDir, outputDir = runtimeWorkDir, runtimePersistentOutputDir
+		setup, err := sandbox.Exec(ctx, runtime.Command{Args: []string{"rm", "-rf", outputDir}, Timeout: 10 * time.Second})
+		if err != nil || setup.ExitCode != 0 {
+			return "", nil, errors.New("preparing cloud sandbox failed")
 		}
-	}()
-	setup, err := sandbox.Exec(ctx, runtime.Command{Args: []string{"mkdir", "-p", runtimeOutputDir}, Timeout: 10 * time.Second})
+	}
+	setup, err := sandbox.Exec(ctx, runtime.Command{Args: []string{"mkdir", "-p", outputDir, runtimeHomeDir}, Timeout: 10 * time.Second})
 	if err != nil || setup.ExitCode != 0 {
 		return "", nil, errors.New("preparing cloud sandbox failed")
 	}
@@ -228,18 +248,23 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil {
 		return "", nil, err
 	}
-	defer revoke()
+	// 吊销失败时保留租约：令牌在本轮截止时失效，早于租约到期，避免休眠电脑留下有效令牌。
+	defer func() { releaseComputer = revoke() }()
 	writes := "The enterprise task is read-only. "
 	if task.BotID != nil {
 		if bot, err := s.store.RuntimeBot(ctx, *task.BotID); err == nil && bot.ApprovalMode != store.RuntimeApprovalReadOnly {
 			writes = runtimeWriteGuidance(bot.ApprovalMode)
 		}
 	}
-	prompt := "Enterprise task:\n" + task.Prompt + "\n\n" + writes + "Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
 	if task.ChatConversationID != nil {
-		// 网页对话的提示词在入队时已拼好（runtimeChatPlan）：要的是直接回答员工，而不是任务摘要；
-		// 当前消息必须留在最后，这里不再追加任何内容。
+		// 网页对话要的是直接回答员工，而不是任务摘要。当前消息必须留在最后。
 		prompt = task.Prompt
+	}
+	if computer.persistent {
+		// 只往前加：网页对话的当前消息必须留在提示词最后。
+		prompt = runtimeComputerNote + prompt
+	} else {
+		prompt = runtimeEphemeralNote + prompt
 	}
 	args := make([]string, len(opts.Command))
 	for i, arg := range opts.Command {
@@ -249,14 +274,14 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		case "{prompt}":
 			arg = prompt
 		case "{output}":
-			arg = runtimeOutputDir
+			arg = outputDir
 		}
 		args[i] = arg
 	}
 	deadline, _ := ctx.Deadline()
 	var final runtime.DSHFinalOutput
-	cmd := runtime.Command{Args: args, Dir: "/tmp", Timeout: time.Until(deadline), Env: map[string]string{
-		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": "/tmp/dsh-ee-home", "DSH_EE_OUTPUT_DIR": runtimeOutputDir,
+	cmd := runtime.Command{Args: args, Dir: workDir, Timeout: time.Until(deadline), Env: map[string]string{
+		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": runtimeHomeDir, "DSH_EE_OUTPUT_DIR": outputDir,
 	}}
 	if slices.Contains(opts.Command, "--json") {
 		cmd.OnStdout = final.Add
@@ -265,7 +290,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil || result.ExitCode != 0 {
 		return "", nil, runtimeExecError(result, err, final.Failure(), token)
 	}
-	artifacts, err := s.collectCloudFiles(ctx, sandbox)
+	artifacts, err := s.collectCloudFiles(ctx, task, sandbox, outputDir)
 	if err != nil {
 		return "", nil, err
 	}
@@ -310,21 +335,46 @@ func cleanRuntimeOutput(output, token string, limit int) string {
 	return feishu.Clip(text, limit)
 }
 
-func (s *Server) collectCloudFiles(ctx context.Context, sandbox runtime.Sandbox) ([]store.RuntimeArtifact, error) {
-	files, err := sandbox.ListFiles(ctx, runtimeOutputDir)
+// collectCloudFiles 把产物目录（含 runtime.ListDepth 层以内的子目录）里的普通文件存成任务产物。
+// 产物名是相对产物目录的路径（子目录里的文件带目录前缀，例如 reports/周报.md），按路径排序，最多 runtimeMaxFiles 个。
+// 被跳过的文件都记一条日志并写明原因：以前这里静默丢弃，机器人说写了文件、文件库却是空的时无从排查。
+func (s *Server) collectCloudFiles(ctx context.Context, task *store.RuntimeTask, sandbox runtime.Sandbox, outputDir string) ([]store.RuntimeArtifact, error) {
+	files, err := sandbox.ListFiles(ctx, outputDir)
 	if err != nil {
 		return nil, errors.New("listing cloud task files failed")
 	}
-	artifacts := []store.RuntimeArtifact{}
+	type candidate struct{ remote, name string }
+	var picked []candidate
+	skip := func(f runtime.File, reason string) {
+		s.log.Warn("跳过云任务产物", "task_id", task.ID, "path", f.Path, "type", f.Type, "size", f.Size, "reason", reason)
+	}
 	for _, f := range files {
-		if f.Type != "file" || path.Dir(f.Path) != runtimeOutputDir || path.Clean(f.Path) != f.Path || f.Size > runtimeMaxFile ||
-			len(path.Base(f.Path)) > 255 || strings.ContainsAny(f.Path, "\x00\r\n\\") {
+		name, ok := runtimeArtifactName(f.Path, outputDir)
+		switch {
+		case f.Type == "directory":
 			continue
+		case !ok:
+			skip(f, "path outside the output directory or not a plain name")
+		case f.Type != "file":
+			skip(f, "not a regular file")
+		case f.Size > runtimeMaxFile:
+			skip(f, "larger than the artifact size limit")
+		case strings.HasPrefix(name, ".") || strings.Contains(name, "/."):
+			// 隐藏文件和目录不当成交付物，也不记日志。
+		default:
+			picked = append(picked, candidate{f.Path, name})
 		}
-		if len(artifacts) >= runtimeMaxFiles {
-			break
+	}
+	slices.SortFunc(picked, func(a, b candidate) int { return strings.Compare(a.name, b.name) })
+	if len(picked) > runtimeMaxFiles {
+		for _, c := range picked[runtimeMaxFiles:] {
+			skip(runtime.File{Path: c.remote, Type: "file"}, "more than the per-task artifact limit")
 		}
-		a, err := s.saveCloudFile(ctx, sandbox, f.Path)
+		picked = picked[:runtimeMaxFiles]
+	}
+	artifacts := []store.RuntimeArtifact{}
+	for _, c := range picked {
+		a, err := s.saveCloudFile(ctx, sandbox, c.remote, c.name)
 		if err != nil {
 			s.removeCloudArtifacts(artifacts)
 			return nil, errors.New("saving cloud task file failed")
@@ -334,7 +384,18 @@ func (s *Server) collectCloudFiles(ctx context.Context, sandbox runtime.Sandbox)
 	return artifacts, nil
 }
 
-func (s *Server) saveCloudFile(ctx context.Context, sandbox runtime.Sandbox, remote string) (store.RuntimeArtifact, error) {
+// runtimeArtifactName 返回产物在产物目录里的相对路径；不在目录里、层级超过 runtime.ListDepth、
+// 不是规范路径或带控制字符 / 反斜杠的一律拒绝。
+func runtimeArtifactName(remote, outputDir string) (string, bool) {
+	rel, ok := strings.CutPrefix(remote, outputDir+"/")
+	if !ok || rel == "" || path.Clean(remote) != remote || len(rel) > 255 || strings.ContainsAny(rel, "\x00\r\n\\") ||
+		strings.Count(rel, "/") >= runtime.ListDepth || !utf8.ValidString(rel) {
+		return "", false
+	}
+	return rel, true
+}
+
+func (s *Server) saveCloudFile(ctx context.Context, sandbox runtime.Sandbox, remote, name string) (store.RuntimeArtifact, error) {
 	dir := filepath.Join(s.opts.DataDir, "runtime-artifacts")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return store.RuntimeArtifact{}, err
@@ -359,7 +420,7 @@ func (s *Server) saveCloudFile(ctx context.Context, sandbox runtime.Sandbox, rem
 		_ = os.Remove(output.Name())
 		return store.RuntimeArtifact{}, err
 	}
-	return store.RuntimeArtifact{Name: path.Base(remote), StorageKey: filepath.Base(output.Name()), Size: size}, nil
+	return store.RuntimeArtifact{Name: name, StorageKey: filepath.Base(output.Name()), Size: size}, nil
 }
 
 func (s *Server) removeCloudArtifacts(artifacts []store.RuntimeArtifact) {

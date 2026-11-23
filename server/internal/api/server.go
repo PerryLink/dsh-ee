@@ -613,6 +613,7 @@ func (s *Server) RunBackground(ctx context.Context) {
 	if s.opts.Runtime.Provider != nil && s.opts.DemoSite == nil {
 		go s.runCloudWorker(ctx)
 		go s.runCloudScheduler(ctx)
+		go s.runCloudComputerReaper(ctx)
 	}
 	go s.runLDAPSync(ctx)
 	go s.runFeishuSync(ctx)

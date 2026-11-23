@@ -14,11 +14,15 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Monitor, RefreshCw, ShieldAlert, ShieldCheck, Users, X } from "lucide-react";
+import { ArrowUp, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Maximize2, Minimize2, Monitor, RefreshCw, ShieldAlert, ShieldCheck, Users, X } from "lucide-react";
 import { Badge, Button, Card, Empty, Notice, Spinner, cx, tabCls, tabListCls } from "../components/ui";
 import { ChatMarkdown } from "../components/chat-markdown";
 import { FullAccessDialog } from "../components/full-access-dialog";
+import { BotWhale } from "../components/bot-whale";
+import { WhaleMark } from "../components/whale-mark";
+import { FilePreviewDialog, type PreviewFile } from "../components/bot-file-preview";
 import { useAuth } from "../lib/auth";
+import { useConfirm } from "../lib/confirm";
 import { formatBytes, formatDateOnly, formatDateTime, formatNumber, formatTimeOnly, resolveLang } from "../lib/format";
 import {
   APPROVAL_MODES,
@@ -38,6 +42,7 @@ import {
   type ChatArtifact,
   type ChatBot,
   type ChatBotProfile,
+  type ChatComputer,
   type ChatError,
   type ChatErrorScope,
   type ChatId,
@@ -114,45 +119,6 @@ const isWide = (query: string) => typeof window !== "undefined" && typeof window
 const LIST_STATIC = "(min-width: 1024px)";
 const PROFILE_STATIC = "(min-width: 1280px)";
 
-// ---------- 头像：按机器人 id 稳定生成的彩色圆点脸 ----------
-
-const FACE_COLORS: ReadonlyArray<readonly [string, string]> = [
-  ["#ffd166", "#4a3200"],
-  ["#9bdcfd", "#0b3350"],
-  ["#b8e6c1", "#0f3d24"],
-  ["#ffb4a2", "#5a1a0c"],
-  ["#cdb4fb", "#2c1463"],
-  ["#f9c6e0", "#5b1238"],
-  ["#a8e6e0", "#0a3f3b"],
-  ["#d8e2a4", "#3a3f0a"],
-];
-
-function hashOf(text: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-/** 装饰性头像：同一个机器人永远是同一张脸；名字由旁边的文字给出。 */
-function DotFace({ seed, size }: { seed: ChatId; size: number }) {
-  const h = hashOf(String(seed));
-  const [bg, fg] = FACE_COLORS[h % FACE_COLORS.length];
-  const gap = 5 + ((h >>> 3) % 3);
-  const lift = ((h >>> 5) % 3) - 1;
-  const r = 2 + ((h >>> 7) % 2) * 0.5;
-  return (
-    <span aria-hidden className="inline-flex shrink-0 rounded-full" style={{ width: size, height: size, backgroundColor: bg }}>
-      <svg viewBox="0 0 40 40" width={size} height={size} focusable="false">
-        <circle cx={20 - gap} cy={18 + lift} r={r} fill={fg} />
-        <circle cx={20 + gap} cy={18 + lift} r={r} fill={fg} />
-      </svg>
-    </span>
-  );
-}
-
 function TypingDots() {
   return (
     <span aria-hidden className="inline-flex items-center gap-1">
@@ -168,6 +134,49 @@ function TypingDots() {
 }
 
 // ---------- 小工具 ----------
+
+/** 产物名可能带子目录（reports/周报.md）：下载时的文件名只取最后一段。 */
+const baseName = (name: string) => name.split("/").pop() || name;
+
+const reducedMotion = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** 面板收起时先播完退场动画再隐藏；用户要求减少动态时立即隐藏。 */
+const PANEL_OUT_MS = 160;
+function usePresence(open: boolean): { shown: boolean; leaving: boolean } {
+  // 上一次打开过、还没等到退场结束：关闭后的这段时间里照常渲染，只是标成 leaving
+  const [shownState, setShownState] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setShownState(true);
+      return;
+    }
+    if (reducedMotion()) {
+      setShownState(false);
+      return;
+    }
+    const timer = setTimeout(() => setShownState(false), PANEL_OUT_MS);
+    return () => clearTimeout(timer);
+  }, [open]);
+  return { shown: open || shownState, leaving: !open && shownState };
+}
+
+/** 全屏状态只记在本机，按账号分开；存储不可用时就是不全屏。 */
+const fullscreenKey = (userId: number) => `dsh-ee:bot-chat:fullscreen:${userId}`;
+function getFullscreen(userId: number): boolean {
+  try {
+    return localStorage.getItem(fullscreenKey(userId)) === "1";
+  } catch {
+    return false;
+  }
+}
+function saveFullscreen(userId: number, on: boolean) {
+  try {
+    if (on) localStorage.setItem(fullscreenKey(userId), "1");
+    else localStorage.removeItem(fullscreenKey(userId));
+  } catch {
+    // 隐私模式等存不进去：只是刷新后不再保持全屏
+  }
+}
 
 /** 预览用：把 Markdown 压成一行纯文字。 */
 function plainText(markdown: string): string {
@@ -214,7 +223,7 @@ function dailyLocalTime(cron: string, lang: string): string | null {
 // ---------- 对话里的一轮 ----------
 
 /** 成功回复生成的文件：员工点了才读列表，点了文件名才下载。 */
-function TurnFiles({ taskId }: { taskId: ChatId }) {
+function TurnFiles({ taskId, onPreview }: { taskId: ChatId; onPreview: (file: PreviewFile) => void }) {
   const { t } = useTranslation();
   const alive = useAlive();
   const [state, setState] = useState<{ status: "idle" | "loading" | "ready" | "error"; files: ChatArtifact[]; error: ChatError | null }>({
@@ -243,15 +252,24 @@ function TurnFiles({ taskId }: { taskId: ChatId }) {
         <div className="mb-1.5 text-xs font-medium text-neutral-500">{t("botChat.files.title")}</div>
         <ul className="flex flex-col gap-1.5">
           {state.files.map((file) => (
-            <li key={String(file.id)} className="min-w-0">
+            <li key={String(file.id)} className="bc-rise flex max-w-full min-w-0 items-stretch">
+              <button
+                type="button"
+                onClick={() => onPreview({ name: file.name, url: chatApi.artifactUrl(taskId, file.id) })}
+                aria-label={t("botChat.files.preview", { name: file.name })}
+                className="inline-flex min-w-0 items-center gap-2 rounded-l-lg border border-neutral-200 bg-card px-3 py-1.5 text-left text-[13px] font-medium text-neutral-800 shadow-control transition-colors hover:border-neutral-300 hover:bg-neutral-50 dark:border-white/10 dark:hover:border-white/20"
+              >
+                <FileText size={14} aria-hidden className="shrink-0 text-neutral-500" />
+                <span className="min-w-0 break-all">{file.name}</span>
+              </button>
               <a
                 href={chatApi.artifactUrl(taskId, file.id)}
-                download={file.name}
+                download={baseName(file.name)}
                 aria-label={t("botChat.files.download", { name: file.name })}
-                className="inline-flex max-w-full items-center gap-2 rounded-lg border border-neutral-200 bg-card px-3 py-1.5 text-[13px] font-medium text-neutral-800 shadow-control transition-colors hover:border-neutral-300 hover:bg-neutral-50 dark:border-white/10 dark:hover:border-white/20"
+                title={t("botChat.files.download", { name: file.name })}
+                className="-ml-px inline-flex shrink-0 items-center rounded-r-lg border border-neutral-200 bg-card px-2.5 text-neutral-500 shadow-control transition-colors hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-900 dark:border-white/10 dark:hover:border-white/20"
               >
-                <Download size={14} aria-hidden className="shrink-0 text-neutral-500" />
-                <span className="min-w-0 break-all">{file.name}</span>
+                <Download size={14} aria-hidden />
               </a>
             </li>
           ))}
@@ -355,12 +373,14 @@ function Turn({
   turn,
   bot,
   onReuse,
+  onPreview,
   approvals = [],
   onDecided,
 }: {
   turn: ChatTurn;
   bot: ChatBot;
   onReuse?: (content: string) => void;
+  onPreview: (file: PreviewFile) => void;
   approvals?: ChatApproval[];
   onDecided?: (id: ChatId) => void;
 }) {
@@ -368,7 +388,7 @@ function Turn({
   const pending = isPendingTurn(turn);
   const stopped = turn.status === "failed" || turn.status === "canceled";
   return (
-    <li className="min-w-0" data-turn={String(turn.id)}>
+    <li className="bc-rise min-w-0" data-turn={String(turn.id)}>
       <div className="flex flex-col items-end">
         <span className="sr-only">{t("botChat.thread.you")}</span>
         <div className="max-w-[88%] rounded-2xl rounded-br-md bg-neutral-100 px-4 py-2.5 text-sm leading-6 break-words whitespace-pre-wrap text-neutral-900 [overflow-wrap:anywhere] sm:max-w-[80%]">
@@ -379,8 +399,9 @@ function Turn({
         </time>
       </div>
       <div className="mt-3 flex min-w-0 gap-2.5 sm:gap-3">
-        <DotFace seed={bot.id} size={28} />
-        <div className="min-w-0 flex-1 pt-0.5 text-sm leading-6 text-neutral-800">
+        <BotWhale seed={bot.id} size={28} active={pending} />
+        {/* key 跟着状态走：排队 → 处理中 → 完成时淡入新内容，而不是生硬地换掉 */}
+        <div key={turn.status} className="bc-fade min-w-0 flex-1 pt-0.5 text-sm leading-6 text-neutral-800">
           <span className="sr-only">{bot.name}</span>
           {pending && (
             <div role="status" className="flex items-center gap-2.5 text-sm text-neutral-500">
@@ -392,7 +413,7 @@ function Turn({
             approvals.map((a) => <ApprovalCard key={String(a.id)} approval={a} bot={bot} onDecided={(id) => onDecided?.(id)} />)}
           {turn.status === "succeeded" &&
             (turn.summary.trim() ? <ChatMarkdown markdown={turn.summary} /> : <p className="text-sm text-neutral-500">{t("botChat.reply.noText")}</p>)}
-          {turn.status === "succeeded" && <TurnFiles taskId={turn.id} />}
+          {turn.status === "succeeded" && <TurnFiles taskId={turn.id} onPreview={onPreview} />}
           {stopped && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <span className={cx("inline-flex items-start gap-1.5", turn.status === "failed" ? "text-red-600 dark:text-red-400" : "text-neutral-500")}>
@@ -418,6 +439,137 @@ function Turn({
 
 // ---------- 右栏：机器人资料 ----------
 
+/**
+ * 机器人自己的云电脑：显示真实状态（工作中 / 唤醒中 / 运行中 / 正在休眠 / 休眠中 / 未开机）、磁盘用量，
+ * 可以手动休眠或重置。后端不支持常驻（或是旧后端）时按“每轮新开”显示，不给操作按钮。
+ */
+function ComputerCard({
+  botId,
+  running,
+  computer,
+  onChanged,
+}: {
+  botId: ChatId;
+  running: boolean;
+  computer: ChatComputer | null;
+  onChanged: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const confirm = useConfirm();
+  const [pending, setPending] = useState<"hibernate" | "reset" | null>(null);
+  const [error, setError] = useState("");
+  const k = "botChat.profile.activity.computer";
+
+  let label: string;
+  let desc: string;
+  let dot = "bg-neutral-300 dark:bg-white/25";
+  let pulse = false;
+  if (!computer) {
+    // 旧后端：只知道有没有任务在跑。
+    label = t(running ? "botChat.profile.activity.running" : "botChat.profile.activity.asleep");
+    desc = t(running ? "botChat.profile.activity.runningDesc" : "botChat.profile.activity.asleepDesc");
+    if (running) dot = "bg-emerald-500";
+  } else if (!computer.persistent) {
+    label = running ? t(`${k}.working`) : t(`${k}.ephemeral`);
+    desc = t(`${k}.ephemeralDesc`);
+    if (running) dot = "bg-emerald-500";
+  } else if (computer.state === "waking") {
+    [label, desc, dot, pulse] = [t(`${k}.waking`), t(`${k}.wakingDesc`), "bg-amber-500", true];
+  } else if (computer.state === "hibernating") {
+    [label, desc, dot, pulse] = [t(`${k}.hibernating`), t(`${k}.hibernatingDesc`), "bg-amber-500", true];
+  } else if (computer.busy && computer.state === "running") {
+    [label, desc, dot, pulse] = [t(`${k}.working`), t(`${k}.workingDesc`), "bg-emerald-500", true];
+  } else if (computer.state === "running") {
+    label = t(`${k}.running`);
+    desc = t(`${k}.runningDesc`, { minutes: Math.max(1, Math.round(computer.idle_timeout_seconds / 60)) });
+    dot = "bg-emerald-500";
+  } else if (computer.state === "hibernated") {
+    [label, desc, dot] = [t(`${k}.hibernated`), t(`${k}.hibernatedDesc`), "bg-sky-500"];
+  } else {
+    [label, desc] = [t(`${k}.none`), t(`${k}.noneDesc`)];
+  }
+
+  const persistent = Boolean(computer?.persistent);
+  const exists = persistent && computer != null && computer.state !== "none";
+  const idle = persistent && computer != null && !computer.busy && !running && pending == null;
+  const overLimit = exists && computer.disk_limit_bytes > 0 && computer.disk_bytes > computer.disk_limit_bytes;
+  const ratio = exists && computer.disk_limit_bytes > 0 ? Math.min(1, computer.disk_bytes / computer.disk_limit_bytes) : 0;
+
+  const act = async (action: "hibernate" | "reset") => {
+    if (action === "reset" && !(await confirm({ kind: "reset", description: t(`${k}.resetConfirm`) }))) return;
+    setPending(action);
+    setError("");
+    try {
+      await chatApi.computer(botId, action);
+    } catch (err) {
+      setError(t(`${k}.actionFailed`, { reason: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setPending(null);
+      onChanged();
+    }
+  };
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-computer="" data-computer-state={computer?.state ?? ""}>
+      <div className="flex items-start gap-2.5">
+        <Monitor size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.computerTitle")}</h3>
+            <span role="status" className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-700">
+              <span aria-hidden className={cx("h-2 w-2 rounded-full", dot, pulse && "animate-pulse")} />
+              {label}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">{desc}</p>
+          {exists && (
+            <div className="mt-2.5 space-y-1.5">
+              <div className="flex items-center justify-between gap-2 text-xs text-neutral-600">
+                <span>{t(`${k}.disk`, { used: formatBytes(computer.disk_bytes, lang), limit: formatBytes(computer.disk_limit_bytes, lang) })}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-white/10" aria-hidden>
+                <div className={cx("h-full rounded-full", overLimit ? "bg-red-500" : "bg-neutral-400 dark:bg-white/40")} style={{ width: `${String(Math.round(ratio * 100))}%` }} />
+              </div>
+              {computer.last_used_at && (
+                <p className="text-xs text-neutral-500">
+                  {t(`${k}.lastUsed`, { time: formatDateTime(computer.last_used_at, lang) })}
+                </p>
+              )}
+            </div>
+          )}
+          {overLimit && (
+            <p role="alert" className="mt-2 text-xs leading-5 text-red-600">
+              {t(`${k}.diskOver`)}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mt-2 text-xs leading-5 text-red-600">
+              {error}
+            </p>
+          )}
+          {exists && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!idle || computer.state !== "running"}
+                onClick={() => void act("hibernate")}
+                data-computer-action="hibernate"
+              >
+                {pending === "hibernate" ? t(`${k}.hibernating_`) : t(`${k}.hibernate`)}
+              </Button>
+              <Button type="button" variant="secondary" size="sm" disabled={!idle} onClick={() => void act("reset")} data-computer-action="reset">
+                {pending === "reset" ? t(`${k}.resetting`) : t(`${k}.reset`)}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 type ProfileTab = "activity" | "library";
 const PROFILE_TABS: ProfileTab[] = ["activity", "library"];
 
@@ -426,18 +578,23 @@ function ProfilePane({
   bot,
   state,
   open,
+  replying,
   closeRef,
   onClose,
   onRetry,
+  onPreview,
 }: {
   id: string;
   bot: ChatBot;
   state: ProfileState | undefined;
   open: boolean;
+  replying: boolean;
   closeRef: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onRetry: () => void;
+  onPreview: (file: PreviewFile) => void;
 }) {
+  const { shown, leaving } = usePresence(open);
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const [tab, setTab] = useState<ProfileTab>("activity");
@@ -459,9 +616,14 @@ function ProfilePane({
       id={id}
       aria-label={t("botChat.profile.label")}
       data-bot-profile=""
+      // 收起时退场动画播放期间已经不可交互，也不在无障碍树里
+      aria-hidden={leaving || undefined}
+      inert={leaving || undefined}
       className={cx(
         "absolute inset-0 z-20 min-h-0 flex-col bg-card xl:static xl:z-auto xl:w-72 xl:shrink-0 xl:border-l xl:border-neutral-200 dark:xl:border-white/10",
-        open ? "flex" : "hidden",
+        shown ? "flex" : "hidden",
+        open && "bc-panel-in",
+        leaving && "bc-panel-out",
       )}
     >
       <div className="flex justify-end px-3 pt-3">
@@ -477,7 +639,7 @@ function ProfilePane({
         </button>
       </div>
       <div className="flex flex-col items-center px-5 pb-4 text-center">
-        <DotFace seed={bot.id} size={96} />
+        <BotWhale key={String(bot.id)} seed={bot.id} size={96} active={replying} className="bc-pop" />
         <h2 className="mt-3 max-w-full text-lg leading-7 font-bold tracking-[-0.01em] break-words text-neutral-900">{bot.name}</h2>
       </div>
       <div role="tablist" aria-label={t("botChat.profile.label")} className={cx(tabListCls, "justify-center px-5 dark:border-white/10")}>
@@ -559,52 +721,55 @@ function ProfilePane({
                     {t("botChat.profile.activity.readonly")}
                   </p>
                 </section>
-                <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-computer="">
-                  <div className="flex items-start gap-2.5">
-                    <Monitor size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.computerTitle")}</h3>
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-700">
-                          <span aria-hidden className={cx("h-2 w-2 rounded-full", data.running ? "bg-emerald-500" : "bg-neutral-300 dark:bg-white/25")} />
-                          {t(data.running ? "botChat.profile.activity.running" : "botChat.profile.activity.asleep")}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs leading-5 text-neutral-500">
-                        {t(data.running ? "botChat.profile.activity.runningDesc" : "botChat.profile.activity.asleepDesc")}
-                      </p>
-                    </div>
-                  </div>
-                </section>
+                <ComputerCard key={String(bot.id)} botId={bot.id} running={data.running} computer={data.computer ?? null} onChanged={onRetry} />
               </div>
             )}
-            {tab === "library" &&
-              (data.artifacts.length ? (
-                <ul className="flex flex-col gap-2">
-                  {data.artifacts.map((file) => (
-                    <li key={`${String(file.task_id)}:${String(file.id)}`} className="min-w-0">
-                      <a
-                        href={chatApi.artifactUrl(file.task_id, file.id)}
-                        download={file.name}
-                        aria-label={t("botChat.files.download", { name: file.name })}
-                        className="flex min-w-0 items-start gap-2.5 rounded-lg border border-neutral-200 bg-card px-3 py-2.5 shadow-control transition-colors hover:border-neutral-300 hover:bg-neutral-50 dark:border-white/10 dark:hover:border-white/20"
-                      >
-                        <FileText size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-[13px] font-medium break-all text-neutral-800">{file.name}</span>
-                          <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-neutral-500">
-                            {typeof file.size === "number" && <span>{formatBytes(file.size, lang)}</span>}
-                            {file.created_at && <time dateTime={file.created_at}>{formatDateTime(file.created_at, lang)}</time>}
-                          </span>
-                        </span>
-                        <Download size={14} aria-hidden className="mt-0.5 shrink-0 text-neutral-400" />
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="py-8 text-center text-[13px] leading-5 text-neutral-500">{t("botChat.profile.library.empty")}</p>
-              ))}
+            {tab === "library" && (
+              <>
+                <p className="mb-3 text-xs leading-5 text-neutral-500">{t("botChat.profile.library.hint")}</p>
+                {data.artifacts.length ? (
+                  <ul className="flex flex-col gap-2" data-profile-library="">
+                    {data.artifacts.map((file) => {
+                      const url = chatApi.artifactUrl(file.task_id, file.id);
+                      return (
+                        <li
+                          key={`${String(file.task_id)}:${String(file.id)}`}
+                          className="bc-rise flex min-w-0 items-stretch rounded-lg border border-neutral-200 bg-card shadow-control transition-colors hover:border-neutral-300 dark:border-white/10 dark:hover:border-white/20"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => onPreview({ name: file.name, url, size: file.size })}
+                            aria-label={t("botChat.files.preview", { name: file.name })}
+                            className="flex min-w-0 flex-1 items-start gap-2.5 rounded-l-lg px-3 py-2.5 text-left transition-colors hover:bg-neutral-50"
+                          >
+                            <FileText size={16} aria-hidden className="mt-0.5 shrink-0 text-brand-500" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[13px] font-medium break-all text-neutral-800">{file.name}</span>
+                              <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-neutral-500">
+                                <span>{t(file.source === "task" ? "botChat.profile.library.fromTask" : "botChat.profile.library.fromChat")}</span>
+                                {typeof file.size === "number" && <span>{formatBytes(file.size, lang)}</span>}
+                                {file.created_at && <time dateTime={file.created_at}>{formatDateTime(file.created_at, lang)}</time>}
+                              </span>
+                            </span>
+                          </button>
+                          <a
+                            href={url}
+                            download={baseName(file.name)}
+                            aria-label={t("botChat.files.download", { name: file.name })}
+                            title={t("botChat.files.download", { name: file.name })}
+                            className="flex shrink-0 items-center rounded-r-lg border-l border-neutral-200 px-2.5 text-neutral-400 transition-colors hover:bg-neutral-50 hover:text-neutral-900 dark:border-white/10"
+                          >
+                            <Download size={14} aria-hidden />
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="py-8 text-center text-[13px] leading-5 text-neutral-500">{t("botChat.profile.library.empty")}</p>
+                )}
+              </>
+            )}
           </>
         )}
       </div>
@@ -667,6 +832,20 @@ function Workspace({
   selKeyRef.current = selKey;
 
   const [listOpen, setListOpen] = useState(false);
+  const [preview, setPreview] = useState<PreviewFile | null>(null);
+  // 全屏：盖住系统侧栏和顶栏，只留机器人列表、对话和资料；刷新后保持（本机、按账号）
+  const [fullscreen, setFullscreen] = useState(() => getFullscreen(userId));
+  useEffect(() => saveFullscreen(userId, fullscreen), [userId, fullscreen]);
+  useEffect(() => {
+    if (!fullscreen) return;
+    // 后面的页面不再跟着滚动
+    const root = document.documentElement;
+    const prev = root.style.overflow;
+    root.style.overflow = "hidden";
+    return () => {
+      root.style.overflow = prev;
+    };
+  }, [fullscreen]);
   const [profileOpen, setProfileOpen] = useState(() => isWide(PROFILE_STATIC));
   const profileOpenRef = useRef(profileOpen);
   profileOpenRef.current = profileOpen;
@@ -1047,20 +1226,22 @@ function Workspace({
 
   // Esc 只关浮层；宽屏上常驻的栏不受影响（输入法里按 Esc 也不该把它关掉）
   useEffect(() => {
-    if (!listOpen && !profileOpen) return;
+    if (!listOpen && !profileOpen && !fullscreen) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== "Escape" || e.isComposing) return;
+      if (e.key !== "Escape" || e.isComposing || e.defaultPrevented) return;
       if (listOpen && !isWide(LIST_STATIC)) {
         setListOpen(false);
         listOpenRef.current?.focus();
       } else if (profileOpen && !isWide(PROFILE_STATIC)) {
         setProfileOpen(false);
         pillRef.current?.focus();
+      } else if (fullscreen && !(e.target instanceof HTMLTextAreaElement) && !document.querySelector("[data-file-preview]")) {
+        setFullscreen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [listOpen, profileOpen]);
+  }, [listOpen, profileOpen, fullscreen]);
 
   // ---------- 输入与发送 ----------
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1213,7 +1394,17 @@ function Workspace({
   let prevDay = "";
 
   return (
-    <div className="relative flex h-[calc(100dvh-8rem)] min-h-[30rem] overflow-hidden rounded-xl border border-neutral-200 bg-card shadow-card lg:h-[calc(100dvh-6.5rem)] dark:border-white/10">
+    <div
+      data-bot-workspace=""
+      data-fullscreen={fullscreen ? "true" : "false"}
+      className={cx(
+        "flex overflow-hidden bg-card",
+        // 只能有一个定位类：fixed 和 relative 同时出现时后者会赢
+        fullscreen
+          ? "fixed inset-0 z-40 h-dvh"
+          : "relative h-[calc(100dvh-8rem)] min-h-[30rem] rounded-xl border border-neutral-200 shadow-card lg:h-[calc(100dvh-6.5rem)] dark:border-white/10",
+      )}
+    >
       {/* 左：机器人列表。宽屏常驻，窄屏盖在对话区上 */}
       <aside
         aria-label={t("botChat.list.label")}
@@ -1223,6 +1414,7 @@ function Workspace({
         )}
       >
         <div className="flex items-center gap-2 px-4 pt-4 pb-1">
+          <WhaleMark size={16} className="shrink-0 text-brand-500" />
           <h1 className="min-w-0 flex-1 truncate text-xs font-semibold tracking-[0.04em] text-neutral-500/80">{t("botChat.title")}</h1>
           <button
             type="button"
@@ -1234,8 +1426,8 @@ function Workspace({
           </button>
         </div>
         {selected && (
-          <div className="flex flex-col items-center px-4 pt-2 pb-4 text-center" data-bot-current="">
-            <DotFace seed={selected.id} size={72} />
+          <div key={selKey} className="bc-pop flex flex-col items-center px-4 pt-2 pb-4 text-center" data-bot-current="">
+            <BotWhale seed={selected.id} size={72} active={replying} />
             <p className="mt-2.5 max-w-full truncate text-base leading-6 font-bold tracking-[-0.01em] text-neutral-900">
               <span className="sr-only">{t("botChat.list.current")}: </span>
               {selected.name}
@@ -1270,7 +1462,7 @@ function Workspace({
                     picked ? "bg-brand-50 dark:bg-brand-500/15" : "hover:bg-neutral-100",
                   )}
                 >
-                  <DotFace seed={b.id} size={36} />
+                  <BotWhale seed={b.id} size={36} active={pendingKeys.split("\n").includes(key)} />
                   <span className="min-w-0 flex-1">
                     <span className={cx("block truncate text-sm font-medium", picked ? "text-brand-600 dark:text-brand-200" : "text-neutral-800")}>{b.name}</span>
                     <span id={descId} className="mt-0.5 block truncate text-xs text-neutral-500">
@@ -1322,7 +1514,7 @@ function Workspace({
                     : "border-neutral-200 bg-card hover:border-neutral-300 hover:bg-neutral-50 dark:border-white/10 dark:hover:border-white/20",
                 )}
               >
-                <DotFace seed={selected.id} size={26} />
+                <BotWhale seed={selected.id} size={26} active={replying} />
                 <span className="min-w-0 truncate">{botName}</span>
                 <ChevronDown size={14} aria-hidden className={cx("shrink-0 text-neutral-500 transition-transform", profileOpen && "-rotate-90")} />
               </button>
@@ -1366,7 +1558,9 @@ function Workspace({
               ))}
             {replying && (
               <span className="hidden sm:inline-flex">
-                <Badge tone="brand">{t("botChat.header.replying")}</Badge>
+                <span className="bc-fade inline-flex">
+                  <Badge tone="brand">{t("botChat.header.replying")}</Badge>
+                </span>
               </span>
             )}
           </div>
@@ -1382,6 +1576,17 @@ function Workspace({
               <RefreshCw size={16} aria-hidden className={cx(thread?.status === "loading" && "animate-spin motion-reduce:animate-none")} />
             </button>
           )}
+          <button
+            type="button"
+            aria-pressed={fullscreen}
+            aria-label={t(fullscreen ? "botChat.header.exitFullscreen" : "botChat.header.fullscreen")}
+            title={t(fullscreen ? "botChat.header.exitFullscreen" : "botChat.header.fullscreen")}
+            onClick={() => setFullscreen((v) => !v)}
+            data-bot-fullscreen=""
+            className="shrink-0 rounded-md p-2 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            {fullscreen ? <Minimize2 size={16} aria-hidden /> : <Maximize2 size={16} aria-hidden />}
+          </button>
         </header>
 
         <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-5 sm:px-6">
@@ -1420,7 +1625,7 @@ function Workspace({
           )}
 
           {selected && ready && thread && (
-            <div className="mx-auto max-w-3xl">
+            <div key={selKey} className="bc-fade mx-auto max-w-3xl">
               {thread.nextBefore != null && (
                 <div className="mb-5 flex flex-col items-center gap-1.5">
                   <Button type="button" variant="ghost" size="sm" disabled={thread.earlierLoading} onClick={() => loadEarlier(selKey)} data-load-earlier="">
@@ -1436,7 +1641,7 @@ function Workspace({
               )}
               {!messages.length && (
                 <div className="flex flex-col items-center px-4 py-10 text-center">
-                  <DotFace seed={selected.id} size={64} />
+                  <BotWhale seed={selected.id} size={64} className="bc-pop" />
                   <p className="mt-4 text-sm leading-6 text-neutral-600">{t("botChat.thread.empty", { bot: botName })}</p>
                 </div>
               )}
@@ -1460,6 +1665,7 @@ function Workspace({
                       turn={m}
                       bot={selected}
                       onReuse={botDisabled ? undefined : reuseContent}
+                      onPreview={setPreview}
                       approvals={approvals.filter((a) => sameId(a.runtime_task_id, m.id))}
                       onDecided={onApprovalDecided}
                     />,
@@ -1567,9 +1773,11 @@ function Workspace({
           bot={selected}
           state={profiles[selKey]}
           open={profileOpen}
+          replying={replying}
           closeRef={profileCloseRef}
           onClose={closeProfile}
           onRetry={() => void loadProfile(selected)}
+          onPreview={setPreview}
         />
       )}
       <FullAccessDialog
@@ -1580,6 +1788,7 @@ function Workspace({
           if (confirmed) void changeMode("full", true);
         }}
       />
+      <FilePreviewDialog file={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }

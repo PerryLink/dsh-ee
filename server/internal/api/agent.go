@@ -96,6 +96,10 @@ var agentExcluded = map[string]string{
 	"POST /api/admin/runtime/bots":                       "云机器人由管理员管理",
 	"PUT /api/admin/runtime/bots/{id}":                   "云机器人由管理员管理",
 	"POST /api/admin/runtime/bots/{id}/run":              "云机器人只能由管理员手动触发",
+	"POST /api/runtime/chat/bots/{id}/computer/{action}": "机器人云电脑的休眠和重置只能由员工本人在浏览器里操作",
+	"GET /api/admin/runtime/computers":                   "机器人云电脑的占用情况只供管理员在后台查看",
+	"POST /api/admin/runtime/computers/{id}/hibernate":   "机器人云电脑只能由管理员在后台手动休眠",
+	"DELETE /api/admin/runtime/computers/{id}":           "回收机器人云电脑会删除其中的文件，只能由管理员在后台操作",
 
 	"POST /api/auth/feishu/event":               "飞书事件使用独立来源验证，不由 Agent 调用",
 	"GET /api/me/feishu-chat":                   "员工界面与接入插件查询机器人状态",

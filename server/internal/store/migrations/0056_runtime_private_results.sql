@@ -1,0 +1,1 @@
+ALTER TABLE runtime_tasks ADD COLUMN private_result BOOL NOT NULL DEFAULT FALSE;
