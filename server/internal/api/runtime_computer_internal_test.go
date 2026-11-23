@@ -889,6 +889,40 @@ func TestComputerOrphanReaperBoundsBlockedProvider(t *testing.T) {
 	}
 }
 
+func TestComputerOrphanReaperMakesProgressPastBackoff(t *testing.T) {
+	f := &fakeComputers{}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true})
+	ctx := context.Background()
+	for i := range 21 {
+		res, err := c.s.store.DB().ExecContext(ctx,
+			`INSERT INTO runtime_computer_orphans (sandbox_id, bot_id, reason, created_at) VALUES (?, 0, 'merge', NOW(3))`,
+			"box-"+strconv.Itoa(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i < 20 {
+			c.s.computerOrphanFailed(id, time.Now().Add(time.Hour))
+		}
+	}
+	c.s.reapComputerOrphans(ctx)
+	c.s.reapComputerOrphans(ctx)
+	if n := computerOrphanCount(t, c); n != 20 || f.removes != 1 {
+		t.Fatalf("later orphan was not reclaimed: remaining=%d, removes=%d", n, f.removes)
+	}
+	for id, r := range c.s.computerOrphanRetries {
+		r.next = time.Time{}
+		c.s.computerOrphanRetries[id] = r
+	}
+	c.s.reapComputerOrphans(ctx)
+	if n := computerOrphanCount(t, c); n != 0 || len(c.s.computerOrphanRetries) != 0 {
+		t.Fatalf("expired orphans were not retried: remaining=%d, retries=%d", n, len(c.s.computerOrphanRetries))
+	}
+}
+
 func computerOrphanCount(t *testing.T, c *computerTest) int {
 	t.Helper()
 	var n int

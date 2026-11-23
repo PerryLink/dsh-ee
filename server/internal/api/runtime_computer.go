@@ -496,16 +496,21 @@ func (s *Server) reapComputerOrphans(ctx context.Context) {
 	if !ok {
 		return
 	}
-	orphans, err := s.store.RuntimeComputerOrphans(ctx, 20)
+	const batchSize = 20
+	orphans, err := s.store.RuntimeComputerOrphans(ctx, s.computerOrphanCursor, batchSize)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.log.Warn("读取待回收的旧云电脑失败", "err", err)
 		}
 		return
 	}
-	now := time.Now()
+	if len(orphans) < batchSize {
+		s.computerOrphanCursor = 0
+	} else {
+		s.computerOrphanCursor = orphans[len(orphans)-1].ID
+	}
 	for _, o := range orphans {
-		if !s.computerOrphanDue(o.ID, now) {
+		if !s.computerOrphanDue(o.ID, time.Now()) {
 			continue
 		}
 		id := o.SandboxID
@@ -518,7 +523,7 @@ func (s *Server) reapComputerOrphans(ctx context.Context) {
 				cancel()
 				if err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
 					s.log.Warn("查找待回收的旧云电脑失败", "err", err)
-					s.computerOrphanFailed(o.ID, now)
+					s.computerOrphanFailed(o.ID, time.Now())
 					continue
 				}
 				id = found
@@ -530,7 +535,7 @@ func (s *Server) reapComputerOrphans(ctx context.Context) {
 			cancel()
 			if err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
 				s.log.Warn("回收旧云电脑失败", "err", err)
-				s.computerOrphanFailed(o.ID, now)
+				s.computerOrphanFailed(o.ID, time.Now())
 				continue
 			}
 		}

@@ -175,6 +175,7 @@ type Server struct {
 	// 旧云电脑回收失败后的退避状态（orphan id → 下次重试时间 / 连续失败次数），见 runtime_computer.go 的
 	// reapComputerOrphans；只由回收器的单个 goroutine 访问。
 	computerOrphanRetries map[int64]computerOrphanRetry
+	computerOrphanCursor  int64
 	store                 *store.Store
 	box                   *secret.Box
 	opts                  Options
