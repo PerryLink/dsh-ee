@@ -222,6 +222,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	sandbox := computer.sandbox
 	workDir, outputDir := runtimeOutputDir, runtimeOutputDir
 	if computer.persistent {
+		task.PrivateResult = true
 		// bwrap only binds the workspace back through its private /tmp mount.
 		workDir, outputDir = runtimeWorkDir, runtimePersistentOutputDir
 		setup, err := sandbox.Exec(ctx, runtime.Command{Args: []string{"rm", "-rf", outputDir}, Timeout: 10 * time.Second})

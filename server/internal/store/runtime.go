@@ -120,15 +120,17 @@ type RuntimeTask struct {
 	// 网页对话轮次才有；不进公开 DTO。对话轮次的 BotID 为空，机器人记在对话上。
 	ChatConversationID *int64 `json:"-"`
 	ChatContent        string `json:"-"`
+	// 与常驻工作目录接触过的任务结果只对所有者开放。
+	PrivateResult bool `json:"-"`
 }
 
 const runtimeTaskColumns = `id, owner_id, run_as_id, bot_id, prompt, status, attempts, COALESCE(idempotency_key,''), timeout_seconds,
 	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,'')`
 
 // runtimeTaskOwned 是任务读取的归属条件（两个参数都是 ownerID）：所有者能读自己的全部任务；
-// ownerID=0 的管理员通配只覆盖普通任务，员工网页对话的轮次、回复和产物不对管理员开放。
+// ownerID=0 的管理员通配不包含网页对话和使用过常驻工作目录的任务。
 func runtimeTaskOwned(prefix string) string {
-	return `(` + prefix + `owner_id=? OR (?=0 AND ` + prefix + `chat_conversation_id IS NULL))`
+	return `(` + prefix + `owner_id=? OR (?=0 AND ` + prefix + `chat_conversation_id IS NULL AND NOT ` + prefix + `private_result))`
 }
 
 func scanRuntimeTask(row interface{ Scan(...any) error }) (*RuntimeTask, error) {
@@ -236,7 +238,7 @@ func (s *Store) RuntimeTask(ctx context.Context, id, ownerID int64) (*RuntimeTas
 
 func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-		WHERE (?=0 OR owner_id=?) AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
+		WHERE `+runtimeTaskOwned("")+` AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -381,8 +383,8 @@ func (s *Store) FinishRuntimeTask(ctx context.Context, task *RuntimeTask, status
 	if status != RuntimeQueued {
 		finished = &t
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=NULL
-		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, task.ID, RuntimeRunning, task.Attempts, t)
+	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=NULL, private_result=private_result OR ?
+		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, task.PrivateResult, task.ID, RuntimeRunning, task.Attempts, t)
 	if err := runtimeAffected(res, err); err != nil {
 		return err
 	}

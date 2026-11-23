@@ -448,7 +448,7 @@ func (s *Server) runtimeComputerError(w http.ResponseWriter, r *http.Request, er
 
 // handleRuntimeChatComputer 是员工本人对自己机器人电脑的手动操作：hibernate（立即休眠）或 reset（删除重建）。
 func (s *Server) handleRuntimeChatComputer(w http.ResponseWriter, r *http.Request) {
-	if !s.runtimeAvailable(w) {
+	if !allowRuntimeComputerMutation(w, r) || !s.runtimeAvailable(w) {
 		return
 	}
 	action := r.PathValue("action")
@@ -517,7 +517,7 @@ func (s *Server) handleRuntimeComputers(w http.ResponseWriter, r *http.Request) 
 
 // handleRuntimeComputerAdmin 是管理员对任一机器人电脑的操作：POST .../hibernate 休眠，DELETE 回收（删除整台电脑）。
 func (s *Server) handleRuntimeComputerAdmin(w http.ResponseWriter, r *http.Request) {
-	if !s.runtimeAvailable(w) {
+	if !allowRuntimeComputerMutation(w, r) || !s.runtimeAvailable(w) {
 		return
 	}
 	action := computerReset
@@ -544,4 +544,14 @@ func (s *Server) handleRuntimeComputerAdmin(w http.ResponseWriter, r *http.Reque
 	}
 	s.audit(r, event, strconv.FormatInt(botID, 10), nil)
 	writeJSON(w, http.StatusOK, s.computerView(c))
+}
+
+var runtimeComputerOrigin http.CrossOriginProtection
+
+func allowRuntimeComputerMutation(w http.ResponseWriter, r *http.Request) bool {
+	if err := runtimeComputerOrigin.Check(r); err != nil {
+		writeErrCode(w, http.StatusForbidden, codeAuthForbidden, nil, "云电脑操作不允许跨来源请求")
+		return false
+	}
+	return true
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -276,6 +277,19 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 	if err != nil || len(files) != 1 || files[0].Name != "reports/summary.txt" {
 		t.Fatalf("first run artifacts = %+v, %v", files, err)
 	}
+	taskPath := fmt.Sprintf("/api/runtime/tasks/%d", first.ID)
+	for _, suffix := range []string{"", "/events", "/artifacts", fmt.Sprintf("/artifacts/%d", files[0].ID)} {
+		endpoint := taskPath + suffix
+		if rec := c.admin("GET", endpoint, ""); rec.Code != http.StatusNotFound {
+			t.Errorf("admin can access persistent result %s: HTTP %d", endpoint, rec.Code)
+		}
+		if rec := c.owner("GET", endpoint, ""); rec.Code != http.StatusOK {
+			t.Errorf("owner cannot access persistent result %s: HTTP %d", endpoint, rec.Code)
+		}
+	}
+	if rec := c.admin("GET", "/api/runtime/tasks", ""); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("admin task list includes persistent result: HTTP %d %s", rec.Code, rec.Body.String())
+	}
 	if f.creates != 1 || f.ephemeral != 0 || len(f.boxes) != 1 {
 		t.Fatalf("first run should create one persistent computer: creates=%d ephemeral=%d", f.creates, f.ephemeral)
 	}
@@ -325,6 +339,21 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 
 	// 手动休眠，再重置：重置后文件没了，下一轮是新电脑。
 	base := "/api/runtime/chat/bots/" + strconv.FormatInt(c.bot.ID, 10) + "/computer/"
+	cookie := secret.Token()
+	if err := c.s.store.CreateSession(context.Background(), secret.Hash(cookie), c.employee, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	for _, fetchSite := range []string{"same-site", ""} {
+		req := httptest.NewRequest("POST", "https://app.example"+base+"reset", nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+		req.Header.Set("Origin", "https://other.example")
+		req.Header.Set("Sec-Fetch-Site", fetchSite)
+		rec := httptest.NewRecorder()
+		c.s.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden || len(f.boxes) != 1 {
+			t.Fatalf("cross-origin reset (%q): HTTP %d, %d computers", fetchSite, rec.Code, len(f.boxes))
+		}
+	}
 	if rec := c.owner("POST", base+"hibernate", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"hibernated"`) {
 		t.Fatalf("manual hibernate: HTTP %d %s", rec.Code, rec.Body.String())
 	}
