@@ -40,6 +40,8 @@ export const botChat = {
     replying: "Replying",
     with: "Chat with {{bot}}",
     profile: "{{bot}} profile",
+    fullscreen: "Full screen",
+    exitFullscreen: "Exit full screen",
   },
   thread: {
     label: "Transcript",
@@ -67,6 +69,18 @@ export const botChat = {
     failed: "Couldn't load the file list: {{reason}}",
     title: "Generated files",
     download: "Download {{name}}",
+    preview: "Preview {{name}}",
+  },
+  filePreview: {
+    title: "File preview",
+    loading: "Reading the file…",
+    failed: "Couldn't read the file: {{reason}}",
+    unsupported: "This kind of file can't be previewed in the browser. Download it to open it.",
+    tooLarge: "This file is too large to preview in the browser. Download it to open it.",
+    download: "Download",
+    close: "Close preview",
+    source: "Source",
+    rendered: "Formatted",
   },
   composer: {
     label: "Message",
@@ -137,6 +151,9 @@ export const botChat = {
     },
     library: {
       empty: "This bot hasn't generated any files yet.",
+      hint: "Files generated in chat and by scheduled runs appear here. Only you can see them.",
+      fromChat: "Chat",
+      fromTask: "Scheduled run",
     },
   },
   delegation: {

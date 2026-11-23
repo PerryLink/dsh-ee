@@ -88,6 +88,8 @@ export interface ChatArtifact {
 /** 机器人资料里的文件：带所属云任务，下载走 artifactUrl(task_id, id)。 */
 export interface ChatBotArtifact extends ChatArtifact {
   task_id: ChatId;
+  /** 来自对话轮次（chat）还是定时 / 手动任务（task）。 */
+  source?: "chat" | "task" | null;
   size?: number | null;
   created_at?: string | null;
 }

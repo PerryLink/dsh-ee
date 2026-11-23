@@ -26,12 +26,16 @@ func TestLiveOpenSandboxHibernateAndWake(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	box, err := p.CreatePersistent(ctx, SandboxSpec{Image: image})
+	creationKey := NewPersistentCreationKey()
+	box, err := p.CreatePersistent(ctx, SandboxSpec{Image: image, CreationKey: creationKey})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := box.ID()
 	t.Cleanup(func() { _ = p.Remove(context.Background(), id) })
+	if found, err := p.FindPersistent(ctx, creationKey); err != nil || found != id {
+		t.Fatalf("find sandbox by creation key: %q, %v", found, err)
+	}
 	run := func(s Sandbox, args ...string) Result {
 		t.Helper()
 		r, err := s.Exec(ctx, Command{Args: args, Timeout: 30 * time.Second})

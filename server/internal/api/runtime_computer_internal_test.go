@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,28 +26,35 @@ import (
 // fakeComputers 是一个支持休眠 / 唤醒的假 provider：每台电脑有自己的文件系统，休眠中的电脑拒绝执行命令，
 // 所以文件能在下一轮读到，只可能是因为同一台电脑被唤醒了。
 type fakeComputers struct {
-	mu         sync.Mutex
-	boxes      map[string]*fakeBox
-	next       int
-	creates    int
-	ephemeral  int
-	wakes      int
-	hibernates int
-	disk       int64 // du 报告的 KB
-	diskQuota  int64
-	tokens     []string
-	dirs       []string           // 每轮 DSH 的当前目录和 DSH_HOME（"dir|home"）
-	check      func(token string) // 每轮 DSH 运行时检查凭证
+	mu                 sync.Mutex
+	boxes              map[string]*fakeBox
+	next               int
+	creates            int
+	ephemeral          int
+	wakes              int
+	hibernates         int
+	disk               int64 // du 报告的 KB
+	diskQuota          int64
+	tokens             []string
+	dirs               []string           // 每轮 DSH 的当前目录和 DSH_HOME（"dir|home"）
+	check              func(token string) // 每轮 DSH 运行时检查凭证
+	loseCreateResponse bool
+	hideCreatedBox     bool
+	createContext      context.Context
+	awaitCreateTimeout bool
+	awaitLookupTimeout bool
+	allowedHost        string
 	// onRun 在模拟 DSH 运行时调用（凭证有效、任务在运行）；handled 为真时用它的输出代替默认行为。
 	onRun func(token, dir, prompt string) (stdout string, handled bool)
 }
 
 type fakeBox struct {
-	owner  *fakeComputers
-	id     string
-	paused bool
-	files  map[string]string
-	env    map[string]string
+	owner       *fakeComputers
+	id          string
+	paused      bool
+	files       map[string]string
+	env         map[string]string
+	creationKey string
 }
 
 func (f *fakeComputers) newBox(env map[string]string) *fakeBox {
@@ -66,12 +74,58 @@ func (f *fakeComputers) Create(_ context.Context, spec runtime.SandboxSpec) (run
 	return f.newBox(spec.Env), nil
 }
 
-func (f *fakeComputers) CreatePersistent(_ context.Context, spec runtime.SandboxSpec) (runtime.PersistentSandbox, error) {
+func (f *fakeComputers) CreatePersistent(ctx context.Context, spec runtime.SandboxSpec) (runtime.PersistentSandbox, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.creates++
 	f.diskQuota = spec.DiskQuotaBytes
-	return f.newBox(spec.Env), nil
+	b := f.newBox(spec.Env)
+	b.creationKey = spec.CreationKey
+	f.allowedHost = spec.AllowedHosts[0]
+	if f.loseCreateResponse {
+		f.createContext = ctx
+		if f.awaitCreateTimeout {
+			<-ctx.Done()
+		}
+		return nil, errors.New("lost create response")
+	}
+	return b, nil
+}
+
+func (f *fakeComputers) FindPersistent(_ context.Context, key string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hideCreatedBox {
+		return "", runtime.ErrSandboxGone
+	}
+	if f.awaitLookupTimeout {
+		<-f.createContext.Done()
+	}
+	for _, b := range f.boxes {
+		if b.creationKey == key {
+			return b.id, nil
+		}
+	}
+	return "", runtime.ErrSandboxGone
+}
+
+func (f *fakeComputers) ReplaceAllowedHosts(_ context.Context, id string, hosts []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.boxes[id]; !ok {
+		return runtime.ErrSandboxGone
+	}
+	f.allowedHost = hosts[0]
+	return nil
+}
+
+func (f *fakeComputers) CheckPersistent(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.boxes[id]; !ok {
+		return runtime.ErrSandboxGone
+	}
+	return nil
 }
 
 func (f *fakeComputers) Wake(_ context.Context, id string) (runtime.PersistentSandbox, error) {
@@ -165,6 +219,7 @@ func (b *fakeBox) Exec(_ context.Context, c runtime.Command) (runtime.Result, er
 	case strings.Contains(prompt, "WRITE:"):
 		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "WRITE:")+6:], "\n")
 		b.files[note] = strings.TrimSpace(text)
+		b.files[c.Env["DSH_EE_OUTPUT_DIR"]+"/reports/summary.txt"] = "report"
 		return runtime.Result{Stdout: "saved"}, nil
 	case strings.Contains(prompt, "READ"):
 		if v, ok := b.files[note]; ok {
@@ -180,7 +235,15 @@ func (b *fakeBox) WriteFile(_ context.Context, name string, data []byte) error {
 	return nil
 }
 
-func (b *fakeBox) ListFiles(context.Context, string) ([]runtime.File, error) { return nil, nil }
+func (b *fakeBox) ListFiles(_ context.Context, dir string) ([]runtime.File, error) {
+	var files []runtime.File
+	for name, data := range b.files {
+		if strings.HasPrefix(name, dir+"/") {
+			files = append(files, runtime.File{Path: name, Type: "file", Size: int64(len(data))})
+		}
+	}
+	return files, nil
+}
 
 func (b *fakeBox) ReadFile(_ context.Context, name string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(b.files[name])), nil
@@ -294,6 +357,25 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 	if first.Status != store.RuntimeSucceeded || first.Summary != "saved" {
 		t.Fatalf("first run: %+v", first)
 	}
+	files, err := c.s.store.RuntimeArtifacts(context.Background(), first.ID, c.employee)
+	if err != nil || len(files) != 1 || files[0].Name != "reports/summary.txt" {
+		t.Fatalf("first run artifacts = %+v, %v", files, err)
+	}
+	taskPath := fmt.Sprintf("/api/runtime/tasks/%d", first.ID)
+	for _, suffix := range []string{"", "/events", "/artifacts", fmt.Sprintf("/artifacts/%d", files[0].ID)} {
+		endpoint := taskPath + suffix
+		if rec := c.admin("GET", endpoint, ""); rec.Code != http.StatusNotFound {
+			t.Errorf("admin can access persistent result %s: HTTP %d", endpoint, rec.Code)
+		}
+		if rec := c.owner("GET", endpoint, ""); rec.Code != http.StatusOK {
+			t.Errorf("owner cannot access persistent result %s: HTTP %d", endpoint, rec.Code)
+		}
+	}
+	runs := decodeRuntimeChat[[]store.RuntimeTask](t, "admin status list", c.admin("GET", "/api/runtime/tasks", ""), http.StatusOK)
+	if len(runs) != 1 || runs[0].ID != first.ID || runs[0].Status != store.RuntimeSucceeded ||
+		!runs[0].PrivateResult || runs[0].Summary != "" || runs[0].Error != "" {
+		t.Fatalf("admin task list must show status without private results: %+v", runs)
+	}
 	if f.creates != 1 || f.ephemeral != 0 || len(f.boxes) != 1 {
 		t.Fatalf("first run should create one persistent computer: creates=%d ephemeral=%d", f.creates, f.ephemeral)
 	}
@@ -306,6 +388,9 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 	for _, b := range f.boxes {
 		if len(b.env) != 0 {
 			t.Fatal("persistent computer created with environment variables")
+		}
+		if _, ok := b.files[runtimeBotOutputDir(c.bot.ID)+"/reports/summary.txt"]; ok {
+			t.Fatal("collected deliverables should not count against persistent disk usage")
 		}
 	}
 
@@ -340,6 +425,21 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 
 	// 手动休眠，再重置：重置后文件没了，下一轮是新电脑。
 	base := "/api/runtime/chat/bots/" + strconv.FormatInt(c.bot.ID, 10) + "/computer/"
+	cookie := secret.Token()
+	if err := c.s.store.CreateSession(context.Background(), secret.Hash(cookie), c.employee, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	for _, fetchSite := range []string{"same-site", ""} {
+		req := httptest.NewRequest("POST", "https://app.example"+base+"reset", nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+		req.Header.Set("Origin", "https://other.example")
+		req.Header.Set("Sec-Fetch-Site", fetchSite)
+		rec := httptest.NewRecorder()
+		c.s.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden || len(f.boxes) != 1 {
+			t.Fatalf("cross-origin reset (%q): HTTP %d, %d computers", fetchSite, rec.Code, len(f.boxes))
+		}
+	}
 	if rec := c.owner("POST", base+"hibernate", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"hibernated"`) {
 		t.Fatalf("manual hibernate: HTTP %d %s", rec.Code, rec.Body.String())
 	}
@@ -423,7 +523,7 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	task := &store.RuntimeTask{ID: 123, BotID: &c.bot.ID, OwnerID: c.employee, RunAsID: c.employee, TimeoutSeconds: 300}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	box, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img"})
+	box, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img", AllowedHosts: []string{"gateway.example"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,6 +544,110 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	box.close(false) // Revocation failed: the worker must leave the lease in place.
 	if _, err := c.s.cloudComputerAction(ctx, c.computerID(), computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
 		t.Fatalf("hibernation must wait for the credential to expire: %v", err)
+	}
+}
+
+func TestBotComputerWorkerRetriesLostCreateResponse(t *testing.T) {
+	t.Run("immediate lookup", func(t *testing.T) {
+		testBotComputerWorkerRetriesLostCreate(t, &fakeComputers{loseCreateResponse: true})
+	})
+	t.Run("lookup crosses deadline", func(t *testing.T) {
+		testBotComputerWorkerRetriesLostCreate(t, &fakeComputers{loseCreateResponse: true, awaitLookupTimeout: true})
+	})
+}
+
+func testBotComputerWorkerRetriesLostCreate(t *testing.T, f *fakeComputers) {
+	t.Helper()
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond})
+	ctx := context.Background()
+	b := *c.bot
+	b.Prompt = "WRITE:original computer"
+	task, err := c.s.enqueueCloudBot(ctx, &b, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		claim, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+		if err != nil || claim.ID != task.ID || claim.Attempts != attempt {
+			t.Fatalf("attempt %d: %+v, %v", attempt, claim, err)
+		}
+		if attempt == 1 && f.awaitLookupTimeout {
+			claim.TimeoutSeconds = 1
+		}
+		c.s.runCloudClaim(ctx, claim)
+	}
+	got, err := c.s.store.RuntimeTask(ctx, task.ID, c.employee)
+	if err != nil || got.Status != store.RuntimeSucceeded || got.Attempts != 2 || f.creates != 1 {
+		t.Fatalf("lost response didn't recover in the same task: %+v, %v, creates=%d", got, err, f.creates)
+	}
+}
+
+func TestBotComputerCreateTimeoutIsTerminal(t *testing.T) {
+	f := &fakeComputers{loseCreateResponse: true, awaitCreateTimeout: true}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true})
+	ctx := context.Background()
+	if _, err := c.s.enqueueCloudBot(ctx, c.bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.TimeoutSeconds = 1
+	c.s.runCloudClaim(ctx, task)
+	got, err := c.s.store.RuntimeTask(ctx, task.ID, c.employee)
+	if err != nil || got.Status != store.RuntimeFailed || got.Error != "cloud task timed out" || got.Attempts != 1 {
+		t.Fatalf("a create timeout should stay terminal: %+v, %v", got, err)
+	}
+}
+
+func TestBotComputerDefersAmbiguousCreateRetryUntilLeaseExpires(t *testing.T) {
+	f := &fakeComputers{loseCreateResponse: true, hideCreatedBox: true}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond})
+	ctx := context.Background()
+	b := *c.bot
+	b.Prompt = "READ the note"
+	original, err := c.s.enqueueCloudBot(ctx, &b, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil || task.ID != original.ID {
+		t.Fatalf("initial attempt: %+v, %v", task, err)
+	}
+	c.s.runCloudClaim(ctx, task)
+	pending, err := c.s.store.RuntimeComputerOf(ctx, store.UserComputerOwner(c.employee))
+	if err != nil || pending.SandboxID != "" || pending.CreationKey == "" || !pending.Busy || f.creates != 1 {
+		t.Fatalf("pending create is not recoverable: %+v, %v", pending, err)
+	}
+	if _, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ambiguous create should not block the worker on an immediate retry: %v", err)
+	}
+	f.hideCreatedBox = false
+	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_computers SET lease_until=?, last_used_at=? WHERE id=?`,
+		time.Now().Add(-time.Second), time.Now().Add(-time.Second), c.computerID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_tasks SET lease_until=? WHERE id=?`,
+		time.Now().Add(-time.Second), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, box := range f.boxes {
+		box.files[runtimeBotWorkDir(c.bot.ID)+"/note.txt"] = "original computer"
+	}
+	c.s.reapCloudComputers(ctx)
+	if v := c.profile(); v.State != store.RuntimeComputerHibernated || f.hibernates != 1 {
+		t.Fatalf("reaper did not recover and hibernate the computer: %+v", v)
+	}
+	c.s.opts.Runtime.BaseURL = "https://gateway-next.example"
+	retry, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil || retry.ID != original.ID || retry.Attempts != 2 {
+		t.Fatalf("retry after lease expired: %+v, %v", retry, err)
+	}
+	c.s.runCloudClaim(ctx, retry)
+	if got, err := c.s.store.RuntimeTask(ctx, retry.ID, c.employee); err != nil || got.Summary != "note: original computer" ||
+		f.creates != 1 || f.allowedHost != "gateway-next.example" {
+		t.Fatalf("retry after gateway move: %+v, %v, creates=%d, gateway=%q", got, err, f.creates, f.allowedHost)
 	}
 }
 
@@ -474,6 +678,52 @@ func TestBotComputerDiskLimitAndRetention(t *testing.T) {
 	f.disk = 4
 	if got := c.run("READ"); got.Status != store.RuntimeSucceeded || f.creates != 2 {
 		t.Fatalf("run after reclaim: %+v", got)
+	}
+}
+
+func TestBotComputerReplacesMissingOverLimitSandbox(t *testing.T) {
+	f := &fakeComputers{disk: 4096}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, DiskLimitBytes: 1 << 20})
+	if got := c.run("WRITE:big"); got.Status != store.RuntimeSucceeded {
+		t.Fatalf("first run: %+v", got)
+	}
+	ctx := context.Background()
+	if _, err := c.s.cloudComputerAction(ctx, c.computerID(), computerHibernate, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.run("READ"); got.Status != store.RuntimeFailed || !strings.Contains(got.Error, "disk limit") || f.wakes != 0 {
+		t.Fatalf("existing over-limit sandbox should be blocked without waking: %+v", got)
+	}
+	for id := range f.boxes {
+		_ = f.Remove(ctx, id)
+	}
+	f.disk = 4
+	if got := c.run("READ"); got.Status != store.RuntimeSucceeded || got.Summary != "no note" || f.creates != 2 {
+		t.Fatalf("next run did not replace the missing sandbox: %+v", got)
+	}
+}
+
+func TestBotComputerAdminInventoryPages(t *testing.T) {
+	c := newComputerTest(t, &fakeComputers{}, runtime.ComputerPolicy{Persistent: true})
+	ctx := context.Background()
+	for id := int64(1); id <= 101; id++ {
+		if _, err := c.s.store.DB().ExecContext(ctx, `INSERT INTO runtime_computers (id, owner_kind, owner_department, sandbox_id, state, last_used_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, NOW(3), NOW(3), NOW(3))`, id, store.RuntimeComputerOwnerTeam, "team-"+strconv.FormatInt(id, 10), strconv.FormatInt(id, 10), store.RuntimeComputerHibernated); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type page struct {
+		Computers []runtimeAdminComputer `json:"computers"`
+		Next      string                 `json:"next_before"`
+	}
+	const endpoint = "/api/admin/runtime/computers"
+	first := decodeRuntimeChat[page](t, "inventory first page", c.admin("GET", endpoint, ""), http.StatusOK)
+	if len(first.Computers) != 100 || first.Computers[0].ID != 101 || first.Next != "2" {
+		t.Fatalf("first page: %d computers, next=%q", len(first.Computers), first.Next)
+	}
+	second := decodeRuntimeChat[page](t, "inventory second page", c.admin("GET", endpoint+"?before="+first.Next, ""), http.StatusOK)
+	if len(second.Computers) != 1 || second.Computers[0].ID != 1 || second.Next != "" {
+		t.Fatalf("second page: %+v", second)
 	}
 }
 
@@ -516,18 +766,32 @@ func TestLiveBotComputer(t *testing.T) {
 	}
 	c := newComputerTest(t, provider, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond, DiskLimitBytes: 64 << 20})
 	c.s.opts.Runtime.Image = "alpine:3.22"
-	c.s.opts.Runtime.Command = []string{"sh", "-c", `case "$1" in *WRITE*) echo 'quarter goal 42' > note.txt; echo saved;; *) cat note.txt;; esac`, "sh", "{prompt}"}
+	c.s.opts.Runtime.Command = []string{"sh", "-ec", `test "$DSH_EE_OUTPUT_DIR" = "$PWD/output"
+case "$1" in
+  *WRITE*) echo 'quarter goal 42' > note.txt
+           mkdir -p output/reports
+           echo 'quarterly report' > output/reports/summary.txt
+           echo saved ;;
+  *) test ! -e output/reports/summary.txt
+     cat note.txt ;;
+esac`, "sh", "{prompt}"}
 	t.Cleanup(func() {
 		_, _ = c.s.cloudComputerAction(context.Background(), c.computerID(), computerReset, "test", nil)
 	})
-	if got := c.run("WRITE a note"); got.Status != store.RuntimeSucceeded || got.Summary != "saved" {
-		t.Fatalf("first run: %+v", got)
+	first := c.run("WRITE a note")
+	if first.Status != store.RuntimeSucceeded || first.Summary != "saved" {
+		t.Fatalf("first run: %+v", first)
+	}
+	files, err := c.s.store.RuntimeArtifacts(context.Background(), first.ID, c.employee)
+	if err != nil || len(files) != 1 || files[0].Name != "reports/summary.txt" || files[0].Size != int64(len("quarterly report\n")) {
+		t.Fatalf("first run deliverables: %+v, %v", files, err)
 	}
 	time.Sleep(5 * time.Millisecond)
 	c.s.reapCloudComputers(context.Background())
 	if v := c.profile(); v.State != store.RuntimeComputerHibernated {
 		t.Fatalf("after idle: %+v", v)
 	}
+	c.s.opts.Runtime.BaseURL = "https://gateway-next.example"
 	if got := c.run("READ the note"); got.Status != store.RuntimeSucceeded || got.Summary != "quarter goal 42" {
 		t.Fatalf("second run: %+v", got)
 	}

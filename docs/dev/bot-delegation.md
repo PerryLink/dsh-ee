@@ -28,7 +28,7 @@ lang: zh-CN
 | `/tmp/dsh-ee-work/bots/<机器人 ID>` | 每个机器人自己的工作目录，也是它运行时的当前目录 |
 | `/tmp/dsh-ee-work/shared` | 同一台电脑上所有机器人都能读写的共享目录：机器人 A 写的文件，机器人 B 在这里读到 |
 | `/tmp/dsh-ee-home/bots/<机器人 ID>` | 每个机器人自己的 DSH 主目录（会话、缓存），互不干扰 |
-| `/tmp/dsh-ee-output` | 这一轮的产物，每轮开始时清空，结束时收进文件库 |
+| `/tmp/dsh-ee-work/bots/<机器人 ID>/output` | 这一轮的产物（相对路径 `output/`），每轮开始时清空，结束时收进文件库并从电脑上删掉 |
 
 休眠 / 唤醒、数据库租约、每轮短期凭证、磁盘上限和管理员回收都和以前一样，只是作用在所有者的电脑上。员工在「动态 → 我的电脑」里手动休眠或重置时，影响他的所有机器人；管理员在「系统设置 → 云端常驻机器人」看到每台员工电脑和团队电脑。
 
@@ -43,10 +43,10 @@ lang: zh-CN
 
 ### 从「每个机器人一台」迁移
 
-迁移 `0056_runtime_owner_computers` 把 `runtime_bot_computers` 的记录合并成每个员工一行：
+迁移 `0058_runtime_owner_computers` 把 `runtime_bot_computers` 的记录合并成每个员工一行（保留的那台带上 0057 记下的网关主机名）：
 
 - 每位员工保留**最近使用**的那台电脑（`last_used_at` 最大，并列时机器人 ID 大的），原来的文件留在 `/tmp/dsh-ee-work` 根目录下，这位员工的所有机器人都能读到；
-- 其余几台记进 `runtime_computer_orphans`，回收器在下一次巡检时删掉它们（里面的文件随之删除，审计 `runtime.computer.reclaim`，`reason=merged_per_owner`）；
+- 其余几台记进 `runtime_computer_orphans`，回收器在下一次巡检时删掉它们（里面的文件随之删除，审计 `runtime.computer.reclaim`，`reason=merged_per_owner`）；新建到一半中断、只有 `creation_key` 的记录也进回收队列，回收器先按 `creation_key` 向 OpenSandbox 找到沙箱再删，找不到就是从没建成；
 - 还没有电脑的记录直接丢弃；所有租约清空。
 
 上线前如果某台要被合并掉的电脑里有重要文件，请先让对应机器人把文件写进产物目录收走，或者在迁移前手动复制。

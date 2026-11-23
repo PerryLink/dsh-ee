@@ -71,6 +71,8 @@ type RuntimeComputer struct {
 	BotID        int64      `json:"bot_id,omitempty"`
 	BotName      string     `json:"bot_name,omitempty"`
 	SandboxID    string     `json:"-"`
+	CreationKey  string     `json:"-"`
+	GatewayHost  string     `json:"-"`
 	State        string     `json:"state"`
 	Busy         bool       `json:"busy"`
 	DiskBytes    int64      `json:"disk_bytes"`
@@ -85,7 +87,8 @@ func (c *RuntimeComputer) Owner() RuntimeComputerOwner {
 }
 
 const runtimeComputerColumns = `c.id, c.owner_kind, c.owner_user_id, c.owner_department, COALESCE(u.username,''), c.holder_bot_id, COALESCE(b.name,''),
-	c.sandbox_id, c.state, (c.lease_until IS NOT NULL AND c.lease_until>?), c.disk_bytes, c.last_used_at, c.hibernated_at, c.created_at, c.updated_at`
+	c.sandbox_id, c.creation_key, c.gateway_host, c.state, (c.lease_until IS NOT NULL AND c.lease_until>?), c.disk_bytes,
+	c.last_used_at, c.hibernated_at, c.created_at, c.updated_at`
 
 const runtimeComputerFrom = ` FROM runtime_computers c LEFT JOIN users u ON u.id=c.owner_user_id AND c.owner_kind='user'
 	LEFT JOIN runtime_bots b ON b.id=c.holder_bot_id`
@@ -93,7 +96,7 @@ const runtimeComputerFrom = ` FROM runtime_computers c LEFT JOIN users u ON u.id
 func scanRuntimeComputer(row interface{ Scan(...any) error }) (*RuntimeComputer, error) {
 	var c RuntimeComputer
 	err := row.Scan(&c.ID, &c.OwnerKind, &c.OwnerID, &c.Department, &c.OwnerName, &c.BotID, &c.BotName,
-		&c.SandboxID, &c.State, &c.Busy, &c.DiskBytes, &c.LastUsedAt, &c.HibernatedAt, &c.CreatedAt, &c.UpdatedAt)
+		&c.SandboxID, &c.CreationKey, &c.GatewayHost, &c.State, &c.Busy, &c.DiskBytes, &c.LastUsedAt, &c.HibernatedAt, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -114,10 +117,18 @@ func (s *Store) RuntimeComputer(ctx context.Context, id int64) (*RuntimeComputer
 	return scanRuntimeComputer(s.db.QueryRowContext(ctx, `SELECT `+runtimeComputerColumns+runtimeComputerFrom+` WHERE c.id=?`, now(), id))
 }
 
-// RuntimeComputers 列出所有有电脑的记录（管理员查看与回收用），最近使用的在前。
-func (s *Store) RuntimeComputers(ctx context.Context) ([]RuntimeComputer, error) {
-	return s.queryRuntimeComputers(ctx, `SELECT `+runtimeComputerColumns+runtimeComputerFrom+`
-		WHERE c.state<>? ORDER BY c.last_used_at DESC, c.id LIMIT 500`, now(), RuntimeComputerNone)
+const runtimeComputerPageSize = 100
+
+// RuntimeComputers 分页列出有电脑的记录（管理员查看与回收用）。按电脑 ID 倒序翻页，跨请求稳定；
+// before<=0 是第一页，返回的 next 为 0 表示没有下一页。
+func (s *Store) RuntimeComputers(ctx context.Context, before int64) ([]RuntimeComputer, int64, error) {
+	list, err := s.queryRuntimeComputers(ctx, `SELECT `+runtimeComputerColumns+runtimeComputerFrom+`
+		WHERE c.state<>? AND (?<=0 OR c.id<?) ORDER BY c.id DESC LIMIT ?`, now(), RuntimeComputerNone, before, before, runtimeComputerPageSize+1)
+	if len(list) > runtimeComputerPageSize {
+		list = list[:runtimeComputerPageSize]
+		return list, list[len(list)-1].ID, err
+	}
+	return list, 0, err
 }
 
 // IdleRuntimeComputers 返回该休眠或该回收的电脑：没有租约、开着且最后使用早于 idleBefore 的，
@@ -126,7 +137,7 @@ func (s *Store) IdleRuntimeComputers(ctx context.Context, idleBefore, retainBefo
 	t := now()
 	retain := sql.NullTime{Time: retainBefore, Valid: !retainBefore.IsZero()}
 	return s.queryRuntimeComputers(ctx, `SELECT `+runtimeComputerColumns+runtimeComputerFrom+`
-		WHERE (c.lease_until IS NULL OR c.lease_until<=?) AND c.sandbox_id<>'' AND
+		WHERE (c.lease_until IS NULL OR c.lease_until<=?) AND (c.sandbox_id<>'' OR c.creation_key<>'') AND
 		 ((c.state IN (?,?,?) AND c.last_used_at<?) OR (c.state=? AND ? IS NOT NULL AND c.hibernated_at<?))
 		ORDER BY c.id LIMIT 100`,
 		t, t, RuntimeComputerRunning, RuntimeComputerWaking, RuntimeComputerHibernating, idleBefore, RuntimeComputerHibernated, retain, retain)
@@ -198,15 +209,16 @@ func (s *Store) UpdateRuntimeComputer(ctx context.Context, c *RuntimeComputer, h
 	if c.State != RuntimeComputerHibernated {
 		c.HibernatedAt = nil
 	}
-	if c.SandboxID == "" && (release || c.State != RuntimeComputerWaking) {
+	if c.SandboxID == "" && c.CreationKey == "" && (release || c.State != RuntimeComputerWaking) {
 		c.State, c.DiskBytes = RuntimeComputerNone, 0
+		c.GatewayHost = ""
 	}
-	q := `UPDATE runtime_computers SET sandbox_id=?, state=?, disk_bytes=?, last_used_at=?, hibernated_at=?, updated_at=?`
+	q := `UPDATE runtime_computers SET sandbox_id=?, creation_key=?, gateway_host=?, state=?, disk_bytes=?, last_used_at=?, hibernated_at=?, updated_at=?`
 	if release {
 		q += `, holder='', lease_until=NULL`
 	}
 	err := runtimeAffected(s.db.ExecContext(ctx, q+` WHERE id=? AND holder=? AND lease_until>?`,
-		c.SandboxID, c.State, c.DiskBytes, c.LastUsedAt, c.HibernatedAt, t, c.ID, holder, t))
+		c.SandboxID, c.CreationKey, c.GatewayHost, c.State, c.DiskBytes, c.LastUsedAt, c.HibernatedAt, t, c.ID, holder, t))
 	if err == nil {
 		c.UpdatedAt = t
 	}
@@ -219,27 +231,35 @@ func (s *Store) ReleaseRuntimeComputer(ctx context.Context, id int64, holder str
 	return err
 }
 
-// RuntimeComputerOrphans 返回迁移留下、还没删除的旧沙箱 ID。
-func (s *Store) RuntimeComputerOrphans(ctx context.Context, limit int) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT sandbox_id FROM runtime_computer_orphans ORDER BY created_at, sandbox_id LIMIT ?`, limit)
+// RuntimeComputerOrphan 是迁移留下、还没删除的旧沙箱。SandboxID 为空时只有 CreationKey（旧记录新建到一半中断），
+// 要先按它向 provider 找到沙箱。
+type RuntimeComputerOrphan struct {
+	ID          int64
+	SandboxID   string
+	CreationKey string
+}
+
+// RuntimeComputerOrphans 返回迁移留下、还没删除的旧沙箱。
+func (s *Store) RuntimeComputerOrphans(ctx context.Context, limit int) ([]RuntimeComputerOrphan, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, sandbox_id, creation_key FROM runtime_computer_orphans ORDER BY created_at, id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []string{}
+	out := []RuntimeComputerOrphan{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var o RuntimeComputerOrphan
+		if err := rows.Scan(&o.ID, &o.SandboxID, &o.CreationKey); err != nil {
 			return nil, err
 		}
-		out = append(out, id)
+		out = append(out, o)
 	}
 	return out, rows.Err()
 }
 
-// DeleteRuntimeComputerOrphan 在沙箱删除后去掉它的回收记录。
-func (s *Store) DeleteRuntimeComputerOrphan(ctx context.Context, sandboxID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM runtime_computer_orphans WHERE sandbox_id=?`, sandboxID)
+// DeleteRuntimeComputerOrphan 在沙箱删除（或确认从没建成）后去掉它的回收记录。
+func (s *Store) DeleteRuntimeComputerOrphan(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM runtime_computer_orphans WHERE id=?`, id)
 	return err
 }
 

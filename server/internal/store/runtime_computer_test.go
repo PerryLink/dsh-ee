@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// 0056 把「每个机器人一台」合并成「每个员工一台」：每位员工保留最近使用的那台，其余进回收队列。
-// 迁移的每条语句都可重跑，这里在已迁移的库上重建旧表、放进旧数据，再把 0056 整个执行一遍。
+// 0058 把「每个机器人一台」合并成「每个员工一台」：每位员工保留最近使用的那台，其余进回收队列。
+// 迁移的每条语句都可重跑，这里在已迁移的库上重建旧表、放进旧数据，再把 0058 整个执行一遍。
 func TestMigrationMergesBotComputersPerOwner(t *testing.T) {
 	s, _ := openTokenTestStoreDSN(t)
 	ctx := context.Background()
@@ -27,9 +27,10 @@ func TestMigrationMergesBotComputersPerOwner(t *testing.T) {
 		}
 		return b.ID
 	}
-	a1, a2, a3, b1 := bot(alice), bot(alice), bot(alice), bot(bob)
+	a1, a2, a3, a4, b1 := bot(alice), bot(alice), bot(alice), bot(alice), bot(bob)
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE runtime_bot_computers (
-		bot_id BIGINT NOT NULL PRIMARY KEY, sandbox_id VARCHAR(255) NOT NULL DEFAULT '', state VARCHAR(16) NOT NULL,
+		bot_id BIGINT NOT NULL PRIMARY KEY, sandbox_id VARCHAR(255) NOT NULL DEFAULT '', creation_key VARCHAR(64) NOT NULL DEFAULT '',
+		gateway_host VARCHAR(255) NOT NULL DEFAULT '', state VARCHAR(16) NOT NULL,
 		holder VARCHAR(64) NOT NULL DEFAULT '', lease_until DATETIME(3) NULL, disk_bytes BIGINT NOT NULL DEFAULT 0,
 		last_used_at DATETIME(3) NOT NULL, hibernated_at DATETIME(3) NULL, created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL)`); err != nil {
 		t.Fatal(err)
@@ -38,21 +39,23 @@ func TestMigrationMergesBotComputersPerOwner(t *testing.T) {
 	for _, row := range []struct {
 		bot     int64
 		sandbox string
+		key     string
 		state   string
 		used    time.Duration
 	}{
-		{a1, "sb-a1", RuntimeComputerHibernated, 1 * time.Hour},
-		{a2, "sb-a2", RuntimeComputerHibernated, 3 * time.Hour}, // alice 最近用的
-		{a3, "", RuntimeComputerNone, 5 * time.Hour},            // 没有电脑，丢弃
-		{b1, "sb-b1", RuntimeComputerRunning, 2 * time.Hour},
-		{999999, "sb-gone", RuntimeComputerHibernated, 4 * time.Hour}, // 机器人已删除
+		{a1, "sb-a1", "", RuntimeComputerHibernated, 1 * time.Hour},
+		{a2, "sb-a2", "", RuntimeComputerHibernated, 3 * time.Hour}, // alice 最近用的
+		{a3, "", "", RuntimeComputerNone, 5 * time.Hour},            // 没有电脑，丢弃
+		{a4, "", "ckey-a4", RuntimeComputerWaking, 6 * time.Hour},   // 新建到一半中断：按 creation_key 回收
+		{b1, "sb-b1", "", RuntimeComputerRunning, 2 * time.Hour},
+		{999999, "sb-gone", "", RuntimeComputerHibernated, 4 * time.Hour}, // 机器人已删除
 	} {
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bot_computers (bot_id, sandbox_id, state, holder, lease_until, disk_bytes, last_used_at, created_at, updated_at)
-			VALUES (?,?,?,'task:1',?,?,?,?,?)`, row.bot, row.sandbox, row.state, base.Add(time.Hour), 1024, base.Add(row.used), base, base); err != nil {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bot_computers (bot_id, sandbox_id, creation_key, gateway_host, state, holder, lease_until, disk_bytes, last_used_at, created_at, updated_at)
+			VALUES (?,?,?,'gw.example',?,'task:1',?,?,?,?,?)`, row.bot, row.sandbox, row.key, row.state, base.Add(time.Hour), 1024, base.Add(row.used), base, base); err != nil {
 			t.Fatal(err)
 		}
 	}
-	body, err := migrationFS.ReadFile("migrations/0056_runtime_owner_computers.sql")
+	body, err := migrationFS.ReadFile("migrations/0058_runtime_owner_computers.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,20 +65,23 @@ func TestMigrationMergesBotComputersPerOwner(t *testing.T) {
 		}
 	}
 	got, err := s.RuntimeComputerOf(ctx, UserComputerOwner(alice))
-	if err != nil || got.SandboxID != "sb-a2" || got.State != RuntimeComputerHibernated || got.Busy || got.BotID != a2 || got.DiskBytes != 1024 {
+	if err != nil || got.SandboxID != "sb-a2" || got.State != RuntimeComputerHibernated || got.Busy || got.BotID != a2 || got.DiskBytes != 1024 ||
+		got.GatewayHost != "gw.example" || got.CreationKey != "" {
 		t.Fatalf("alice keeps her most recently used computer: %+v %v", got, err)
 	}
 	if got, err := s.RuntimeComputerOf(ctx, UserComputerOwner(bob)); err != nil || got.SandboxID != "sb-b1" {
 		t.Fatalf("bob: %+v %v", got, err)
 	}
 	orphans, err := s.RuntimeComputerOrphans(ctx, 10)
-	if err != nil || len(orphans) != 2 || orphans[0] == orphans[1] {
+	if err != nil || len(orphans) != 3 {
 		t.Fatalf("orphans: %v %v", orphans, err)
 	}
-	for _, id := range orphans {
-		if id != "sb-a1" && id != "sb-gone" {
-			t.Fatalf("unexpected orphan %q", id)
-		}
+	seen := map[string]bool{}
+	for _, o := range orphans {
+		seen[o.SandboxID+"|"+o.CreationKey] = true
+	}
+	if !seen["sb-a1|"] || !seen["sb-gone|"] || !seen["|ckey-a4"] {
+		t.Fatalf("unexpected orphans %+v", orphans)
 	}
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='runtime_bot_computers'`).Scan(&n); err != nil || n != 0 {

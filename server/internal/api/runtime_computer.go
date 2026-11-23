@@ -53,6 +53,11 @@ const (
 func runtimeBotWorkDir(botID int64) string {
 	return runtimeBotsDir + "/" + strconv.FormatInt(botID, 10)
 }
+
+// runtimeBotOutputDir 是机器人这一轮的产物目录（在它自己的工作目录下）。
+func runtimeBotOutputDir(botID int64) string {
+	return runtimeBotWorkDir(botID) + "/output"
+}
 func runtimeBotHomeDir(botID int64) string {
 	return runtimeBotHomes + "/" + strconv.FormatInt(botID, 10)
 }
@@ -66,7 +71,8 @@ func runtimeComputerNote(kind string, botID int64) string {
 	return "You are running on " + whose + ". Your own working directory is " + runtimeBotWorkDir(botID) +
 		"; it keeps its files between turns and scheduled runs. " + runtimeSharedDir + " is a shared folder every bot on this computer can read and write: " +
 		"put files there that another bot should work on, and look there for files other bots left for you. Other bots' folders are under " + runtimeBotsDir + ". " +
-		"Files under " + runtimeOutputDir + " are delivered to the employee and cleared at the start of every turn.\n\n"
+		"Save notes and work files in your working directory (not in output) to read them later. " +
+		"The deliverables directory is " + runtimeBotOutputDir(botID) + " (relative path: output/); files there are published to the employee's file library and cleared at the start of every turn.\n\n"
 }
 
 // runtimeComputerWait：同一台电脑被另一个任务占用时，新任务最多等这么久。测试里会调短。
@@ -137,6 +143,7 @@ type cloudComputer struct {
 	ownerKind  string
 	botID      int64
 	workDir    string
+	outputDir  string
 	homeDir    string
 	close      func(release bool)
 }
@@ -157,7 +164,7 @@ func (s *Server) openCloudComputer(ctx context.Context, task *store.RuntimeTask,
 	if err != nil {
 		return nil, errors.New("creating cloud sandbox failed")
 	}
-	return &cloudComputer{sandbox: sandbox, workDir: runtimeWorkDir, homeDir: runtimeHomeDir, close: func(_ bool) {
+	return &cloudComputer{sandbox: sandbox, workDir: runtimeOutputDir, outputDir: runtimeOutputDir, homeDir: runtimeHomeDir, close: func(_ bool) {
 		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer stop()
 		if err := sandbox.Destroy(c); err != nil {
@@ -182,12 +189,16 @@ func (s *Server) acquireComputerWithin(ctx context.Context, owner store.RuntimeC
 }
 
 func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.PersistentProvider, task *store.RuntimeTask, owner store.RuntimeComputerOwner, botID int64, spec runtime.SandboxSpec) (*cloudComputer, error) {
+	if len(spec.AllowedHosts) != 1 || spec.AllowedHosts[0] == "" {
+		return nil, errors.New("persistent cloud computer requires one gateway hostname")
+	}
 	holder := fmt.Sprintf("task:%d:%d", task.ID, task.Attempts)
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(time.Duration(task.TimeoutSeconds) * time.Second)
 	}
-	c, err := s.acquireComputerWithin(ctx, owner, botID, holder, deadline.Add(30*time.Second), runtimeComputerWait)
+	leaseUntil := deadline.Add(30 * time.Second)
+	c, err := s.acquireComputerWithin(ctx, owner, botID, holder, leaseUntil, runtimeComputerWait)
 	if err != nil {
 		if errors.Is(err, store.ErrRuntimeComputerBusy) || ctx.Err() != nil {
 			return nil, err
@@ -208,15 +219,31 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 	policy := s.opts.Runtime.Computer
 	limit := policy.DiskLimitBytes
 	if c.SandboxID != "" && limit > 0 && c.DiskBytes > limit {
-		release()
-		return nil, fmt.Errorf("%w (%d MB used of %d MB); reset the computer from the bot panel or ask an administrator to reclaim it",
-			errCloudDisk, c.DiskBytes>>20, limit>>20)
+		err := pp.CheckPersistent(ctx, c.SandboxID)
+		switch {
+		case errors.Is(err, runtime.ErrSandboxGone):
+			c.SandboxID = ""
+		case err != nil:
+			release()
+			s.log.Warn("检查云电脑失败", "computer_id", computerID, "err", err)
+			return nil, errors.New("checking whether the cloud sandbox still exists failed")
+		default:
+			release()
+			return nil, fmt.Errorf("%w (%d MB used of %d MB); reset the computer from the bot panel or ask an administrator to reclaim it",
+				errCloudDisk, c.DiskBytes>>20, limit>>20)
+		}
 	}
 	save := func(touched, done bool) error {
 		bc, stop := bg()
 		defer stop()
 		return s.store.UpdateRuntimeComputer(bc, c, holder, touched, done)
 	}
+	if err := recoverCloudComputer(ctx, pp, c); err != nil {
+		release()
+		s.log.Warn("查找未登记的云电脑失败", "computer_id", computerID, "err", err)
+		return nil, errors.New("locating the cloud computer failed")
+	}
+	gatewayHost := spec.AllowedHosts[0]
 	var box runtime.PersistentSandbox
 	if c.SandboxID != "" {
 		if c.State != store.RuntimeComputerRunning {
@@ -233,29 +260,78 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 			_ = save(false, true)
 			return nil, errors.New("waking the cloud computer failed")
 		}
+		if box != nil && c.GatewayHost != gatewayHost {
+			c.State = store.RuntimeComputerRunning
+			if p, ok := pp.(runtime.PersistentNetworkPolicy); !ok {
+				_ = save(false, true)
+				return nil, errors.New("cloud sandbox cannot update its gateway allowlist; restore the previous gateway hostname")
+			} else if err := p.ReplaceAllowedHosts(ctx, c.SandboxID, spec.AllowedHosts); err != nil {
+				_ = save(false, true)
+				s.log.Warn("更新云电脑网关策略失败", "computer_id", computerID, "err", err)
+				return nil, errors.New("updating the cloud sandbox gateway allowlist failed")
+			}
+			c.GatewayHost = gatewayHost
+		}
 	}
 	if box == nil {
 		c.SandboxID, c.State, c.DiskBytes = "", store.RuntimeComputerWaking, 0
-		_ = save(false, false)
-		createSpec := runtime.SandboxSpec{Image: spec.Image, AllowedHosts: spec.AllowedHosts}
+		c.GatewayHost = gatewayHost
+		if _, ok := pp.(runtime.PersistentRecovery); ok {
+			c.CreationKey = runtime.NewPersistentCreationKey()
+		}
+		if err := save(true, false); err != nil {
+			release()
+			return nil, errors.New("recording the cloud sandbox creation failed")
+		}
+		createSpec := runtime.SandboxSpec{Image: spec.Image, AllowedHosts: spec.AllowedHosts, CreationKey: c.CreationKey}
 		if policy.NativeDiskQuota {
 			createSpec.DiskQuotaBytes = limit
 		}
 		if box, err = pp.CreatePersistent(ctx, createSpec); err != nil {
-			c.SandboxID = ""
-			_ = save(false, true)
+			createCtxErr := ctx.Err()
+			switch {
+			case c.CreationKey == "", errors.Is(err, runtime.ErrSandboxCreateRejected):
+				c.CreationKey = ""
+				_ = save(false, true)
+			default:
+				p := pp.(runtime.PersistentRecovery)
+				lookup, stop := bg()
+				id, lookupErr := p.FindPersistent(lookup, c.CreationKey)
+				stop()
+				if lookupErr == nil && id != "" {
+					c.SandboxID, c.CreationKey = id, ""
+					if err := save(false, true); err == nil {
+						break
+					}
+				}
+				// A lost response may arrive before the provider has listed the sandbox.
+				// Leave the correlation key intact until the lease expires.
+				task.RetryAfter = &leaseUntil
+			}
 			s.log.Warn("创建常驻沙箱失败", "computer_id", computerID, "native_disk_quota", policy.NativeDiskQuota, "err", err)
-			return nil, errors.New("creating cloud sandbox failed")
+			if createCtxErr != nil {
+				return nil, createCtxErr
+			}
+			return nil, errCloudCreateRetryable
 		}
-		c.SandboxID = box.ID()
+		c.SandboxID, c.CreationKey = box.ID(), ""
 	}
 	c.State = store.RuntimeComputerRunning
 	if err := save(true, false); err != nil {
 		// 租约丢了（例如被管理员回收）：不再碰这台电脑。
+		task.RetryAfter = &leaseUntil
 		return nil, errors.New("the cloud computer was taken over")
 	}
+	outputDir := runtimeBotOutputDir(botID)
 	return &cloudComputer{sandbox: box, persistent: true, ownerKind: owner.Kind, botID: botID,
-		workDir: runtimeBotWorkDir(botID), homeDir: runtimeBotHomeDir(botID), close: func(release bool) {
+		workDir: runtimeBotWorkDir(botID), outputDir: outputDir, homeDir: runtimeBotHomeDir(botID), close: func(release bool) {
+			// 产物已经收走：清掉，免得留在电脑上被同一台电脑的其他机器人或下一轮看到。
+			cleanup, cancel := bg()
+			out, err := box.Exec(cleanup, runtime.Command{Args: []string{"rm", "-rf", outputDir}, Timeout: 10 * time.Second})
+			cancel()
+			if err != nil || out.ExitCode != 0 {
+				s.log.Warn("清理云电脑产物失败", "computer_id", computerID, "bot_id", botID, "err", err, "exit_code", out.ExitCode)
+			}
 			bc, stop := bg()
 			defer stop()
 			if disk, err := computerDiskUsage(bc, box); err == nil {
@@ -268,6 +344,24 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 				s.log.Warn("保存云电脑状态失败", "computer_id", computerID, "err", err)
 			}
 		}}, nil
+}
+
+// The key was committed before CreatePersistent. Reconcile under the computer's
+// lease so a lost create response or process exit does not strand a sandbox.
+func recoverCloudComputer(ctx context.Context, pp runtime.PersistentProvider, c *store.RuntimeComputer) error {
+	if c.SandboxID != "" || c.CreationKey == "" {
+		return nil
+	}
+	p, ok := pp.(runtime.PersistentRecovery)
+	if !ok {
+		return errors.New("runtime cannot look up the pending sandbox")
+	}
+	id, err := p.FindPersistent(ctx, c.CreationKey)
+	if err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
+		return err
+	}
+	c.SandboxID, c.CreationKey = id, ""
+	return nil
 }
 
 // computerDiskUsage 统计工作目录和 DSH 主目录的用量（du -sk，各行相加）。
@@ -359,29 +453,46 @@ func (s *Server) reapCloudComputers(ctx context.Context) {
 	}
 }
 
-// reapComputerOrphans 删除 0056 迁移合并下来的多余旧电脑（每位员工只保留最近使用的一台）。
+// reapComputerOrphans 删除 0058 迁移合并下来的多余旧电脑（每位员工只保留最近使用的一台）。
 func (s *Server) reapComputerOrphans(ctx context.Context) {
 	pp, ok := s.opts.Runtime.Provider.(runtime.PersistentProvider)
 	if !ok {
 		return
 	}
-	ids, err := s.store.RuntimeComputerOrphans(ctx, 20)
+	orphans, err := s.store.RuntimeComputerOrphans(ctx, 20)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.log.Warn("读取待回收的旧云电脑失败", "err", err)
 		}
 		return
 	}
-	for _, id := range ids {
-		if err := pp.Remove(ctx, id); err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
-			s.log.Warn("回收旧云电脑失败", "err", err)
-			continue
+	for _, o := range orphans {
+		id := o.SandboxID
+		if id == "" {
+			// 旧记录新建到一半中断：按 creation_key 找沙箱；找不到就是从没建成，直接去掉记录。
+			p, ok := pp.(runtime.PersistentRecovery)
+			if ok {
+				found, err := p.FindPersistent(ctx, o.CreationKey)
+				if err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
+					s.log.Warn("查找待回收的旧云电脑失败", "err", err)
+					continue
+				}
+				id = found
+			}
 		}
-		if err := s.store.DeleteRuntimeComputerOrphan(ctx, id); err != nil {
+		if id != "" {
+			if err := pp.Remove(ctx, id); err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
+				s.log.Warn("回收旧云电脑失败", "err", err)
+				continue
+			}
+		}
+		if err := s.store.DeleteRuntimeComputerOrphan(ctx, o.ID); err != nil {
 			s.log.Warn("删除旧云电脑记录失败", "err", err)
 			continue
 		}
-		s.auditSystem(ctx, "runtime.computer.reclaim", "sandbox", map[string]any{"reason": "merged_per_owner"})
+		if id != "" {
+			s.auditSystem(ctx, "runtime.computer.reclaim", "sandbox", map[string]any{"reason": "merged_per_owner"})
+		}
 	}
 }
 
@@ -432,6 +543,10 @@ func (s *Server) cloudComputerAction(ctx context.Context, computerID int64, acti
 		defer stop()
 		_ = s.store.ReleaseRuntimeComputer(bc, computerID, holder)
 		return nil, errComputerSkipped
+	}
+	if err := recoverCloudComputer(ctx, pp, c); err != nil {
+		_ = finish(true)
+		return nil, errComputerProvider{err}
 	}
 	if c.SandboxID == "" {
 		return c, finish(false)
@@ -551,7 +666,7 @@ func (s *Server) runtimeComputerError(w http.ResponseWriter, r *http.Request, er
 // handleRuntimeChatComputer 是员工本人对「我的电脑」的手动操作：hibernate（立即休眠）或 reset（删除重建）。
 // 路径里的机器人只用来确认员工有权操作：个人机器人共用员工自己的电脑，操作的是这台电脑，影响他的所有机器人。
 func (s *Server) handleRuntimeChatComputer(w http.ResponseWriter, r *http.Request) {
-	if !s.runtimeAvailable(w) {
+	if !allowRuntimeComputerMutation(w, r) || !s.runtimeAvailable(w) {
 		return
 	}
 	action := r.PathValue("action")
@@ -621,7 +736,8 @@ func (s *Server) handleRuntimeComputers(w http.ResponseWriter, r *http.Request) 
 	if !s.runtimeAvailable(w) {
 		return
 	}
-	list, err := s.store.RuntimeComputers(r.Context())
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	list, next, err := s.store.RuntimeComputers(r.Context(), before)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -634,16 +750,20 @@ func (s *Server) handleRuntimeComputers(w http.ResponseWriter, r *http.Request) 
 	}
 	_, persistent := s.cloudComputers()
 	policy := s.opts.Runtime.Computer
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"persistent": persistent, "idle_timeout_seconds": int64(policy.IdleTimeout / time.Second),
 		"disk_limit_bytes": policy.DiskLimitBytes, "retention_seconds": int64(policy.Retention / time.Second),
 		"computers": out,
-	})
+	}
+	if next > 0 {
+		response["next_before"] = strconv.FormatInt(next, 10)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // handleRuntimeComputerAdmin 是管理员对任一云电脑（按电脑 ID）的操作：POST .../hibernate 休眠，DELETE 回收（删除整台电脑）。
 func (s *Server) handleRuntimeComputerAdmin(w http.ResponseWriter, r *http.Request) {
-	if !s.runtimeAvailable(w) {
+	if !allowRuntimeComputerMutation(w, r) || !s.runtimeAvailable(w) {
 		return
 	}
 	action := computerReset
@@ -666,4 +786,14 @@ func (s *Server) handleRuntimeComputerAdmin(w http.ResponseWriter, r *http.Reque
 	}
 	s.audit(r, event, computerTarget(existing), nil)
 	writeJSON(w, http.StatusOK, s.computerView(c.Owner(), c))
+}
+
+var runtimeComputerOrigin http.CrossOriginProtection
+
+func allowRuntimeComputerMutation(w http.ResponseWriter, r *http.Request) bool {
+	if err := runtimeComputerOrigin.Check(r); err != nil {
+		writeErrCode(w, http.StatusForbidden, codeAuthForbidden, nil, "云电脑操作不允许跨来源请求")
+		return false
+	}
+	return true
 }

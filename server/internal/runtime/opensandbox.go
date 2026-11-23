@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	openSandboxKey = "OPEN-SANDBOX-API-KEY"
-	maxMetadata    = 1 << 20
-	maxOutput      = 1 << 20
+	openSandboxKey           = "OPEN-SANDBOX-API-KEY"
+	computerCreationMetadata = "dsh-ee-computer-creation"
+	maxMetadata              = 1 << 20
+	maxOutput                = 1 << 20
 )
 
 type OpenSandbox struct {
@@ -56,8 +57,9 @@ func parseGatewayURL(base string) (string, error) {
 }
 
 type sandboxStatus struct {
-	ID     string `json:"id"`
-	Status struct {
+	ID       string            `json:"id"`
+	Metadata map[string]string `json:"metadata"`
+	Status   struct {
 		State string `json:"state"`
 	} `json:"status"`
 }
@@ -91,7 +93,7 @@ func (p *OpenSandbox) CreatePersistent(ctx context.Context, spec SandboxSpec) (P
 
 func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent bool) (*openSandboxInstance, error) {
 	if spec.Image == "" {
-		return nil, errors.New("sandbox image and timeout are required")
+		return nil, fmt.Errorf("%w: sandbox image is required", ErrSandboxCreateRejected)
 	}
 	var status sandboxStatus
 	limits := map[string]string{"cpu": "1", "memory": "1Gi"}
@@ -105,19 +107,24 @@ func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent b
 	}
 	if !persistent {
 		input["timeout"] = max(60, int64((spec.Timeout-1)/time.Second)+1)
+	} else if spec.CreationKey != "" {
+		input["metadata"] = map[string]string{computerCreationMetadata: spec.CreationKey}
 	}
 	if len(spec.Env) > 0 {
 		input["env"] = spec.Env
 	}
 	if spec.AllowedHosts != nil {
-		rules := make([]map[string]string, 0, len(spec.AllowedHosts))
-		for _, host := range spec.AllowedHosts {
-			rules = append(rules, map[string]string{"action": "allow", "target": host})
-		}
-		input["networkPolicy"] = map[string]any{"defaultAction": "deny", "egress": rules}
+		input["networkPolicy"] = openSandboxNetworkPolicy(spec.AllowedHosts)
 	}
 	err := p.lifecycle(ctx, http.MethodPost, "/sandboxes", input, &status)
 	if err != nil {
+		var response *httpStatusError
+		if errors.As(err, &response) {
+			switch response.status {
+			case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusTooManyRequests:
+				return nil, fmt.Errorf("%w: %v", ErrSandboxCreateRejected, err)
+			}
+		}
 		return nil, err
 	}
 	s, err := p.instance(status.ID)
@@ -139,11 +146,76 @@ func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent b
 	return s, nil
 }
 
+func openSandboxNetworkPolicy(hosts []string) map[string]any {
+	rules := make([]map[string]string, 0, len(hosts))
+	for _, host := range hosts {
+		rules = append(rules, map[string]string{"action": "allow", "target": host})
+	}
+	return map[string]any{"defaultAction": "deny", "egress": rules}
+}
+
+func (p *OpenSandbox) ReplaceAllowedHosts(ctx context.Context, id string, hosts []string) error {
+	if len(hosts) == 0 {
+		return errors.New("OpenSandbox network policy requires allowed hosts")
+	}
+	s, err := p.instance(id)
+	if err != nil {
+		return err
+	}
+	return p.lifecycle(ctx, http.MethodPut, s.path+"/networkpolicy", openSandboxNetworkPolicy(hosts), nil)
+}
+
+func (p *OpenSandbox) FindPersistent(ctx context.Context, creationKey string) (string, error) {
+	if creationKey == "" {
+		return "", ErrSandboxGone
+	}
+	filter := url.Values{computerCreationMetadata: {creationKey}}
+	query := url.Values{"metadata": {filter.Encode()}, "pageSize": {"20"}}
+	var found string
+	for page := 1; ; page++ {
+		query.Set("page", strconv.Itoa(page))
+		var response struct {
+			Items      []sandboxStatus `json:"items"`
+			Pagination struct {
+				HasNextPage bool `json:"hasNextPage"`
+			} `json:"pagination"`
+		}
+		if err := p.lifecycle(ctx, http.MethodGet, "/sandboxes?"+query.Encode(), nil, &response); err != nil {
+			return "", err
+		}
+		for _, item := range response.Items {
+			if item.Metadata[computerCreationMetadata] != creationKey || goneState(item.Status.State) {
+				continue
+			}
+			if found != "" && found != item.ID {
+				return "", errors.New("OpenSandbox returned multiple computers for one creation key")
+			}
+			found = item.ID
+		}
+		if !response.Pagination.HasNextPage {
+			break
+		}
+	}
+	if found == "" {
+		return "", ErrSandboxGone
+	}
+	return found, nil
+}
+
 func (p *OpenSandbox) instance(id string) (*openSandboxInstance, error) {
 	if id == "" || id == "." || id == ".." {
 		return nil, errors.New("OpenSandbox returned an invalid ID")
 	}
 	return &openSandboxInstance{provider: p, id: id, path: "/sandboxes/" + url.PathEscape(id)}, nil
+}
+
+func (p *OpenSandbox) CheckPersistent(ctx context.Context, id string) error {
+	s, err := p.instance(id)
+	if err != nil {
+		return err
+	}
+	_, err = s.state(ctx)
+	return err
 }
 
 // Wake 按沙箱当前状态把它带回运行：Paused 先 resume；Pausing 等到 Paused 再 resume；
@@ -511,7 +583,7 @@ func (s *openSandboxInstance) WriteFile(ctx context.Context, path string, data [
 }
 
 func (s *openSandboxInstance) ListFiles(ctx context.Context, dir string) ([]File, error) {
-	query := url.Values{"path": {dir}, "depth": {"1"}}
+	query := url.Values{"path": {dir}, "depth": {strconv.Itoa(ListDepth)}}
 	body, err := s.provider.request(ctx, http.MethodGet, s.execBase+"/directories/list?"+query.Encode(), "", s.headers, nil)
 	if err != nil {
 		return nil, err

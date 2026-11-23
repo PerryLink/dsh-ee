@@ -377,7 +377,7 @@ func TestRuntimeWebChatThread(t *testing.T) {
 			seen += n
 		}
 		if seen != len(markers)-m.Omitted || strings.Count(prompt, "BLUE-HERON-7") != 1 || strings.Contains(prompt, "failed-turn#") ||
-			!strings.HasPrefix(prompt, "Bot instructions:\nPersona of Analyst\n") || !strings.HasSuffix(prompt, "\n"+content) {
+			!strings.HasPrefix(prompt, runtimeEphemeralNote+"Bot instructions:\nPersona of Analyst\n") || !strings.HasSuffix(prompt, "\n"+content) {
 			t.Fatalf("round %d: %d of %d earlier turns visible with %d omitted", i, seen, len(markers), m.Omitted)
 		}
 		markers = append(markers, marker)
@@ -419,7 +419,7 @@ func TestRuntimeWebChatThread(t *testing.T) {
 
 	// 隔离：同一位员工的另一个机器人、另一位员工的线程，都看不到这条线程的记忆和历史。
 	if _, prompt := send(writerPath, "What is the codename?", "isolated", ""); strings.Contains(prompt, "BLUE-HERON-7") || strings.Contains(prompt, "topic-") ||
-		strings.Contains(prompt, "Thread memory") || !strings.Contains(prompt, "oldest first):\n[]\n") || !strings.HasPrefix(prompt, "Bot instructions:\nPersona of Writer\n") {
+		strings.Contains(prompt, "Thread memory") || !strings.Contains(prompt, "oldest first):\n[]\n") || !strings.HasPrefix(prompt, runtimeEphemeralNote+"Bot instructions:\nPersona of Writer\n") {
 		t.Fatalf("another bot's thread saw this thread: %q", prompt)
 	}
 	sent := decodeRuntimeChat[store.RuntimeChatTurn](t, "other owner turn", other("POST", otherPath+"/messages", message("What is the codename?", "isolated")), http.StatusAccepted)

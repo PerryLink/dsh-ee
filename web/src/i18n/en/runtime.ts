@@ -24,6 +24,7 @@ export const runtime = {
   succeeded: "Succeeded",
   failed: "Failed",
   canceled: "Canceled",
+  privateResult: "Only the owner can view this run’s results.",
   computers: {
     title: "Cloud computers",
     hint: "Each employee has one “My computer” shared by all of their personal bots; team chats use the team's (department's) “Team computer”.",
@@ -32,6 +33,7 @@ export const runtime = {
     lastBot: "Last used by: {{bot}}",
     policy: "Sleep after {{idle}} min idle; disk limit {{disk}} each; {{retention}}.",
     retentionDays: "reclaimed after {{days}} days asleep",
+    retentionHours: "reclaimed after {{hours}} hours asleep",
     retentionOff: "never reclaimed automatically",
     ephemeral: "This runtime doesn't keep cloud computers; every task uses a new one. Computers left from before are listed below and can be reclaimed.",
     empty: "No cloud computers yet.",
