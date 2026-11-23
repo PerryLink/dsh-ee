@@ -44,6 +44,7 @@ lang: zh-CN
 | [quality-standards.md](./quality-standards.md) | 规范 | 上游规范三层与 dsh-ee 预检的边界 |
 | [responses-api.md](./responses-api.md) | Harness 接入 | Codex / OpenAI Agents SDK 等 Responses 客户端调 `POST /v1/responses`：请求映射、output item、SSE 与 v0 边界 |
 | [cloud-runtime.md](./cloud-runtime.md) | Harness 接入 | OpenSandbox 云端常驻机器人、任务 API、产物与飞书交付 |
+| [bot-delegation.md](./bot-delegation.md) | Harness 接入 | 一个员工一台云电脑（我的电脑 / 团队电脑）与机器人之间派任务、防循环、审计 |
 | [chatbot.md](./chatbot.md) | Harness 接入 | DeepSeek Chatbot 的联网工具、内容安全与会话标题：注入开关、透传规则与能力声明 |
 
 站内页面还会做标题、摘要、标签与正文的客户端全文搜索（按界面语言取对应语言的标题/摘要/正文，中文两字词直接子串匹配，多词要求全部命中；`⌘K` 里也有一组「文档」），逻辑见 `web/src/data/dev-docs-search.ts`，不需要另建搜索索引。
@@ -87,6 +88,7 @@ lang: zh-CN
 | [quality-standards.md](./quality-standards.md) | 站内导读：上游规范三层与 dsh-ee 预检的边界 | draft |
 | [responses-api.md](./responses-api.md) | 站内导读：OpenAI Responses API 兼容入口的请求/响应/事件映射、错误与 v0 边界 | draft |
 | [cloud-runtime.md](./cloud-runtime.md) | 站内导读：云端常驻机器人配置、任务 API 和试点边界 | draft |
+| [bot-delegation.md](./bot-delegation.md) | 站内导读：员工 / 团队云电脑的归属与并发、机器人协作工具 bots__*、委派上限与审计 | draft |
 | [chatbot.md](./chatbot.md) | Chatbot 网关选项与透传：注入开关、请求/响应透传、能力声明与边界 | draft |
 
 ## 术语表

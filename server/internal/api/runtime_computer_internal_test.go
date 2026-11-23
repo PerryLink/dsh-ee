@@ -35,7 +35,10 @@ type fakeComputers struct {
 	disk       int64 // du 报告的 KB
 	diskQuota  int64
 	tokens     []string
+	dirs       []string           // 每轮 DSH 的当前目录和 DSH_HOME（"dir|home"）
 	check      func(token string) // 每轮 DSH 运行时检查凭证
+	// onRun 在模拟 DSH 运行时调用（凭证有效、任务在运行）；handled 为真时用它的输出代替默认行为。
+	onRun func(token, dir, prompt string) (stdout string, handled bool)
 }
 
 type fakeBox struct {
@@ -139,7 +142,26 @@ func (b *fakeBox) Exec(_ context.Context, c runtime.Command) (runtime.Result, er
 	}
 	prompt := c.Args[len(c.Args)-1]
 	note := path.Join(c.Dir, "note.txt")
+	shared := path.Join(runtimeSharedDir, "note.txt")
+	b.owner.mu.Lock()
+	b.owner.dirs = append(b.owner.dirs, c.Dir+"|"+c.Env["DSH_HOME"])
+	onRun := b.owner.onRun
+	b.owner.mu.Unlock()
+	if onRun != nil {
+		if out, ok := onRun(token, c.Dir, prompt); ok {
+			return runtime.Result{Stdout: out}, nil
+		}
+	}
 	switch {
+	case strings.Contains(prompt, "SHARE:"):
+		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "SHARE:")+6:], "\n")
+		b.files[shared] = strings.TrimSpace(text)
+		return runtime.Result{Stdout: "shared"}, nil
+	case strings.Contains(prompt, "READ_SHARED"):
+		if v, ok := b.files[shared]; ok {
+			return runtime.Result{Stdout: "shared note: " + v}, nil
+		}
+		return runtime.Result{Stdout: "no shared note"}, nil
 	case strings.Contains(prompt, "WRITE:"):
 		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "WRITE:")+6:], "\n")
 		b.files[note] = strings.TrimSpace(text)
@@ -242,6 +264,15 @@ func (c *computerTest) profile() runtimeComputerView {
 	return out.Computer
 }
 
+// computerID 是员工电脑的 ID（还没有记录时为 0）。
+func (c *computerTest) computerID() int64 {
+	got, err := c.s.store.RuntimeComputerOf(context.Background(), store.UserComputerOwner(c.employee))
+	if err != nil {
+		return 0
+	}
+	return got.ID
+}
+
 func (c *computerTest) tokenValid(token string) bool {
 	_, err := c.s.resolveBearer(context.WithValue(context.Background(), runtimeTokenRouteKey{}, true), token, "")
 	return err == nil
@@ -333,7 +364,8 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 	c.run("WRITE:hello")
 
 	// 电脑被别的任务占着：手动操作返回 busy，新任务等不到就重试。
-	if _, err := c.s.store.AcquireRuntimeBotComputer(ctx, c.bot.ID, "task:other", time.Now().Add(time.Minute)); err != nil {
+	held, err := c.s.store.AcquireRuntimeComputer(ctx, store.UserComputerOwner(c.employee), "task:other", 0, time.Now().Add(time.Minute))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if rec := c.owner("POST", "/api/runtime/chat/bots/"+strconv.FormatInt(c.bot.ID, 10)+"/computer/hibernate", ""); rec.Code != http.StatusConflict ||
@@ -346,7 +378,7 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 	if got := c.run("READ"); got.Status != store.RuntimeQueued || f.ephemeral != 0 {
 		t.Fatalf("busy computer should requeue the task without a temporary computer: %+v ephemeral=%d", got, f.ephemeral)
 	}
-	if err := c.s.store.ReleaseRuntimeBotComputer(ctx, c.bot.ID, "task:other"); err != nil {
+	if err := c.s.store.ReleaseRuntimeComputer(ctx, held.ID, "task:other"); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
@@ -365,13 +397,15 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 		Computers  []runtimeAdminComputer `json:"computers"`
 	}
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || !list.Persistent || len(list.Computers) != 1 ||
-		list.Computers[0].BotID != c.bot.ID || list.Computers[0].BotName != "Notes" || list.Computers[0].State != store.RuntimeComputerRunning {
+		list.Computers[0].ID != held.ID || list.Computers[0].OwnerKind != store.RuntimeComputerOwnerUser || list.Computers[0].OwnerID != c.employee ||
+		list.Computers[0].OwnerName != "computer-owner" || list.Computers[0].BotID != c.bot.ID || list.Computers[0].BotName != "Notes" ||
+		list.Computers[0].State != store.RuntimeComputerRunning {
 		t.Fatalf("admin list: HTTP %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := c.owner("GET", "/api/admin/runtime/computers", ""); rec.Code != http.StatusForbidden {
 		t.Fatalf("employee reading admin list: HTTP %d", rec.Code)
 	}
-	path := "/api/admin/runtime/computers/" + strconv.FormatInt(c.bot.ID, 10)
+	path := "/api/admin/runtime/computers/" + strconv.FormatInt(held.ID, 10)
 	if rec := c.admin("POST", path+"/hibernate", ""); rec.Code != http.StatusOK || f.hibernates != 1 {
 		t.Fatalf("admin hibernate: HTTP %d %s", rec.Code, rec.Body.String())
 	}
@@ -408,7 +442,7 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	}
 
 	box.close(false) // Revocation failed: the worker must leave the lease in place.
-	if _, err := c.s.cloudComputerAction(ctx, c.bot.ID, computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
+	if _, err := c.s.cloudComputerAction(ctx, c.computerID(), computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
 		t.Fatalf("hibernation must wait for the credential to expire: %v", err)
 	}
 }
@@ -453,7 +487,7 @@ func TestBotComputerUnsupportedProviderFallsBack(t *testing.T) {
 	if v := c.profile(); v.Persistent || v.State != store.RuntimeComputerNone {
 		t.Fatalf("profile for unsupported provider = %+v", v)
 	}
-	if _, err := c.s.store.RuntimeBotComputer(context.Background(), c.bot.ID); !notFound(err) {
+	if _, err := c.s.store.RuntimeComputerOf(context.Background(), store.UserComputerOwner(c.employee)); !notFound(err) {
 		t.Fatalf("fallback must not record a computer: %v", err)
 	}
 	if rec := c.owner("POST", "/api/runtime/chat/bots/"+strconv.FormatInt(c.bot.ID, 10)+"/computer/hibernate", ""); rec.Code != http.StatusConflict ||
@@ -484,7 +518,7 @@ func TestLiveBotComputer(t *testing.T) {
 	c.s.opts.Runtime.Image = "alpine:3.22"
 	c.s.opts.Runtime.Command = []string{"sh", "-c", `case "$1" in *WRITE*) echo 'quarter goal 42' > note.txt; echo saved;; *) cat note.txt;; esac`, "sh", "{prompt}"}
 	t.Cleanup(func() {
-		_, _ = c.s.cloudComputerAction(context.Background(), c.bot.ID, computerReset, "test", nil)
+		_, _ = c.s.cloudComputerAction(context.Background(), c.computerID(), computerReset, "test", nil)
 	})
 	if got := c.run("WRITE a note"); got.Status != store.RuntimeSucceeded || got.Summary != "saved" {
 		t.Fatalf("first run: %+v", got)

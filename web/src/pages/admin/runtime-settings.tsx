@@ -27,11 +27,16 @@ type Run = {
 
 type Artifact = { id: number; name: string };
 
-/** 机器人的常驻云电脑（GET /api/admin/runtime/computers）。 */
+/** 常驻云电脑（GET /api/admin/runtime/computers）：员工电脑（owner_kind=user）或团队电脑（team）。 */
 type Computer = {
-  bot_id: number;
-  bot_name: string;
-  owner_id: number;
+  id: number;
+  owner_kind?: "user" | "team";
+  owner_id?: number;
+  owner_name?: string;
+  department?: string;
+  /** 正在用（或最近一次用）这台电脑的机器人。 */
+  bot_id?: number;
+  bot_name?: string;
   state: "none" | "waking" | "running" | "hibernating" | "hibernated";
   busy: boolean;
   disk_bytes: number;
@@ -177,24 +182,30 @@ export default function RuntimeSettings() {
               })
               : t("runtime.computers.ephemeral")}
           </p>
+          <p className="text-xs leading-5 text-neutral-500">{t("runtime.computers.hint")}</p>
           {!computers.computers?.length && <p className="text-sm text-neutral-500">{t("runtime.computers.empty")}</p>}
-          {computers.computers?.map((c) => (
-            <div key={c.bot_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 p-2 text-sm">
-              <span className="mr-auto break-all">
-                <strong>{c.bot_name || `#${String(c.bot_id)}`}</strong>
-                <span className="text-neutral-500"> · {t(`runtime.computers.state.${c.state}`)}{c.busy ? ` · ${t("runtime.computers.busy")}` : ""} · {mb(c.disk_bytes)} / {mb(c.disk_limit_bytes)}{c.last_used_at ? ` · ${formatTime(c.last_used_at)}` : ""}</span>
-              </span>
-              <Button variant="secondary" size="sm" disabled={busy || c.busy || c.state !== "running"} onClick={() => void perform(async () => {
-                await request("POST", `${computersPath}/${String(c.bot_id)}/hibernate`);
-                await load();
-              })}>{t("runtime.computers.hibernate")}</Button>
-              <Button variant="secondary" size="sm" disabled={busy || c.busy} onClick={() => void perform(async () => {
-                if (!(await confirm({ kind: "delete", description: t("runtime.computers.reclaimConfirm", { bot: c.bot_name }) }))) return;
-                await request("DELETE", `${computersPath}/${String(c.bot_id)}`);
-                await load();
-              })}>{t("runtime.computers.reclaim")}</Button>
-            </div>
-          ))}
+          {computers.computers?.map((c) => {
+            const owner = c.owner_kind === "team"
+              ? t("runtime.computers.teamOwner", { department: c.department ?? "" })
+              : t("runtime.computers.userOwner", { name: c.owner_name || `#${String(c.owner_id ?? "")}` });
+            return (
+              <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 p-2 text-sm" data-computer-owner={c.owner_kind ?? "user"}>
+                <span className="mr-auto break-all">
+                  <strong>{owner}</strong>
+                  <span className="text-neutral-500"> · {t(`runtime.computers.state.${c.state}`)}{c.busy ? ` · ${t("runtime.computers.busy")}` : ""} · {mb(c.disk_bytes)} / {mb(c.disk_limit_bytes)}{c.last_used_at ? ` · ${formatTime(c.last_used_at)}` : ""}{c.bot_name ? ` · ${t("runtime.computers.lastBot", { bot: c.bot_name })}` : ""}</span>
+                </span>
+                <Button variant="secondary" size="sm" disabled={busy || c.busy || c.state !== "running"} onClick={() => void perform(async () => {
+                  await request("POST", `${computersPath}/${String(c.id)}/hibernate`);
+                  await load();
+                })}>{t("runtime.computers.hibernate")}</Button>
+                <Button variant="secondary" size="sm" disabled={busy || c.busy} onClick={() => void perform(async () => {
+                  if (!(await confirm({ kind: "delete", description: t("runtime.computers.reclaimConfirm", { owner }) }))) return;
+                  await request("DELETE", `${computersPath}/${String(c.id)}`);
+                  await load();
+                })}>{t("runtime.computers.reclaim")}</Button>
+              </div>
+            );
+          })}
         </div>
       )}
       <div className="space-y-2">

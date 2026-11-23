@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Monitor, RefreshCw, Users, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Monitor, RefreshCw, Send, Users, X } from "lucide-react";
 import { Badge, Button, Card, Empty, Notice, Spinner, cx, tabCls, tabListCls } from "../components/ui";
 import { ChatMarkdown } from "../components/chat-markdown";
 import { useAuth } from "../lib/auth";
@@ -24,6 +24,7 @@ import {
   CHAT_CONTENT_MAX_BYTES,
   chatApi,
   getLastRead,
+  isOpenDelegation,
   isPendingTurn,
   newIdempotencyKey,
   sameId,
@@ -35,6 +36,7 @@ import {
   type ChatBot,
   type ChatBotProfile,
   type ChatComputer,
+  type ChatDelegation,
   type ChatError,
   type ChatErrorScope,
   type ChatId,
@@ -56,6 +58,8 @@ type Thread = {
   status: "loading" | "ready" | "error";
   convId: string | null;
   messages: ChatTurn[];
+  /** 这些轮次相关的委派（派出的、派来的、结果回来的），按 id 合并。 */
+  delegations: ChatDelegation[];
   /** 还有更早的消息时，读上一页要带的 before。 */
   nextBefore: ChatId | null;
   earlierLoading: boolean;
@@ -69,6 +73,7 @@ const LOADING_THREAD: Thread = {
   status: "loading",
   convId: null,
   messages: [],
+  delegations: [],
   nextBefore: null,
   earlierLoading: false,
   earlierError: null,
@@ -271,21 +276,130 @@ function TurnFiles({ taskId }: { taskId: ChatId }) {
   );
 }
 
-function Turn({ turn, bot, onReuse }: { turn: ChatTurn; bot: ChatBot; onReuse?: (content: string) => void }) {
+function mergeDelegations(prev: ChatDelegation[], next: ChatDelegation[]): ChatDelegation[] {
+  const byId = new Map(prev.map((d) => [String(d.id), d]));
+  for (const d of next) byId.set(String(d.id), d);
+  return [...byId.values()].sort((a, b) => Number(a.id) - Number(b.id));
+}
+
+const delegationDone = (d: ChatDelegation) => d.status === "succeeded";
+const delegationFailed = (d: ChatDelegation) => d.status === "failed" || d.status === "canceled";
+
+/** 委派卡片：派给谁、状态、结果，能跳到那个机器人的对话。 */
+function DelegationCard({ d, onOpenBot }: { d: ChatDelegation; onOpenBot: (botId: ChatId) => void }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const k = "botChat.delegation";
+  const tone = delegationDone(d) ? "bg-emerald-500" : delegationFailed(d) ? "bg-red-500" : "bg-amber-500";
+  const result = d.result?.trim() ?? "";
+  return (
+    <div
+      className="mt-3 rounded-lg border border-neutral-200 bg-card p-3 text-[13px] leading-5 dark:border-white/10"
+      data-delegation={String(d.id)}
+      data-delegation-status={d.status}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Send size={14} aria-hidden className="shrink-0 text-neutral-500" />
+        <span className="min-w-0 font-medium break-words text-neutral-900">
+          {t(d.kind === "message" ? `${k}.sentMessage` : `${k}.sentTask`, { bot: d.target_bot_name || `#${String(d.target_bot_id)}` })}
+        </span>
+        <span role="status" className="ml-auto inline-flex items-center gap-1.5 text-xs text-neutral-600">
+          <span aria-hidden className={cx("h-2 w-2 rounded-full", tone, isOpenDelegation(d) && !delegationDone(d) && "animate-pulse")} />
+          {t(`${k}.status.${d.status}`)}
+        </span>
+      </div>
+      <p className="mt-1.5 line-clamp-3 text-xs break-words whitespace-pre-wrap text-neutral-600 [overflow-wrap:anywhere]">{d.content}</p>
+      {d.error && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{t(`${k}.error`, { reason: d.error })}</p>}
+      {result && (
+        <div className="mt-2 border-t border-neutral-100 pt-2 dark:border-white/10">
+          <div className="text-xs font-medium text-neutral-500">{t(`${k}.result`)}</div>
+          <div className={cx("mt-1 text-[13px] text-neutral-800", !open && "line-clamp-4")}>
+            <ChatMarkdown markdown={result} />
+          </div>
+          {result.length > 200 && (
+            <button type="button" onClick={() => setOpen((v) => !v)} className="mt-1 text-xs font-medium text-brand-600 hover:underline dark:text-brand-300">
+              {t(open ? `${k}.less` : `${k}.more`)}
+            </button>
+          )}
+        </div>
+      )}
+      {d.child_conversation_id != null && (
+        <button
+          type="button"
+          onClick={() => onOpenBot(d.target_bot_id)}
+          className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline dark:text-brand-300"
+          data-delegation-open=""
+        >
+          {t(`${k}.open`, { bot: d.target_bot_name })}
+          <ArrowUpRight size={13} aria-hidden />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Turn({
+  turn,
+  bot,
+  delegations,
+  onOpenBot,
+  onReuse,
+}: {
+  turn: ChatTurn;
+  bot: ChatBot;
+  delegations: ChatDelegation[];
+  onOpenBot: (botId: ChatId) => void;
+  onReuse?: (content: string) => void;
+}) {
   const { t, i18n } = useTranslation();
   const pending = isPendingTurn(turn);
   const stopped = turn.status === "failed" || turn.status === "canceled";
+  const sent = delegations.filter((d) => sameId(d.parent_task_id, turn.id));
+  const incoming = delegations.find((d) => sameId(d.child_task_id, turn.id));
+  const results = delegations.filter((d) => sameId(d.followup_task_id, turn.id));
+  const k = "botChat.delegation";
   return (
     <li className="min-w-0" data-turn={String(turn.id)}>
-      <div className="flex flex-col items-end">
-        <span className="sr-only">{t("botChat.thread.you")}</span>
-        <div className="max-w-[88%] rounded-2xl rounded-br-md bg-neutral-100 px-4 py-2.5 text-sm leading-6 break-words whitespace-pre-wrap text-neutral-900 [overflow-wrap:anywhere] sm:max-w-[80%]">
-          {turn.content}
+      {results.length > 0 ? (
+        // 委派结果回来后追加的一轮：不是员工说的话，显示成结果卡片。
+        <div className="flex flex-col items-center" data-delegation-results="">
+          <div className="w-full max-w-[88%] rounded-lg border border-dashed border-neutral-300 px-3.5 py-2.5 text-[13px] leading-5 text-neutral-700 dark:border-white/15 sm:max-w-[80%]">
+            <div className="font-medium text-neutral-900">{t(`${k}.resultsBack`)}</div>
+            <ul className="mt-1 space-y-0.5">
+              {results.map((d) => (
+                <li key={String(d.id)} className="text-xs text-neutral-600">
+                  {d.target_bot_name} · {t(`${k}.status.${d.status}`)}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <time dateTime={turn.created_at} className="mt-1 text-[11px] text-neutral-400">
+            {formatTimeOnly(turn.created_at, i18n.language)}
+          </time>
         </div>
-        <time dateTime={turn.created_at} className="mt-1 text-[11px] text-neutral-400">
-          {formatTimeOnly(turn.created_at, i18n.language)}
-        </time>
-      </div>
+      ) : (
+        <div className="flex flex-col items-end">
+          {incoming ? (
+            <button
+              type="button"
+              onClick={() => onOpenBot(incoming.parent_bot_id)}
+              className="mb-1 inline-flex items-center gap-1 text-[11px] font-medium text-neutral-500 hover:text-neutral-800"
+              data-delegation-from={String(incoming.parent_bot_id)}
+            >
+              <Send size={12} aria-hidden />
+              {t(incoming.kind === "message" ? `${k}.fromMessage` : `${k}.fromTask`, { bot: incoming.parent_bot_name })}
+            </button>
+          ) : (
+            <span className="sr-only">{t("botChat.thread.you")}</span>
+          )}
+          <div className="max-w-[88%] rounded-2xl rounded-br-md bg-neutral-100 px-4 py-2.5 text-sm leading-6 break-words whitespace-pre-wrap text-neutral-900 [overflow-wrap:anywhere] sm:max-w-[80%]">
+            {turn.content}
+          </div>
+          <time dateTime={turn.created_at} className="mt-1 text-[11px] text-neutral-400">
+            {formatTimeOnly(turn.created_at, i18n.language)}
+          </time>
+        </div>
+      )}
       <div className="mt-3 flex min-w-0 gap-2.5 sm:gap-3">
         <DotFace seed={bot.id} size={28} />
         <div className="min-w-0 flex-1 pt-0.5 text-sm leading-6 text-neutral-800">
@@ -299,6 +413,9 @@ function Turn({ turn, bot, onReuse }: { turn: ChatTurn; bot: ChatBot; onReuse?: 
           {turn.status === "succeeded" &&
             (turn.summary.trim() ? <ChatMarkdown markdown={turn.summary} /> : <p className="text-sm text-neutral-500">{t("botChat.reply.noText")}</p>)}
           {turn.status === "succeeded" && <TurnFiles taskId={turn.id} />}
+          {sent.map((d) => (
+            <DelegationCard key={String(d.id)} d={d} onOpenBot={onOpenBot} />
+          ))}
           {stopped && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <span className={cx("inline-flex items-start gap-1.5", turn.status === "failed" ? "text-red-600 dark:text-red-400" : "text-neutral-500")}>
@@ -401,13 +518,25 @@ function ComputerCard({
         <Monitor size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.computerTitle")}</h3>
+            <h3 className="text-[13px] font-semibold text-neutral-900">
+              {computer?.owner_kind === "team"
+                ? t(`${k}.teamTitle`, { department: computer.department ?? "" })
+                : computer
+                  ? t(`${k}.myTitle`)
+                  : t("botChat.profile.activity.computerTitle")}
+            </h3>
             <span role="status" className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-700">
               <span aria-hidden className={cx("h-2 w-2 rounded-full", dot, pulse && "animate-pulse")} />
               {label}
             </span>
           </div>
           <p className="mt-1 text-xs leading-5 text-neutral-500">{desc}</p>
+          {persistent && computer?.owner_kind === "team" && <p className="mt-1 text-xs leading-5 text-neutral-500">{t(`${k}.teamShared`)}</p>}
+          {persistent && computer?.owner_kind !== "team" && (computer?.shared_bots ?? 0) > 1 && (
+            <p className="mt-1 text-xs leading-5 text-neutral-500" data-computer-shared-bots={String(computer?.shared_bots ?? 0)}>
+              {t(`${k}.shared`, { count: computer?.shared_bots ?? 0 })}
+            </p>
+          )}
           {exists && (
             <div className="mt-2.5 space-y-1.5">
               <div className="flex items-center justify-between gap-2 text-xs text-neutral-600">
@@ -700,6 +829,11 @@ function Workspace({
     if (!sameId(bot.id, selKey)) setParams({ bot: String(bot.id) });
     setListOpen(false);
   };
+  /** 委派卡片上的「打开对话」：只跳到当前员工能对话的机器人。 */
+  const openBot = (botId: ChatId) => {
+    const bot = botsRef.current.find((b) => sameId(b.id, botId));
+    if (bot) selectBot(bot);
+  };
 
   // ---------- 每个机器人的对话 ----------
   const [threads, setThreads] = useState<Record<string, Thread>>({});
@@ -746,6 +880,7 @@ function Workspace({
                 status: "ready",
                 convId: id,
                 messages: [...kept, ...d.messages],
+                delegations: mergeDelegations(prev?.status === "ready" ? prev.delegations : [], d.delegations ?? []),
                 nextBefore: kept.length && prev ? prev.nextBefore : (d.next_before ?? null),
                 earlierLoading: prev?.earlierLoading ?? false,
                 earlierError: prev?.earlierError ?? null,
@@ -797,7 +932,16 @@ function Workspace({
               if (!prev || prev.status !== "ready") return s;
               const older = d.messages.filter((m) => !prev.messages.some((x) => sameId(x.id, m.id)));
               // 这一页没带来任何新内容就当作到头了，避免对着同一个 before 反复请求
-              return { ...s, [key]: { ...prev, messages: [...older, ...prev.messages], nextBefore: older.length ? (d.next_before ?? null) : null, earlierLoading: false } };
+              return {
+                ...s,
+                [key]: {
+                  ...prev,
+                  messages: [...older, ...prev.messages],
+                  delegations: mergeDelegations(prev.delegations, d.delegations ?? []),
+                  nextBefore: older.length ? (d.next_before ?? null) : null,
+                  earlierLoading: false,
+                },
+              };
             });
           },
           (err: unknown) => {
@@ -835,7 +979,8 @@ function Workspace({
   const pendingKeys = bots
     .filter((b) => {
       const th = threads[String(b.id)];
-      return th?.status === "ready" && th.messages.some(isPendingTurn);
+      // 派出去的任务还没结果（或结果回来的那一轮还没出现）时也要轮询，卡片状态才会更新。
+      return th?.status === "ready" && (th.messages.some(isPendingTurn) || th.delegations.some(isOpenDelegation));
     })
     .map((b) => String(b.id))
     .join("\n");
@@ -1388,7 +1533,16 @@ function Workspace({
                     );
                   }
                   if (day) prevDay = day;
-                  items.push(<Turn key={String(m.id)} turn={m} bot={selected} onReuse={botDisabled ? undefined : reuseContent} />);
+                  items.push(
+                    <Turn
+                      key={String(m.id)}
+                      turn={m}
+                      bot={selected}
+                      delegations={thread?.delegations ?? []}
+                      onOpenBot={openBot}
+                      onReuse={botDisabled ? undefined : reuseContent}
+                    />,
+                  );
                   return items;
                 })}
               </ol>

@@ -874,6 +874,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		if len(c.kbases) > 0 {
 			tools = append(tools, kbToolDefs()...)
 		}
+		// 云端机器人的协作工具：只在属于个人机器人的一轮里（按这一轮的短期令牌认）出现。
+		if pr.RuntimeReadOnly {
+			if _, err := s.runtimeBotCaller(r.Context(), pr); err == nil {
+				tools = append(tools, botsToolDefs()...)
+			}
+		}
 		if !pr.RuntimeReadOnly {
 			if targets := s.appToolTargets(r.Context(), v, c); len(targets) > 0 {
 				tools = append(tools, appToolDefs(targets)...)
@@ -916,6 +922,10 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.HasPrefix(p.Name, "ee_") {
 			writeRPC(w, msg.ID, s.agentCall(r, pr, p.Name, p.Arguments), nil)
+			return
+		}
+		if strings.HasPrefix(p.Name, botsConn+"__") {
+			writeRPC(w, msg.ID, s.botsCall(r, pr, p.Name, p.Arguments), nil)
 			return
 		}
 		if strings.HasPrefix(p.Name, dataConn+"__") {

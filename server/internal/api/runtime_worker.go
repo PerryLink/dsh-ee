@@ -93,9 +93,12 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 		return
 	}
 	if status == store.RuntimeQueued {
+		s.cancelPendingDelegations(finish, task)
 		return
 	}
 	s.auditSystem(finish, "runtime.task."+status, strconv.FormatInt(task.ID, 10), map[string]any{"run_as": task.RunAsID, "attempt": task.Attempts})
+	// 这一轮记下的委派在电脑释放之后才派出去；这一轮是委派出来的，就看看结果能不能交回发起方。
+	s.settleDelegations(finish, task, status)
 	// 网页对话轮次的 BotID 为空（机器人记在对话上），结果只在网页里看，不投递飞书。
 	if task.BotID != nil && task.ChatConversationID == nil {
 		s.deliverCloudTask(finish, task, status, summary)
@@ -153,6 +156,13 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 		CreatedBy: task.RunAsID,
 	}
 	if err := s.store.CreateAccessToken(ctx, t, secret.Hash(raw)); err != nil {
+		return "", nil, errors.New("creating cloud task credential failed")
+	}
+	// /mcp 上的机器人协作工具按令牌找回这一轮。记不下来就吊销，不留一张找不回任务的令牌。
+	if err := s.store.SetRuntimeTaskCredential(ctx, t.ID, task.ID); err != nil {
+		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stop()
+		_ = s.store.RevokeToken(c, t.ID)
 		return "", nil, errors.New("creating cloud task credential failed")
 	}
 	revoke := func() bool {
@@ -214,7 +224,12 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	defer func() { computer.close(releaseComputer) }()
 	sandbox := computer.sandbox
 	// 产物目录每轮清空（上一轮的产物已经收走）；工作目录和 DSH 主目录在常驻电脑上跨轮保留。
-	for _, args := range [][]string{{"rm", "-rf", runtimeOutputDir}, {"mkdir", "-p", runtimeOutputDir, runtimeWorkDir, runtimeHomeDir}} {
+	// 常驻电脑上每个机器人有自己的工作目录和 DSH 主目录，另有一个共享目录。
+	dirs := []string{"mkdir", "-p", runtimeOutputDir, computer.workDir, computer.homeDir}
+	if computer.persistent {
+		dirs = append(dirs, runtimeSharedDir)
+	}
+	for _, args := range [][]string{{"rm", "-rf", runtimeOutputDir}, dirs} {
 		setup, err := sandbox.Exec(ctx, runtime.Command{Args: args, Timeout: 10 * time.Second})
 		if err != nil || setup.ExitCode != 0 {
 			return "", nil, errors.New("preparing cloud sandbox failed")
@@ -237,7 +252,11 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	}
 	if computer.persistent {
 		// 只往前加：网页对话的当前消息必须留在提示词最后。
-		prompt = runtimeComputerNote + prompt
+		prompt = runtimeComputerNote(computer.ownerKind, computer.botID) + prompt
+	}
+	if computer.persistent && computer.botID != 0 {
+		// 机器人协作工具（bots__*）的用法：同一台电脑上的机器人才谈得上互相派任务、共享文件。只往前加。
+		prompt = runtimeDelegationNote + prompt
 	}
 	args := make([]string, len(opts.Command))
 	for i, arg := range opts.Command {
@@ -253,8 +272,8 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	}
 	deadline, _ := ctx.Deadline()
 	var final runtime.DSHFinalOutput
-	cmd := runtime.Command{Args: args, Dir: runtimeWorkDir, Timeout: time.Until(deadline), Env: map[string]string{
-		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": runtimeHomeDir, "DSH_EE_OUTPUT_DIR": runtimeOutputDir,
+	cmd := runtime.Command{Args: args, Dir: computer.workDir, Timeout: time.Until(deadline), Env: map[string]string{
+		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": computer.homeDir, "DSH_EE_OUTPUT_DIR": runtimeOutputDir,
 	}}
 	if slices.Contains(opts.Command, "--json") {
 		cmd.OnStdout = final.Add

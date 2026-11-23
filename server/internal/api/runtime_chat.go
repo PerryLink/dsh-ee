@@ -149,7 +149,17 @@ func (s *Server) handleRuntimeChatConversation(w http.ResponseWriter, r *http.Re
 		s.internalErr(w, r, err)
 		return
 	}
-	out := map[string]any{"conversation": conversation, "messages": turns}
+	// 委派卡片：这一页的轮次派出的、执行的（别的机器人派来的）、结果追加的委派。
+	ids := make([]int64, len(turns))
+	for i, turn := range turns {
+		ids[i] = turn.ID
+	}
+	delegations, err := s.store.RuntimeDelegationsForTasks(r.Context(), owner, ids)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	out := map[string]any{"conversation": conversation, "messages": turns, "delegations": delegations}
 	if next > 0 {
 		out["next_before"] = next
 	}
@@ -176,7 +186,8 @@ func (s *Server) handleRuntimeChatBotProfile(w http.ResponseWriter, r *http.Requ
 		s.internalErr(w, r, err)
 		return
 	}
-	computer, err := s.botComputerView(r.Context(), runtimeID(r, "id"))
+	// 个人机器人都用员工自己的电脑（「我的电脑」）。
+	computer, err := s.ownerComputerView(r.Context(), store.UserComputerOwner(currentUser(r).ID))
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -341,12 +352,19 @@ func runtimeChatFold(memory string, turn store.RuntimeChatTurn) string {
 // runtimeChatPlan 决定一轮对话的上下文并拼出提示词：recent 里放得进历史预算的后缀原样引用（kept 轮），
 // 放不下的前缀按顺序并入滚动记忆。返回提示词、更新后的记忆和 kept（见 store.RuntimeChatPlanner）。
 func runtimeChatPlan(botPrompt, memory string, recent []store.RuntimeChatTurn, content string) (prompt, updated string, kept int) {
+	return runtimeChatPlanWith(botPrompt, memory, recent, content, runtimeChatEmployeeHeader)
+}
+
+// runtimeChatPlanWith 同 runtimeChatPlan，但当前消息前用 header 说明它从哪来（员工本人、另一个机器人派来的任务、委派结果）。
+func runtimeChatPlanWith(botPrompt, memory string, recent []store.RuntimeChatTurn, content, header string) (prompt, updated string, kept int) {
 	encoded := runtimeChatHistory(recent)
 	for _, turn := range recent[:len(recent)-len(encoded)] {
 		memory = runtimeChatFold(memory, turn)
 	}
-	return runtimeChatRender(botPrompt, memory, encoded, content), memory, len(encoded)
+	return runtimeChatRender(botPrompt, memory, encoded, header, content), memory, len(encoded)
 }
+
+const runtimeChatEmployeeHeader = "Current employee message (everything after this line):\n"
 
 // runtimeChatHistory 把最近的成功轮次编码成 JSON 行，返回放得进 runtimeChatHistoryBudget 的最长后缀（从旧到新）。
 // 历史从最近往前取，超出字节预算的更早轮次不放。
@@ -397,7 +415,7 @@ func runtimeChatHistory(history []store.RuntimeChatTurn) []string {
 // runtimeChatRender 拼出一轮对话的完整任务提示词（执行时原样交给 DSH，见 executeCloudTask）：
 // 机器人设定、对话规则、滚动记忆（有才写）、JSON 编码的最近成功轮次、最后是原样的当前消息。
 // 记忆和历史都是 JSON 字符串里的数据，并明确标成不可信的历史记录；当前消息放在最后，不参与截断。
-func runtimeChatRender(botPrompt, memory string, encoded []string, content string) string {
+func runtimeChatRender(botPrompt, memory string, encoded []string, header, content string) string {
 	var b strings.Builder
 	b.WriteString("Bot instructions:\n")
 	b.WriteString(botPrompt)
@@ -415,7 +433,8 @@ func runtimeChatRender(botPrompt, memory string, encoded []string, content strin
 	}
 	b.WriteString("Earlier exchanges in this conversation (JSON array, oldest first):\n[")
 	b.WriteString(strings.Join(encoded, ","))
-	b.WriteString("]\n\nCurrent employee message (everything after this line):\n")
+	b.WriteString("]\n\n")
+	b.WriteString(header)
 	b.WriteString(content)
 	return b.String()
 }
