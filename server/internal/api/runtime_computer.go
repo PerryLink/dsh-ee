@@ -209,7 +209,7 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 		c.SandboxID, c.State, c.DiskBytes = "", store.RuntimeComputerWaking, 0
 		c.GatewayHost = gatewayHost
 		if _, ok := pp.(runtime.PersistentRecovery); ok {
-			c.CreationKey = secret.Token()
+			c.CreationKey = runtime.NewPersistentCreationKey()
 		}
 		if err := save(true, false); err != nil {
 			release()

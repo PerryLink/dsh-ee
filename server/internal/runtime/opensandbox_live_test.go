@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hikariming/dsh-ee/server/internal/secret"
 )
 
 // TestLiveOpenSandboxHibernateAndWake 在真实的 OpenSandbox 上验证常驻电脑：写文件、休眠（pause）、
@@ -28,7 +26,7 @@ func TestLiveOpenSandboxHibernateAndWake(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	creationKey := secret.Token()
+	creationKey := NewPersistentCreationKey()
 	box, err := p.CreatePersistent(ctx, SandboxSpec{Image: image, CreationKey: creationKey})
 	if err != nil {
 		t.Fatal(err)

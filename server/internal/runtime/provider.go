@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/hikariming/dsh-ee/server/internal/secret"
 )
 
 type Provider interface {
@@ -43,6 +45,15 @@ type PersistentSandbox interface {
 // PersistentRecovery finds a sandbox from its creation key, or returns ErrSandboxGone.
 type PersistentRecovery interface {
 	FindPersistent(ctx context.Context, creationKey string) (id string, err error)
+}
+
+// NewPersistentCreationKey fits the label constraints of sandbox providers.
+func NewPersistentCreationKey() string {
+	return persistentCreationKey(secret.Token())
+}
+
+func persistentCreationKey(token string) string {
+	return "c" + token + "k"
 }
 
 // PersistentNetworkPolicy replaces, rather than extends, the sandbox egress allowlist.

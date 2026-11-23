@@ -8,11 +8,21 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestPersistentCreationKeyFitsOpenSandboxLabel(t *testing.T) {
+	label := regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,61}[A-Za-z0-9]$`)
+	for _, token := range []string{"-" + strings.Repeat("A", 42), "_" + strings.Repeat("A", 42)} {
+		if key := persistentCreationKey(token); !label.MatchString(key) {
+			t.Errorf("creation key %q is not a valid label value", key)
+		}
+	}
+}
 
 // fakeLifecycle 模拟 OpenSandbox 生命周期 API 的暂停 / 恢复状态机：pause 和 resume 都是异步的，
 // 先进入 Pausing / Resuming，下一次 GET 才落到 Paused / Running。
