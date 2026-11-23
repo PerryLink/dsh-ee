@@ -206,6 +206,9 @@ func (b *fakeBox) Exec(_ context.Context, c runtime.Command) (runtime.Result, er
 			return runtime.Result{Stdout: out}, nil
 		}
 	}
+	if _, message, ok := strings.Cut(prompt, "\n"+runtimeChatEmployeeHeader); ok {
+		prompt = message
+	}
 	switch {
 	case strings.Contains(prompt, "SHARE:"):
 		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "SHARE:")+6:], "\n")
