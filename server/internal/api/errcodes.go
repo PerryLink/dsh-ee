@@ -74,6 +74,12 @@ const (
 	codeRuntimeChatIdempotencyConflict = "runtime_chat.idempotency_conflict"
 	// codeRuntimeChatQueueFull：员工排队或运行中的云任务已达上限，429。params 无。
 	codeRuntimeChatQueueFull = "runtime_chat.queue_full"
+	// codeRuntimeChatTeamForbidden：团队线程或团队机器人没有共享给当前员工所在的部门（包括已取消共享、改了部门、员工调岗），403。params 无。
+	codeRuntimeChatTeamForbidden = "runtime_chat.team_forbidden"
+	// codeRuntimeChatNoDepartment：所有者要共享机器人，但自己的账号没有填部门，409。params 无。
+	codeRuntimeChatNoDepartment = "runtime_chat.no_department"
+	// codeRuntimeChatInvalidDepartment：管理员共享机器人时给的部门名为空白以外的非法值（超长、含控制字符），400。params：max（最大字符数）。
+	codeRuntimeChatInvalidDepartment = "runtime_chat.invalid_department"
 	// codeRuntimeApprovalInvalidMode：云端机器人的审批模式不是 read_only / manual / auto / full，400。params 无。
 	codeRuntimeApprovalInvalidMode = "runtime_approval.invalid_mode"
 	// codeRuntimeApprovalInvalidRules：自动审批规则不合法（空模式、单独的 *、含空白或斜杠、超长或超过条数上限），400。params：max（最多条数）。

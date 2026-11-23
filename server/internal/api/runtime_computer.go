@@ -61,6 +61,9 @@ func (s *Server) cloudTaskBot(ctx context.Context, task *store.RuntimeTask) (int
 		if err != nil {
 			return 0, errors.New("checking the cloud task conversation failed")
 		}
+		if c.Shared {
+			return 0, nil
+		}
 		botID = c.BotID
 	default:
 		return 0, nil

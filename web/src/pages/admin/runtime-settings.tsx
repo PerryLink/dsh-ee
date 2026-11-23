@@ -16,6 +16,8 @@ type Bot = {
   enabled: boolean;
   /** 是否开放网页对话（只对运行身份那位员工）；与定时运行互不影响。旧后端没有这个字段。 */
   web_chat_enabled?: boolean;
+  /** 共享给的部门（员工资料里的部门名）；空串表示不共享。只能走单独的共享接口修改。旧后端没有这个字段。 */
+  shared_department?: string;
   /** 写操作审批模式；旧后端没有这个字段，按只读处理。 */
   approval_mode?: ApprovalMode;
   /** 自动审批规则（工具全名的通配模式），只在 auto 下生效。 */
@@ -78,6 +80,7 @@ export default function RuntimeSettings() {
   const [error, setError] = useState("");
   const [disabled, setDisabled] = useState(false);
   const [busy, setBusy] = useState(true);
+  const [shareDraft, setShareDraft] = useState("");
   /** 自动审批规则的编辑框文字（每行一条）；保存时拆成数组。 */
   const [rulesText, setRulesText] = useState("");
   /** 正在等风险确认的保存：确认后带 confirm_full_access 继续。 */
@@ -129,10 +132,12 @@ export default function RuntimeSettings() {
 
   const edit = (bot: Bot) => {
     setDraft(bot);
+    setShareDraft(bot.shared_department ?? "");
     setRulesText((bot.approval_rules ?? []).join("\n"));
   };
   const reset = () => {
     setDraft(blank);
+    setShareDraft("");
     setRulesText("");
   };
 
@@ -172,7 +177,7 @@ export default function RuntimeSettings() {
       <div className="space-y-2">
         {bots.map((bot) => (
           <div key={bot.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 p-2">
-            <strong className="mr-auto break-all text-sm">{bot.name} <span className="font-normal text-neutral-500">· {bot.schedule}{bot.web_chat_enabled ? ` · ${t("runtime.webChatBadge")}` : ""}</span></strong>
+            <strong className="mr-auto break-all text-sm">{bot.name} <span className="font-normal text-neutral-500">· {bot.schedule}{bot.web_chat_enabled ? ` · ${t("runtime.webChatBadge")}` : ""}{bot.shared_department ? ` · ${t("runtime.sharedBadge", { department: bot.shared_department })}` : ""}</span></strong>
             {modeOf(bot) === "full" ? (
               <span title={t("approval.fullBadgeTitle")}><Badge tone="red">{t("approval.fullBadge")}</Badge></span>
             ) : (
@@ -217,6 +222,29 @@ export default function RuntimeSettings() {
           </label>
           <p id="runtime-web-chat-hint" className="mt-1 pl-6 text-xs leading-5 text-neutral-500">{t("runtime.webChatHint")}</p>
         </div>
+        {draft.id > 0 && (
+          <div>
+            <Field label={t("runtime.share")}>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  className={`${inputCls} min-w-0 flex-1`}
+                  maxLength={128}
+                  value={shareDraft}
+                  placeholder={t("runtime.sharePlaceholder")}
+                  aria-describedby="runtime-share-hint"
+                  onChange={(e) => setShareDraft(e.target.value)}
+                />
+                <Button type="button" variant="secondary" disabled={busy} onClick={() => void perform(async () => {
+                  const saved = await request<Bot>("PUT", `${botsPath}/${draft.id}/share`, { department: shareDraft.trim() });
+                  setDraft({ ...draft, shared_department: saved.shared_department });
+                  setShareDraft(saved.shared_department ?? "");
+                  await load();
+                })}>{t("runtime.shareSave")}</Button>
+              </div>
+            </Field>
+            <p id="runtime-share-hint" className="mt-1 text-xs leading-5 text-neutral-500">{t("runtime.shareHint")}</p>
+          </div>
+        )}
         <fieldset className="space-y-2 rounded-lg border border-neutral-200 p-3 dark:border-white/10">
           <legend className="px-1 text-sm font-medium">{t("approval.admin.mode")}</legend>
           <select

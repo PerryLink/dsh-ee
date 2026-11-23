@@ -25,6 +25,9 @@ var (
 	ErrRuntimeChatBusy = errors.New("runtime chat conversation already has an active turn")
 	// ErrRuntimeChatBotUnavailable：对话绑定的机器人当前不满足网页对话条件。
 	ErrRuntimeChatBotUnavailable = errors.New("runtime chat bot is unavailable")
+	// ErrRuntimeChatTeamForbidden：这是一条团队线程（或团队机器人），当前员工此刻不在它共享给的部门里，
+	// 或者机器人已经取消共享 / 改共享给了别的部门。
+	ErrRuntimeChatTeamForbidden = errors.New("runtime chat team thread is not shared with this employee")
 )
 
 type RuntimeBot struct {
@@ -39,6 +42,9 @@ type RuntimeBot struct {
 	DeliveryTarget string `json:"delivery_target"`
 	// WebChatEnabled 允许所有者本人在网页里与机器人对话；与 Enabled（定时开关）互不影响。
 	WebChatEnabled bool `json:"web_chat_enabled"`
+	// SharedDepartment 是机器人共享给的部门（users.department）；空串表示不共享（默认）。
+	// 只由 SetRuntimeBotShare 写入，SaveRuntimeBot 不改它。
+	SharedDepartment string `json:"shared_department"`
 	// ApprovalMode 是写操作的放行方式（RuntimeApproval*）；ReadOnly 与它保持一致，只读时为 true。
 	ApprovalMode string `json:"approval_mode"`
 	// ApprovalRules 是自动审批的规则：匹配工具全名（<连接>__<工具>）的通配模式，只在 auto 模式下生效。
@@ -71,13 +77,13 @@ func ValidRuntimeApprovalMode(mode string) bool {
 }
 
 const runtimeBotColumns = `id, owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, web_chat_enabled,
-	approval_mode, COALESCE(approval_rules,''), approval_employee_editable, created_at, updated_at`
+	approval_mode, COALESCE(approval_rules,''), approval_employee_editable, shared_department, created_at, updated_at`
 
 func scanRuntimeBot(row interface{ Scan(...any) error }) (*RuntimeBot, error) {
 	var b RuntimeBot
 	var rules string
 	err := row.Scan(&b.ID, &b.OwnerID, &b.RunAsID, &b.Name, &b.Prompt, &b.Schedule, &b.Enabled, &b.ReadOnly, &b.DeliveryTarget, &b.WebChatEnabled,
-		&b.ApprovalMode, &rules, &b.ApprovalEmployeeEditable, &b.CreatedAt, &b.UpdatedAt)
+		&b.ApprovalMode, &rules, &b.ApprovalEmployeeEditable, &b.SharedDepartment, &b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -187,7 +193,8 @@ func (s *Store) RuntimeWriteContextByToken(ctx context.Context, tokenID int64) (
 	err := s.db.QueryRowContext(ctx, `SELECT t.id, t.owner_id, t.run_as_id, t.status, b.id, b.name, b.approval_mode, b.approval_rules
 		FROM runtime_tasks t
 		LEFT JOIN runtime_chat_conversations c ON c.id = t.chat_conversation_id
-		LEFT JOIN runtime_bots b ON b.id = COALESCE(t.bot_id, c.bot_id) AND b.owner_id = t.owner_id AND b.run_as_id = t.run_as_id
+		LEFT JOIN runtime_bots b ON b.id = COALESCE(t.bot_id, IF(c.owner_id=t.owner_id, c.bot_id, NULL))
+			AND b.owner_id = t.owner_id AND b.run_as_id = t.run_as_id
 		WHERE t.credential_token_id=? ORDER BY t.id DESC LIMIT 1`, tokenID).
 		Scan(&w.TaskID, &w.OwnerID, &w.RunAsID, &w.Status, &botID, &name, &mode, &rules)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -566,4 +573,90 @@ func runtimeAffected(res sql.Result, err error) error {
 		return ErrConflict
 	}
 	return err
+}
+
+// SetRuntimeBotShare 把机器人共享给 department（users.department 的取值；空串表示取消共享），返回原来共享给的部门。
+// ownerID>0 时只能改这位员工本人、以本人身份运行的机器人（所有者自己操作），共享时还要求只读且开着网页对话；
+// ownerID=0 是管理员，不限所有者。
+// 取消共享或改到别的部门时，原团队线程里排队 / 运行中的轮次在同一个事务里取消：原部门的成员已经看不到这条线程，
+// 结果不该再写进去；正在运行的轮次由 worker 的状态巡检停下沙箱（见 runCloudClaim）。
+func (s *Store) SetRuntimeBotShare(ctx context.Context, botID, ownerID int64, department string) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var previous string
+	// 所有者取消共享不看网页对话开关（管理员关掉网页对话后所有者仍能收回共享）；共享时才要求机器人此刻可对话。
+	err = tx.QueryRowContext(ctx, `SELECT shared_department FROM runtime_bots
+		WHERE id=? AND (?=0 OR (owner_id=? AND run_as_id=owner_id AND (?='' OR (read_only=1 AND web_chat_enabled=1)))) FOR UPDATE`,
+		botID, ownerID, ownerID, department).Scan(&previous)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	t := now()
+	if previous != department {
+		if _, err := tx.ExecContext(ctx, `UPDATE runtime_bots SET shared_department=?, updated_at=? WHERE id=?`, department, t, botID); err != nil {
+			return "", err
+		}
+	}
+	if previous != "" && previous != department {
+		rows, err := tx.QueryContext(ctx, `SELECT t.id, t.attempts FROM runtime_tasks t
+			JOIN runtime_chat_conversations c ON c.id=t.chat_conversation_id
+			WHERE c.owner_id=0 AND c.bot_id=? AND c.shared_department=? AND t.status IN (?,?) FOR UPDATE`,
+			botID, previous, RuntimeQueued, RuntimeRunning)
+		if err != nil {
+			return "", err
+		}
+		type active struct {
+			id      int64
+			attempt int
+		}
+		var tasks []active
+		for rows.Next() {
+			var a active
+			if err := rows.Scan(&a.id, &a.attempt); err != nil {
+				rows.Close()
+				return "", err
+			}
+			tasks = append(tasks, a)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+		for _, a := range tasks {
+			if _, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, updated_at=?, finished_at=?, lease_until=NULL WHERE id=? AND status IN (?,?)`,
+				RuntimeCanceled, t, t, a.id, RuntimeQueued, RuntimeRunning); err != nil {
+				return "", err
+			}
+			if err := appendRuntimeEvent(ctx, tx, a.id, RuntimeCanceled, a.attempt, t); err != nil {
+				return "", err
+			}
+		}
+	}
+	return previous, tx.Commit()
+}
+
+// RuntimeTeamChatTask 返回团队线程里的一轮（云任务），条件是这条线程此刻对 userID 可见（见 runtimeChatTeamVisible）。
+// 任务存在且属于团队线程、但员工看不到时是 ErrRuntimeChatTeamForbidden；不是团队线程的任务一律 ErrNotFound。
+// 只给产物查看和下载用：事件、取消仍然只认触发这一轮的员工本人。
+func (s *Store) RuntimeTeamChatTask(ctx context.Context, taskID, userID int64) (*RuntimeTask, error) {
+	task, err := scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks WHERE id=? AND chat_conversation_id IN
+		(SELECT c.id FROM runtime_chat_conversations c JOIN runtime_bots b ON b.id=c.bot_id WHERE `+runtimeChatTeamVisible+`)`, taskID, userID))
+	if !errors.Is(err, ErrNotFound) {
+		return task, err
+	}
+	var team int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_tasks t JOIN runtime_chat_conversations c ON c.id=t.chat_conversation_id
+		WHERE t.id=? AND c.owner_id=0`, taskID).Scan(&team); err != nil {
+		return nil, err
+	}
+	if team > 0 {
+		return nil, ErrRuntimeChatTeamForbidden
+	}
+	return nil, ErrNotFound
 }
