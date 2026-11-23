@@ -104,13 +104,13 @@ func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *stor
 	if t.ReadOnly || mode == confirmOff || (mode == confirmNonDSH && v.isDSHToken()) {
 		return nil
 	}
-	return s.askConfirmation(r, v, a.ID, t.Name, "这个操作会修改「"+a.Title+"」里的数据，要先由你本人在网页上确认，现在还没有执行。", args)
+	return s.askConfirmation(r, v, a.ID, 0, t.Name, "这个操作会修改「"+a.Title+"」里的数据，要先由你本人在网页上确认，现在还没有执行。", args)
 }
 
 // askConfirmation 是服务端确认的核心（不看全局方式）：有本人同意过、还没用过的同参数确认就用掉它并返回 nil（可以执行），
 // 否则返回请员工确认的结果。assetID 为 0 表示不属于企业连接的操作（例如机器人新建机器人，见 runtime_delegation.go），
 // what 是确认文本的第一句。
-func (s *Server) askConfirmation(r *http.Request, v viewer, assetID int64, tool, what string, args json.RawMessage) json.RawMessage {
+func (s *Server) askConfirmation(r *http.Request, v viewer, assetID, runtimeTaskID int64, tool, what string, args json.RawMessage) json.RawMessage {
 	ctx := r.Context()
 	text, hash := canonicalArgs(args)
 	if len(text) > confirmMaxArgs {
@@ -152,7 +152,7 @@ func (s *Server) askConfirmation(r *http.Request, v viewer, assetID int64, tool,
 		return ask(pending.ID, pending.ExpiresAt)
 	}
 	c := &store.WriteConfirmation{UserID: v.user.ID, AssetID: assetID, Tool: tool, ArgsHash: hash, Args: text, TokenID: v.tokenID,
-		Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
+		RuntimeTaskID: runtimeTaskID, Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
 	if err := s.store.CreateWriteConfirmation(ctx, c, secret.Hash(secret.Token()), confirmPendingTTL); err != nil {
 		s.log.Warn("创建写操作确认失败", "err", err)
 		return mcp.TextResult("没能发起确认，请稍后再试。", true)

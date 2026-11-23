@@ -7,6 +7,8 @@
  * - 中：选中机器人的那条对话。选中项写在地址里（?bot=<id>），刷新、前进后退都能回到原处；
  *   旧的 ?conversation=<id> 链接会换算成对应的机器人。
  * - 右：机器人资料（动态 / 文件库），可关闭；定时任务只读，开关仍由管理员在后台操作。
+ * - 团队共享：机器人共享给员工所在的部门后，列表里多一个「团队」入口，部门同事共用一条对话，每条消息标出发送人；
+ *   每一轮以发消息的人自己的权限运行。所有者可以在资料栏里把自己的机器人共享给自己所在的部门或取消共享。
  *
  * 沿用原有的保护：有排队 / 运行中的回复时才轮询，且上一次请求回来之后才发下一次；
  * 本地追加消息之前发出的读取结果一律丢弃；发送失败时内容留在输入框里，重试复用同一个幂等键。
@@ -14,9 +16,10 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, ArrowUpRight, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Maximize2, Minimize2, Monitor, RefreshCw, Send, Users, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Maximize2, Minimize2, Monitor, RefreshCw, Send, Share2, ShieldAlert, ShieldCheck, Users, X } from "lucide-react";
 import { Badge, Button, Card, Empty, Notice, Spinner, cx, tabCls, tabListCls } from "../components/ui";
 import { ChatMarkdown } from "../components/chat-markdown";
+import { FullAccessDialog } from "../components/full-access-dialog";
 import { BotWhale } from "../components/bot-whale";
 import { WhaleMark } from "../components/whale-mark";
 import { FilePreviewDialog, type PreviewFile } from "../components/bot-file-preview";
@@ -24,7 +27,10 @@ import { useAuth } from "../lib/auth";
 import { useConfirm } from "../lib/confirm";
 import { formatBytes, formatDateOnly, formatDateTime, formatNumber, formatTimeOnly, resolveLang } from "../lib/format";
 import {
+  APPROVAL_MODES,
   CHAT_CONTENT_MAX_BYTES,
+  botRef,
+  approvalModeOf,
   chatApi,
   getLastRead,
   isOpenDelegation,
@@ -32,9 +38,12 @@ import {
   newIdempotencyKey,
   sameId,
   setLastRead,
+  teamKey,
   toChatError,
   useChatBots,
   utf8Bytes,
+  type ApprovalMode,
+  type ChatApproval,
   type ChatArtifact,
   type ChatBot,
   type ChatBotProfile,
@@ -354,20 +363,103 @@ function DelegationCard({ d, onOpenBot }: { d: ChatDelegation; onOpenBot: (botId
   );
 }
 
+/** 参数 JSON 排版成多行，读不懂就原样显示。 */
+function prettyArgs(args: string): string {
+  try {
+    return JSON.stringify(JSON.parse(args), null, 2);
+  } catch {
+    return args;
+  }
+}
+
+/**
+ * 审批卡：机器人在这一轮里要做的一个写操作，停在服务端等员工决定。批准后机器人才执行并接着回复；
+ * 拒绝或过期都不执行。卡片说明要改哪个系统、做什么操作、影响的数据（参数原样给出）。
+ */
+function ApprovalCard({ approval, bot, onDecided }: { approval: ChatApproval; bot: ChatBot; onDecided: (id: ChatId) => void }) {
+  const { t, i18n } = useTranslation();
+  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [error, setError] = useState("");
+  const decide = async (approve: boolean) => {
+    setBusy(approve ? "approve" : "reject");
+    setError("");
+    try {
+      await chatApi.decide(approval.id, approve);
+      onDecided(approval.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(null);
+    }
+  };
+  const titleId = `approval-${String(approval.id)}-title`;
+  return (
+    <section
+      aria-labelledby={titleId}
+      data-approval-card={String(approval.id)}
+      className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-sm dark:border-amber-400/25 dark:bg-amber-500/10"
+    >
+      <h3 id={titleId} className="flex items-center gap-1.5 font-semibold text-amber-900 dark:text-amber-200">
+        <ShieldCheck size={16} aria-hidden />
+        {t("approval.card.title")}
+      </h3>
+      <p className="mt-1 leading-6 text-neutral-700 dark:text-neutral-300">
+        {approval.system ? t("approval.card.desc", { bot: bot.name, system: approval.system }) : t("approval.card.descNoSystem", { bot: bot.name })}
+      </p>
+      <dl className="mt-2 space-y-1.5">
+        <div>
+          <dt className="text-xs font-medium text-neutral-500">{t("approval.card.tool")}</dt>
+          <dd className="break-words">
+            <code className="rounded bg-white/70 px-1 py-0.5 text-[13px] dark:bg-white/10">{approval.tool}</code>
+            {approval.description && <span className="ml-1.5 text-neutral-700 dark:text-neutral-300">{approval.description}</span>}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-neutral-500">{t("approval.card.args")}</dt>
+          <dd>
+            <pre className="mt-0.5 max-h-56 overflow-auto rounded-md bg-white/80 p-2 text-[12px] leading-5 break-words whitespace-pre-wrap dark:bg-black/20">{prettyArgs(approval.args)}</pre>
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-xs text-neutral-500">{t("approval.card.expires", { time: formatTimeOnly(approval.expires_at, i18n.language) })}</p>
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+          {t("approval.card.failed", { reason: error })}
+        </p>
+      )}
+      <div className="mt-2.5 flex gap-2">
+        <Button type="button" size="sm" disabled={busy !== null} onClick={() => void decide(true)} data-approval-approve="">
+          {busy === "approve" && <Spinner size={13} />}
+          {busy === "approve" ? t("approval.card.deciding") : t("approval.card.approve")}
+        </Button>
+        <Button type="button" size="sm" variant="secondary" disabled={busy !== null} onClick={() => void decide(false)} data-approval-reject="">
+          {busy === "reject" && <Spinner size={13} />}
+          {busy === "reject" ? t("approval.card.deciding") : t("approval.card.reject")}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function Turn({
   turn,
   bot,
+  me,
   delegations,
   onOpenBot,
   onReuse,
   onPreview,
+  approvals = [],
+  onDecided,
 }: {
   turn: ChatTurn;
   bot: ChatBot;
+  me: number;
   delegations: ChatDelegation[];
   onOpenBot: (botId: ChatId) => void;
   onReuse?: (content: string) => void;
   onPreview: (file: PreviewFile) => void;
+  approvals?: ChatApproval[];
+  onDecided?: (id: ChatId) => void;
 }) {
   const { t, i18n } = useTranslation();
   const pending = isPendingTurn(turn);
@@ -376,6 +468,9 @@ function Turn({
   const incoming = delegations.find((d) => sameId(d.child_task_id, turn.id));
   const results = delegations.filter((d) => sameId(d.followup_task_id, turn.id));
   const k = "botChat.delegation";
+  // 团队会话：每条消息标出是谁发的（自己发的标「我」），别人的消息也就不能「重新编辑」。
+  const team = turn.sender_id != null;
+  const mine = !team || sameId(turn.sender_id, me);
   return (
     <li className="bc-rise min-w-0" data-turn={String(turn.id)}>
       {results.length > 0 ? (
@@ -407,6 +502,10 @@ function Turn({
               <Send size={12} aria-hidden />
               {t(incoming.kind === "message" ? `${k}.fromMessage` : `${k}.fromTask`, { bot: incoming.parent_bot_name })}
             </button>
+          ) : team ? (
+            <span className="mb-1 text-xs font-medium text-neutral-500" data-turn-sender="">
+              {mine ? t("botChat.thread.youNamed", { name: turn.sender_name ?? "" }) : turn.sender_name}
+            </span>
           ) : (
             <span className="sr-only">{t("botChat.thread.you")}</span>
           )}
@@ -429,6 +528,9 @@ function Turn({
               <span>{t(turn.status === "queued" ? "botChat.reply.queued" : "botChat.reply.running")}</span>
             </div>
           )}
+          {approvals.filter((a) => pending || a.tool === "bots__create").map((a) => (
+            <ApprovalCard key={String(a.id)} approval={a} bot={bot} onDecided={(id) => onDecided?.(id)} />
+          ))}
           {turn.status === "succeeded" &&
             (turn.summary.trim() ? <ChatMarkdown markdown={turn.summary} /> : <p className="text-sm text-neutral-500">{t("botChat.reply.noText")}</p>)}
           {turn.status === "succeeded" && <TurnFiles taskId={turn.id} onPreview={onPreview} />}
@@ -441,7 +543,7 @@ function Turn({
                 <CircleAlert size={15} aria-hidden className="mt-[3px] shrink-0" />
                 {t(turn.status === "failed" ? "botChat.reply.failed" : "botChat.reply.canceled")}
               </span>
-              {onReuse && (
+              {onReuse && mine && (
                 <button
                   type="button"
                   onClick={() => onReuse(turn.content)}
@@ -581,7 +683,7 @@ function ComputerCard({
               {error}
             </p>
           )}
-          {exists && (
+          {exists && computer.owner_kind !== "team" && (
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -615,6 +717,8 @@ function ProfilePane({
   closeRef,
   onClose,
   onRetry,
+  myDepartment,
+  onShare,
   onPreview,
 }: {
   id: string;
@@ -625,10 +729,28 @@ function ProfilePane({
   closeRef: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onRetry: () => void;
+  /** 当前员工所在的部门：所有者只能把机器人共享给它。 */
+  myDepartment: string;
+  /** 所有者共享 / 取消共享自己的机器人；成功后刷新机器人列表。 */
+  onShare: (shared: boolean) => Promise<void>;
   onPreview: (file: PreviewFile) => void;
 }) {
   const { shown, leaving } = usePresence(open);
   const { t, i18n } = useTranslation();
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareError, setShareError] = useState<ChatError | null>(null);
+  const sharedTo = bot.shared ? "" : (bot.shared_department ?? "");
+  const botKey = String(bot.id);
+  useEffect(() => {
+    setShareError(null);
+  }, [botKey]);
+  const toggleShare = (next: boolean) => {
+    setShareBusy(true);
+    setShareError(null);
+    onShare(next)
+      .catch((err: unknown) => setShareError(toChatError(err, "runtime")))
+      .finally(() => setShareBusy(false));
+  };
   const lang = i18n.language;
   const [tab, setTab] = useState<ProfileTab>("activity");
   const tabRefs = useRef<Partial<Record<ProfileTab, HTMLButtonElement | null>>>({});
@@ -725,41 +847,112 @@ function ProfilePane({
             )}
             {tab === "activity" && (
               <div className="flex flex-col gap-3">
-                <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-schedule="">
-                  <div className="flex items-start gap-2.5">
-                    <CalendarClock size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.scheduleTitle")}</h3>
-                        {data.schedule && (
-                          <Badge tone={data.schedule_enabled ? "green" : "slate"}>
-                            {t(data.schedule_enabled ? "botChat.profile.activity.on" : "botChat.profile.activity.off")}
-                          </Badge>
+                {data.shared ? (
+                  <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-team="">
+                    <div className="flex items-start gap-2.5">
+                      <Users size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.team.title")}</h3>
+                          {data.department && <Badge tone="brand">{data.department}</Badge>}
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-neutral-600">
+                          {t("botChat.profile.team.desc", { department: data.department ?? "", owner: bot.owner_name ?? "" })}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-3 flex items-start gap-1.5 border-t border-neutral-200 pt-2.5 text-xs leading-5 text-neutral-500 dark:border-white/10">
+                      <ShieldCheck size={12} aria-hidden className="mt-1 shrink-0" />
+                      {t("botChat.profile.team.identity")}
+                    </p>
+                  </section>
+                ) : (
+                  <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-schedule="">
+                    <div className="flex items-start gap-2.5">
+                      <CalendarClock size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.scheduleTitle")}</h3>
+                          {data.schedule && (
+                            <Badge tone={data.schedule_enabled ? "green" : "slate"}>
+                              {t(data.schedule_enabled ? "botChat.profile.activity.on" : "botChat.profile.activity.off")}
+                            </Badge>
+                          )}
+                        </div>
+                        {data.schedule ? (
+                          <>
+                            {localTime && <p className="mt-1 text-sm text-neutral-800">{t("botChat.profile.activity.scheduleAt", { time: localTime })}</p>}
+                            <p className="mt-1 text-xs break-words text-neutral-500">
+                              {t("botChat.profile.activity.scheduleCron", { cron: data.schedule })}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-1 text-[13px] text-neutral-500">{t("botChat.profile.activity.scheduleNone")}</p>
                         )}
                       </div>
-                      {data.schedule ? (
-                        <>
-                          {localTime && <p className="mt-1 text-sm text-neutral-800">{t("botChat.profile.activity.scheduleAt", { time: localTime })}</p>}
-                          <p className="mt-1 text-xs break-words text-neutral-500">
-                            {t("botChat.profile.activity.scheduleCron", { cron: data.schedule })}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="mt-1 text-[13px] text-neutral-500">{t("botChat.profile.activity.scheduleNone")}</p>
-                      )}
                     </div>
-                  </div>
-                  <p className="mt-3 flex items-start gap-1.5 border-t border-neutral-200 pt-2.5 text-xs leading-5 text-neutral-500 dark:border-white/10">
-                    <Lock size={12} aria-hidden className="mt-1 shrink-0" />
-                    {t("botChat.profile.activity.readonly")}
-                  </p>
-                </section>
-                <ComputerCard key={String(bot.id)} botId={bot.id} running={data.running} computer={data.computer ?? null} onChanged={onRetry} />
+                    <p className="mt-3 flex items-start gap-1.5 border-t border-neutral-200 pt-2.5 text-xs leading-5 text-neutral-500 dark:border-white/10">
+                      <Lock size={12} aria-hidden className="mt-1 shrink-0" />
+                      {t("botChat.profile.activity.readonly")}
+                    </p>
+                  </section>
+                )}
+                {!data.shared && (
+                  <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-share="">
+                    <div className="flex items-start gap-2.5">
+                      <Share2 size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.share.title")}</h3>
+                          <Badge tone={sharedTo ? "green" : "slate"}>
+                            {sharedTo ? t("botChat.profile.share.on", { department: sharedTo }) : t("botChat.profile.share.off")}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-neutral-600">
+                          {sharedTo
+                            ? t("botChat.profile.share.onDesc", { department: sharedTo })
+                            : myDepartment
+                              ? t("botChat.profile.share.offDesc", { department: myDepartment })
+                              : t("botChat.profile.share.noDepartment")}
+                        </p>
+                        {(sharedTo || myDepartment) && (
+                          <Button
+                            type="button"
+                            variant={sharedTo ? "secondary" : "primary"}
+                            size="sm"
+                            className="mt-2.5"
+                            disabled={shareBusy}
+                            onClick={() => toggleShare(!sharedTo)}
+                            data-share-toggle=""
+                          >
+                            {shareBusy && <Spinner size={13} />}
+                            {sharedTo ? t("botChat.profile.share.stop") : t("botChat.profile.share.start", { department: myDepartment })}
+                          </Button>
+                        )}
+                        {shareError && (
+                          <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
+                            {t("botChat.profile.share.failed", { reason: errText(shareError) })}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="mt-3 flex items-start gap-1.5 border-t border-neutral-200 pt-2.5 text-xs leading-5 text-neutral-500 dark:border-white/10">
+                      <ShieldCheck size={12} aria-hidden className="mt-1 shrink-0" />
+                      {t("botChat.profile.share.identity")}
+                    </p>
+                  </section>
+                )}
+                <ComputerCard key={String(bot.id)} botId={botRef(bot)} running={data.running} computer={data.computer ?? null} onChanged={onRetry} />
               </div>
+            )}
+            {tab === "library" && data.shared && (
+              <p className="mb-3 text-xs leading-5 text-neutral-500" data-profile-team-library="">
+                {t("botChat.profile.library.team", { department: data.department ?? "" })}
+              </p>
             )}
             {tab === "library" && (
               <>
-                <p className="mb-3 text-xs leading-5 text-neutral-500">{t("botChat.profile.library.hint")}</p>
+                {!data.shared && <p className="mb-3 text-xs leading-5 text-neutral-500">{t("botChat.profile.library.hint")}</p>}
                 {data.artifacts.length ? (
                   <ul className="flex flex-col gap-2" data-profile-library="">
                     {data.artifacts.map((file) => {
@@ -826,6 +1019,7 @@ function Workspace({
   botsError: ChatError | null;
 }) {
   const { t, i18n } = useTranslation();
+  const { user } = useAuth();
   const lang = i18n.language;
   const alive = useAlive();
   const composerId = useId();
@@ -845,7 +1039,7 @@ function Workspace({
     chatApi
       .conversation(convParam)
       .then(
-        (d) => String(d.conversation.bot_id),
+        (d) => (d.conversation.shared ? teamKey(d.conversation.bot_id) : String(d.conversation.bot_id)),
         () => null,
       )
       .then((botId) => {
@@ -923,7 +1117,7 @@ function Workspace({
           let convId = ctl.convId ?? (!ctl.skipListed && bot.thread_id != null ? String(bot.thread_id) : null);
           if (!convId) {
             // 还没聊过：用幂等的创建接口取得这条对话，不会多出第二条
-            const c = await chatApi.createConversation(bot.id);
+            const c = await chatApi.createConversation(bot);
             if (c?.id == null) throw new Error("missing thread id");
             convId = String(c.id);
           }
@@ -958,7 +1152,7 @@ function Workspace({
             ctl.convId = null;
             ctl.skipListed = true;
           }
-          if (error.key === "botUnavailable") reloadBots();
+          if (error.key === "botUnavailable" || error.key === "teamForbidden") reloadBots();
           setThreads((s) => {
             const prev = s[key];
             return { ...s, [key]: prev?.status === "ready" ? { ...prev, refreshError: error } : { ...LOADING_THREAD, status: "error", error } };
@@ -1070,6 +1264,59 @@ function Workspace({
     };
   }, [pendingKeys, loadThread]);
 
+  // 审批卡：有回复在进行时一起轮询我待审批的写操作（带 runtime_task_id 的确认），按任务挂到对应那一轮上。
+  const [approvals, setApprovals] = useState<ChatApproval[]>([]);
+  useEffect(() => {
+    if (!selKey) {
+      setApprovals((a) => (a.length ? [] : a));
+      return;
+    }
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (stopped) return;
+      if (!document.hidden) {
+        try {
+          const next = await chatApi.approvals();
+          if (!stopped) setApprovals(next);
+        } catch {
+          // 读不到就保留上一次的卡片，下一轮再试
+        }
+      }
+      if (!stopped && pendingKeys) timer = setTimeout(() => void tick(), POLL_MS);
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [pendingKeys, selKey]);
+  const onApprovalDecided = useCallback((id: ChatId) => setApprovals((a) => a.filter((x) => !sameId(x.id, id))), []);
+
+  // ---------- 审批模式（管理员设置，允许时本人可切换） ----------
+  const [fullConfirm, setFullConfirm] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeError, setModeError] = useState("");
+  const selectedMode = approvalModeOf(selected);
+  const changeMode = async (mode: ApprovalMode, confirmFullAccess: boolean) => {
+    if (!selected) return;
+    setModeBusy(true);
+    setModeError("");
+    try {
+      await chatApi.setApprovalMode(selected.id, mode, confirmFullAccess);
+      reloadBots();
+    } catch (err) {
+      setModeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setModeBusy(false);
+    }
+  };
+  const pickMode = (mode: ApprovalMode) => {
+    if (mode === selectedMode) return;
+    if (mode === "full") setFullConfirm(true);
+    else void changeMode(mode, false);
+  };
+
   const thread = selKey ? threads[selKey] : undefined;
   const messages = thread?.messages ?? [];
   const ready = thread?.status === "ready";
@@ -1133,7 +1380,7 @@ function Workspace({
       if (pending) return pending;
       setProfiles((s) => (s[key]?.status === "ready" ? s : { ...s, [key]: { status: "loading", data: null, error: null, refreshError: null } }));
       const p: Promise<void> = chatApi
-        .profile(bot.id)
+        .profile(bot)
         .then(
           (data) => {
             if (!alive.current) return;
@@ -1300,6 +1547,8 @@ function Workspace({
         setBlocked((b) => (b.includes(key) ? b : [...b, key]));
         reloadBots();
       }
+      // 团队会话已经不对自己开放（取消共享、调岗）：刷新列表，入口随之消失
+      if (error.key === "teamForbidden") reloadBots();
       // 已有一条在处理（例如另一个标签页发的）：读一次最新记录，轮询随之接上
       if (error.key === "busy") void loadThread(bot);
     } finally {
@@ -1446,7 +1695,7 @@ function Workspace({
                   type="button"
                   role="radio"
                   aria-checked={picked}
-                  aria-label={b.name}
+                  aria-label={b.shared ? t("botChat.list.teamLabel", { bot: b.name, department: b.department ?? "" }) : b.name}
                   aria-describedby={descId}
                   tabIndex={picked || (!selKey && index === 0) ? 0 : -1}
                   data-bot={key}
@@ -1460,7 +1709,19 @@ function Workspace({
                 >
                   <BotWhale seed={b.id} size={36} active={pendingKeys.split("\n").includes(key)} />
                   <span className="min-w-0 flex-1">
-                    <span className={cx("block truncate text-sm font-medium", picked ? "text-brand-600 dark:text-brand-200" : "text-neutral-800")}>{b.name}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className={cx("truncate text-sm font-medium", picked ? "text-brand-600 dark:text-brand-200" : "text-neutral-800")}>{b.name}</span>
+                      {b.shared && (
+                        <span
+                          className="inline-flex shrink-0 items-center gap-0.5 rounded bg-neutral-100 px-1 text-[10px] leading-4 font-medium text-neutral-600"
+                          title={t("botChat.list.teamOf", { department: b.department ?? "" })}
+                          data-bot-team=""
+                        >
+                          <Users size={10} aria-hidden />
+                          {t("botChat.list.team")}
+                        </span>
+                      )}
+                    </span>
                     <span id={descId} className="mt-0.5 block truncate text-xs text-neutral-500">
                       {previewOf(b)}
                       {unread && <span className="sr-only"> · {t("botChat.list.unread")}</span>}
@@ -1517,7 +1778,46 @@ function Workspace({
             ) : (
               <h2 className="min-w-0 truncate px-1 text-base font-bold text-neutral-900">{t("botChat.title")}</h2>
             )}
+            {selected?.shared && (
+              <span className="hidden sm:inline-flex">
+                <Badge tone="slate">{t("botChat.list.teamOf", { department: selected.department ?? "" })}</Badge>
+              </span>
+            )}
             {botDisabled && <Badge tone="amber">{t("botChat.header.disabled")}</Badge>}
+            {selected && selectedMode === "full" && (
+              <span title={t("approval.fullBadgeTitle")} data-full-access-badge="" className="inline-flex">
+                <Badge tone="red">
+                  <ShieldAlert size={12} aria-hidden />
+                  {t("approval.fullBadge")}
+                </Badge>
+              </span>
+            )}
+            {selected &&
+              (selected.approval_editable ? (
+                <select
+                  aria-label={t("approval.changeLabel")}
+                  title={t(`approval.modeHints.${selectedMode}`)}
+                  value={selectedMode}
+                  disabled={modeBusy}
+                  onChange={(e) => pickMode(e.target.value as ApprovalMode)}
+                  data-approval-mode=""
+                  className="min-w-0 shrink rounded-md border border-neutral-200 bg-card px-1.5 py-1 text-xs text-neutral-700 dark:border-white/10"
+                >
+                  {APPROVAL_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {t("approval.label")}: {t(`approval.modes.${mode}`)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                selectedMode !== "full" && (
+                  <span title={`${t(`approval.modeHints.${selectedMode}`)} ${t("approval.locked")}`} className="hidden sm:inline-flex" data-approval-mode="">
+                    <Badge tone={selectedMode === "read_only" ? "slate" : "brand"}>
+                      {t("approval.label")}: {t(`approval.modes.${selectedMode}`)}
+                    </Badge>
+                  </span>
+                )
+              ))}
             {replying && (
               <span className="hidden sm:inline-flex">
                 <span className="bc-fade inline-flex">
@@ -1588,6 +1888,11 @@ function Workspace({
 
           {selected && ready && thread && (
             <div key={selKey} className="bc-fade mx-auto max-w-3xl">
+              {selected.shared && (
+                <Notice tone="info" role="note" className="mb-5 text-[13px]" data-team-notice="">
+                  {t("botChat.thread.teamNotice", { department: selected.department ?? "" })}
+                </Notice>
+              )}
               {thread.nextBefore != null && (
                 <div className="mb-5 flex flex-col items-center gap-1.5">
                   <Button type="button" variant="ghost" size="sm" disabled={thread.earlierLoading} onClick={() => loadEarlier(selKey)} data-load-earlier="">
@@ -1626,10 +1931,13 @@ function Workspace({
                       key={String(m.id)}
                       turn={m}
                       bot={selected}
+                      me={userId}
                       delegations={thread?.delegations ?? []}
                       onOpenBot={openBot}
                       onReuse={botDisabled ? undefined : reuseContent}
                       onPreview={setPreview}
+                      approvals={approvals.filter((a) => sameId(a.runtime_task_id, m.id))}
+                      onDecided={onApprovalDecided}
                     />,
                   );
                   return items;
@@ -1654,6 +1962,16 @@ function Workspace({
               {botDisabled && (
                 <Notice tone="warn" role="status" className="mb-2">
                   {t("botChat.composer.disabledBot")}
+                </Notice>
+              )}
+              {selectedMode === "full" && (
+                <Notice tone="danger" className="mb-2" data-full-access-notice="">
+                  {t("approval.fullNotice", { bot: botName })}
+                </Notice>
+              )}
+              {modeError && (
+                <Notice tone="danger" role="alert" className="mb-2">
+                  {t("approval.changeFailed", { reason: modeError })}
                 </Notice>
               )}
               {activeSendError && activeSendError.key !== "botDisabled" && (
@@ -1729,9 +2047,22 @@ function Workspace({
           closeRef={profileCloseRef}
           onClose={closeProfile}
           onRetry={() => void loadProfile(selected)}
+          myDepartment={user?.department?.trim() ?? ""}
+          onShare={async (next) => {
+            await chatApi.share(botRef(selected), next);
+            reloadBots();
+          }}
           onPreview={setPreview}
         />
       )}
+      <FullAccessDialog
+        open={fullConfirm}
+        botName={botName}
+        onResult={(confirmed) => {
+          setFullConfirm(false);
+          if (confirmed) void changeMode("full", true);
+        }}
+      />
       <FilePreviewDialog file={preview} onClose={() => setPreview(null)} />
     </div>
   );

@@ -86,6 +86,20 @@ func (s *Server) cloudComputers() (runtime.PersistentProvider, bool) {
 	return p, ok && s.opts.Runtime.Computer.Persistent
 }
 
+func (s *Server) runtimeTeamComputer(ctx context.Context, task *store.RuntimeTask) (string, int64, error) {
+	if task.ChatConversationID == nil {
+		return "", 0, nil
+	}
+	c, err := s.store.RuntimeChatConversation(ctx, *task.ChatConversationID, task.RunAsID)
+	if err != nil {
+		return "", 0, err
+	}
+	if !c.Shared {
+		return "", 0, nil
+	}
+	return c.Department, c.BotID, nil
+}
+
 // cloudTaskComputer 决定一轮任务用哪台电脑：返回电脑的所有者和任务所属的机器人。不属于机器人的任务返回 botID=0（用临时电脑）。
 //
 //   - 团队对话的轮次（s.teamComputer 认出来的）用那个团队（部门）的电脑。这一轮以发消息的人运行，凭证也只签给他；
@@ -120,6 +134,9 @@ func (s *Server) cloudTaskBot(ctx context.Context, task *store.RuntimeTask) (int
 		c, err := s.store.RuntimeChatConversation(ctx, *task.ChatConversationID, task.OwnerID)
 		if err != nil {
 			return 0, errors.New("checking the cloud task conversation failed")
+		}
+		if c.Shared {
+			return 0, nil
 		}
 		botID = c.BotID
 	default:

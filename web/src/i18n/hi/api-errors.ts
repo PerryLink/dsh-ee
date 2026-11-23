@@ -220,6 +220,15 @@ export default {
     busy: "The previous message is still being processed. Wait for the reply before sending.",
     idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
     queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
+    team_forbidden: "This bot isn't shared with your department.",
+    no_department: "Your account has no department, so you can't share the bot.",
+    invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
+  },
+  runtime_approval: {
+    invalid_mode: "अनुमोदन मोड केवल-पढ़ने, हर एक को स्वीकृत करें, स्वतः स्वीकृति या पूर्ण पहुँच में से एक होना चाहिए।",
+    invalid_rules: "स्वतः स्वीकृति नियम अमान्य हैं: अकेला * नहीं, स्पेस या स्लैश नहीं, और अधिकतम {{max}} नियम।",
+    risk_unconfirmed: "पूर्ण पहुँच चालू करने से पहले जोखिमों की पुष्टि करें।",
+    locked: "आपके व्यवस्थापक ने आपको इस बॉट का अनुमोदन मोड बदलने की अनुमति नहीं दी है।",
   },
   runtime_computer: {
     busy: "The cloud computer is working or being changed right now. Try again shortly.",

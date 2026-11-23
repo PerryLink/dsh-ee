@@ -3,6 +3,8 @@
  *
  * - 接口固定在 /api/runtime/chat 下，统一走 request()；
  * - 一个机器人对当前员工只有一条连续的会话（thread）：列表带 thread_id，没有时用幂等的创建接口取得；
+ * - 团队共享：机器人共享给员工所在的部门后，列表里另有一个团队入口（shared），整个部门共用一条团队会话，
+ *   每条消息带发送人；前端把团队入口的 id 换成 team-<机器人 id>，和员工自己的入口区分开，接口调用用 botRef 取回真实 id；
  * - 可用机器人列表做成模块级共享状态：侧栏入口与页面共用同一份结果和同一个在途请求；
  *   对话页每次打开会重新拉一次，页面上也能手动刷新；
  * - 错误不直接显示服务端原文（那是中文默认文案，也可能带运行细节），
@@ -25,6 +27,40 @@ export interface ChatBot {
   last_message?: string | null;
   last_task_id?: ChatId | null;
   last_status?: ChatTurnStatus | null;
+  /** 团队入口：机器人共享给了当前员工所在的部门 department，所有者是 owner_name；bot_id 是真实的机器人 id。 */
+  shared?: boolean;
+  department?: string | null;
+  owner_name?: string | null;
+  bot_id?: ChatId | null;
+  /** 只出现在自己的机器人上：当前共享给了哪个部门（没共享时没有）。 */
+  shared_department?: string | null;
+  /** 写操作审批模式（管理员设置）；旧后端没有这个字段，按只读处理。 */
+  approval_mode?: ApprovalMode | null;
+  /** 管理员是否允许本人在对话页切换审批模式。 */
+  approval_editable?: boolean | null;
+}
+
+/**
+ * 云端机器人的写操作审批模式：
+ * read_only 只读；manual 逐个审批；auto 按规则自动审批，其余逐个审批；full 完全放行（不再审批，仍有审计）。
+ */
+export type ApprovalMode = "read_only" | "manual" | "auto" | "full";
+export const APPROVAL_MODES: ApprovalMode[] = ["read_only", "manual", "auto", "full"];
+export const approvalModeOf = (b: Pick<ChatBot, "approval_mode"> | null | undefined): ApprovalMode =>
+  b?.approval_mode && APPROVAL_MODES.includes(b.approval_mode) ? b.approval_mode : "read_only";
+
+/** 一张审批卡：机器人在某一轮（runtime_task_id）里要做的写操作，等员工批准或拒绝。复用写操作确认（/api/me/confirmations）。 */
+export interface ChatApproval {
+  id: ChatId;
+  tool: string;
+  /** 规整后的参数 JSON。 */
+  args: string;
+  status: string;
+  /** 企业系统名、工具说明（后端按连接补上）。 */
+  system?: string;
+  description?: string;
+  runtime_task_id?: ChatId | null;
+  expires_at: string;
 }
 
 export interface ChatConversation {
@@ -33,6 +69,8 @@ export interface ChatConversation {
   bot_name: string;
   title: string;
   updated_at: string;
+  shared?: boolean;
+  department?: string | null;
 }
 
 /** 一轮对话：员工的一条消息 + 机器人的回复；id 就是云任务 id。 */
@@ -42,6 +80,9 @@ export interface ChatTurn {
   status: ChatTurnStatus;
   summary: string;
   created_at: string;
+  /** 团队会话里才有：发这条消息的员工（这一轮也以他自己的身份运行）。 */
+  sender_id?: ChatId | null;
+  sender_name?: string | null;
 }
 
 /**
@@ -120,6 +161,9 @@ export interface ChatComputer {
 
 /** 机器人资料：每日定时任务（UTC cron）、是否开启、是否有任务在跑、云电脑状态、生成过的文件。 */
 export interface ChatBotProfile {
+  /** 团队机器人的资料：没有所有者的定时设置，文件库只有团队会话里的文件。 */
+  shared?: boolean;
+  department?: string | null;
   schedule: string;
   schedule_enabled: boolean;
   running: boolean;
@@ -135,12 +179,28 @@ const base = "/api/runtime/chat";
 const tasksBase = "/api/runtime/tasks";
 const enc = (id: ChatId) => encodeURIComponent(String(id));
 
+/** 团队入口在前端的 id：和同一个机器人的个人入口区分开。 */
+export const teamKey = (botId: ChatId) => `team-${String(botId)}`;
+/** 列表项对应的真实机器人 id（团队入口的 id 是 teamKey）。 */
+export const botRef = (bot: Pick<ChatBot, "id" | "bot_id">): ChatId => bot.bot_id ?? bot.id;
+
 export const chatApi = {
-  bots: () => request<ChatBot[] | null>("GET", `${base}/bots`).then((x) => x ?? []),
-  profile: (botId: ChatId) =>
-    request<ChatBotProfile>("GET", `${base}/bots/${enc(botId)}/profile`).then((p) => ({ ...p, schedule: p.schedule ?? "", artifacts: p.artifacts ?? [] })),
-  /** 幂等：同一个机器人总是返回同一个会话；只在列表里没有 thread_id 时用来取得它。 */
-  createConversation: (botId: ChatId) => request<ChatConversation>("POST", `${base}/conversations`, { bot_id: botId }),
+  bots: () =>
+    request<ChatBot[] | null>("GET", `${base}/bots`).then((x) =>
+      (x ?? []).map((b) => (b.shared ? { ...b, bot_id: b.id, id: teamKey(b.id) } : b)),
+    ),
+  profile: (bot: Pick<ChatBot, "id" | "bot_id" | "shared">) =>
+    request<ChatBotProfile>("GET", `${base}/bots/${enc(botRef(bot))}/profile${bot.shared ? "?shared=1" : ""}`).then((p) => ({
+      ...p,
+      schedule: p.schedule ?? "",
+      artifacts: p.artifacts ?? [],
+    })),
+  /** 幂等：同一个机器人（团队入口是同一个部门）总是返回同一个会话；只在列表里没有 thread_id 时用来取得它。 */
+  createConversation: (bot: Pick<ChatBot, "id" | "bot_id" | "shared">) =>
+    request<ChatConversation>("POST", `${base}/conversations`, bot.shared ? { bot_id: botRef(bot), shared: true } : { bot_id: botRef(bot) }),
+  /** 所有者把自己的机器人共享给自己所在的部门，或取消共享；返回现在共享给的部门（空串是没共享）。 */
+  share: (botId: ChatId, shared: boolean) =>
+    request<{ shared_department: string }>("PUT", `${base}/bots/${enc(botId)}/share`, { shared }),
   /** 最近一页消息；带 before（上一页给的 next_before）时读更早的一页。 */
   conversation: (id: ChatId, before?: ChatId | null) =>
     request<ChatConversationDetail>("GET", `${base}/conversations/${enc(id)}${before != null ? `?before=${enc(before)}` : ""}`).then((d) => ({
@@ -151,6 +211,17 @@ export const chatApi = {
   send: (id: ChatId, content: string, idempotencyKey: string) =>
     request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, { content, idempotency_key: idempotencyKey }),
   artifacts: (taskId: ChatId) => request<ChatArtifact[] | null>("GET", `${tasksBase}/${enc(taskId)}/artifacts`).then((x) => x ?? []),
+  /** 我待审批的云端机器人写操作（只取带 runtime_task_id 的）。 */
+  approvals: () =>
+    request<{ items: ChatApproval[] | null }>("GET", "/api/me/confirmations").then((x) => (x.items ?? []).filter((a) => a.runtime_task_id != null)),
+  /** 批准或拒绝一张审批卡；机器人那一轮在等这个决定，批准后才执行。 */
+  decide: (id: ChatId, approve: boolean) => request<ChatApproval>("POST", `/api/me/confirmations/${enc(id)}`, { approve }),
+  /** 本人切换审批模式（需管理员允许）；切到完全放行必须带 confirmFullAccess。 */
+  setApprovalMode: (botId: ChatId, mode: ApprovalMode, confirmFullAccess: boolean) =>
+    request<{ approval_mode: ApprovalMode; approval_editable: boolean }>("PUT", `${base}/bots/${enc(botId)}/approval`, {
+      approval_mode: mode,
+      confirm_full_access: confirmFullAccess,
+    }),
   /** 立即休眠（文件保留）或重置（删除整台电脑和其中的文件）。 */
   computer: (botId: ChatId, action: "hibernate" | "reset") => request<ChatComputer>("POST", `${base}/bots/${enc(botId)}/computer/${action}`),
   /** 产物下载地址：只在员工点击时访问，页面不会自动下载。 */
@@ -210,6 +281,8 @@ export type ChatErrorKey =
   | "tooLong"
   | "invalid"
   | "rateLimited"
+  | "teamForbidden"
+  | "noDepartment"
   | "generic";
 
 /** 请求出在哪一类资源上：决定 404 说的是「功能没开」还是「会话不存在」。 */
@@ -233,6 +306,8 @@ const CODE_KEYS: Record<string, ChatErrorKey> = {
   queue_full: "queueFull",
   disabled: "unavailable",
   forbidden: "forbidden",
+  team_forbidden: "teamForbidden",
+  no_department: "noDepartment",
 };
 
 function keyOfStatus(status: number, scope: ChatErrorScope): ChatErrorKey {

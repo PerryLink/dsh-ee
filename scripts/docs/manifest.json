@@ -17,6 +17,8 @@
     "dev/responses-api.md",
     "dev/cloud-runtime.md",
     "dev/bot-delegation.md",
+    "dev/bot-team-sharing.md",
+    "dev/bot-approval.md",
     "dev/chatbot.md",
     "dev/beta-completions.md"
   ],

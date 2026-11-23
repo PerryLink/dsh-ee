@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -204,11 +205,32 @@ func TestTeamBotUsesTeamComputer(t *testing.T) {
 	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Hour, DiskLimitBytes: 1 << 20})
 	team := c.chatBot(c.employee, "Team helper")
 	alice, bob := c.employeeUser("alice"), c.employeeUser("bob")
-	c.s.teamComputer = func(_ context.Context, task *store.RuntimeTask) (string, int64, error) {
-		if task.BotID != nil && *task.BotID == team.ID && task.RunAsID != c.employee {
-			return "研发部", team.ID, nil
+	ctx := context.Background()
+	department := "研发部"
+	for _, member := range []int64{c.employee, alice, bob} {
+		if err := c.s.store.UpdateUser(ctx, member, store.UserPatch{Department: &department}); err != nil {
+			t.Fatal(err)
 		}
-		return "", 0, nil
+	}
+	if _, err := c.s.store.SetRuntimeBotShare(ctx, team.ID, c.employee, department); err != nil {
+		t.Fatal(err)
+	}
+	turnNumber := 0
+	runTeam := func(member int64, prompt string) *store.RuntimeTask {
+		client := runtimeTestClient(t, c.s, member)
+		thread := decodeRuntimeChat[store.RuntimeChatConversation](t, "team thread", client("POST", "/api/runtime/chat/conversations", fmt.Sprintf(`{"bot_id":%d,"shared":true}`, team.ID)), http.StatusOK)
+		turnNumber++
+		payload, err := json.Marshal(map[string]string{"content": prompt, "idempotency_key": strconv.Itoa(turnNumber)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		turn := decodeRuntimeChat[store.RuntimeChatTurn](t, "team turn", client("POST", fmt.Sprintf("/api/runtime/chat/conversations/%d/messages", thread.ID), string(payload)), http.StatusAccepted)
+		c.drain()
+		got, err := c.s.store.RuntimeTask(ctx, turn.ID, member)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
 	}
 	var seen []string
 	f.check = func(token string) {
@@ -226,10 +248,10 @@ func TestTeamBotUsesTeamComputer(t *testing.T) {
 	if got := c.run("SHARE:owner private"); got.Status != store.RuntimeSucceeded {
 		t.Fatalf("owner personal run: %+v", got)
 	}
-	if got := c.runBot(team, alice, "SHARE:团队周报草稿"); got.Status != store.RuntimeSucceeded {
+	if got := runTeam(alice, "SHARE:团队周报草稿"); got.Status != store.RuntimeSucceeded {
 		t.Fatalf("alice team run: %+v", got)
 	}
-	if got := c.runBot(team, bob, "READ_SHARED"); got.Summary != "shared note: 团队周报草稿" {
+	if got := runTeam(bob, "READ_SHARED"); got.Summary != "shared note: 团队周报草稿" {
 		t.Fatalf("bob should see the team computer's files: %+v", got)
 	}
 	if got := c.run("READ_SHARED"); got.Summary != "shared note: owner private" {
@@ -238,7 +260,6 @@ func TestTeamBotUsesTeamComputer(t *testing.T) {
 	if f.creates != 2 {
 		t.Fatalf("want one personal and one team computer, creates=%d", f.creates)
 	}
-	ctx := context.Background()
 	teamComputer, err := c.s.store.RuntimeComputerOf(ctx, store.TeamComputerOwner("研发部"))
 	if err != nil {
 		t.Fatal(err)
@@ -269,6 +290,13 @@ func TestTeamBotUsesTeamComputer(t *testing.T) {
 	if !foundTeam {
 		t.Fatalf("admin list should show the team computer: %s", rec.Body.String())
 	}
+	member := runtimeTestClient(t, c.s, alice)
+	profile := decodeRuntimeChat[struct {
+		Computer runtimeComputerView `json:"computer"`
+	}](t, "team profile", member("GET", fmt.Sprintf("/api/runtime/chat/bots/%d/profile?shared=1", team.ID), ""), http.StatusOK)
+	if profile.Computer.OwnerKind != store.RuntimeComputerOwnerTeam || profile.Computer.Department != department || !profile.Computer.Persistent {
+		t.Fatalf("team profile did not show its persistent computer: %+v", profile)
+	}
 	// 团队对话的轮次不能派任务（团队共享合进来前不开放）。
 	f.onRun = func(token, _, prompt string) (string, bool) {
 		if !strings.Contains(prompt, "TEAM_DELEGATE") {
@@ -276,7 +304,7 @@ func TestTeamBotUsesTeamComputer(t *testing.T) {
 		}
 		return c.tool(token, "bots__send", map[string]any{"bot_id": c.bot.ID, "content": "x"}).text(), true
 	}
-	if got := c.runBot(team, alice, "TEAM_DELEGATE"); !strings.Contains(got.Summary, "Team conversations cannot delegate") {
+	if got := runTeam(alice, "TEAM_DELEGATE"); !strings.Contains(got.Summary, "Team conversations cannot delegate") {
 		t.Fatalf("team turn delegation: %+v", got)
 	}
 }
@@ -512,6 +540,14 @@ func TestBotCreateNeedsApprovalAndLimit(t *testing.T) {
 		return "", false
 	}
 	c.run("CREATE")
+	if !res.IsError || !strings.Contains(res.text(), runtimeReadOnlyRejection) {
+		t.Fatalf("read-only create must be rejected: %+v", res)
+	}
+	c.bot.ApprovalMode = store.RuntimeApprovalManual
+	if err := c.s.store.SaveRuntimeBot(ctx, c.bot, nil); err != nil {
+		t.Fatal(err)
+	}
+	c.run("CREATE")
 	if !res.IsError || !strings.Contains(res.text(), "网页上确认") {
 		t.Fatalf("first create must ask for approval: %+v", res)
 	}
@@ -526,7 +562,8 @@ func TestBotCreateNeedsApprovalAndLimit(t *testing.T) {
 	}
 	// 确认页显示的是机器人新建，不是某个企业连接。
 	path := "/api/me/confirmations/" + strconv.FormatInt(int64(id), 10)
-	if rec := c.owner("GET", path, ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"system":"云端机器人"`) {
+	if rec := c.owner("GET", path, ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"system":"云端机器人"`) ||
+		!strings.Contains(rec.Body.String(), `"runtime_task_id":`) {
 		t.Fatalf("confirmation view: HTTP %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := c.owner("POST", path, `{"approve":true}`); rec.Code != http.StatusOK {
@@ -563,7 +600,7 @@ func TestBotCreateNeedsApprovalAndLimit(t *testing.T) {
 	if !res.IsError || !strings.Contains(res.text(), "at most 5") {
 		t.Fatalf("create over the limit: %+v", res)
 	}
-	if got := c.audits("runtime.bot.create_reject"); len(got) != 1 || got[0].Detail["reason"] != "limit" {
+	if got := c.audits("runtime.bot.create_reject"); len(got) != 2 || got[0].Detail["reason"] != "limit" || got[1].Detail["reason"] != "read_only" {
 		t.Fatalf("limit rejection audit: %+v", got)
 	}
 

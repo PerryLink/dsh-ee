@@ -131,17 +131,10 @@ func (s *Store) queryRuntimeDelegations(ctx context.Context, where string, args 
 	return out, rows.Err()
 }
 
-// SetRuntimeTaskCredential 记下这一轮云任务签发的短期凭证。
-func (s *Store) SetRuntimeTaskCredential(ctx context.Context, tokenID, taskID int64) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO runtime_task_credentials (token_id, task_id, created_at) VALUES (?,?,?)
-		ON DUPLICATE KEY UPDATE task_id=VALUES(task_id)`, tokenID, taskID, now())
-	return err
-}
-
 // RuntimeTaskByCredential 按短期凭证找回正在运行的那一轮；任务不在运行时返回 ErrNotFound。
 func (s *Store) RuntimeTaskByCredential(ctx context.Context, tokenID int64) (*RuntimeTask, error) {
 	return scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-		WHERE id=(SELECT task_id FROM runtime_task_credentials WHERE token_id=?) AND status=?`, tokenID, RuntimeRunning))
+		WHERE credential_token_id=? AND status=?`, tokenID, RuntimeRunning))
 }
 
 // RuntimeDelegationLineage 是一轮任务在委派树里的位置：根任务、层数和从根到它自己的机器人链。

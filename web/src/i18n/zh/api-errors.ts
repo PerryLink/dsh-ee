@@ -227,6 +227,15 @@ export default {
     busy: "上一条消息还在处理中，请等待回复后再发送",
     idempotency_conflict: "这条消息与之前的发送请求冲突，请重新发送",
     queue_full: "你排队中的云任务已达上限，请稍后再试",
+    team_forbidden: "这个机器人没有共享给你所在的部门",
+    no_department: "你的账号没有填写部门，不能共享机器人",
+    invalid_department: "部门名不能超过 {{max}} 个字符，也不能含控制字符",
+  },
+  runtime_approval: {
+    invalid_mode: "审批模式只能是只读、逐个审批、自动审批或完全放行",
+    invalid_rules: "自动审批规则不合法：不能为空或只写 *，不能含空白或斜杠，最多 {{max}} 条",
+    risk_unconfirmed: "开启完全放行前必须确认风险",
+    locked: "管理员没有允许你修改这个机器人的审批模式",
   },
   runtime_computer: {
     busy: "云电脑正在工作或正在被操作，请稍后再试",

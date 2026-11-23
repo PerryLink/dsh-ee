@@ -220,6 +220,15 @@ export default {
     busy: "The previous message is still being processed. Wait for the reply before sending.",
     idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
     queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
+    team_forbidden: "This bot isn't shared with your department.",
+    no_department: "Your account has no department, so you can't share the bot.",
+    invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
+  },
+  runtime_approval: {
+    invalid_mode: "The approval mode must be read-only, approve each, auto-approve or full access.",
+    invalid_rules: "Invalid auto-approval rules: no bare *, no spaces or slashes, and at most {{max}} rules.",
+    risk_unconfirmed: "Confirm the risks before turning on full access.",
+    locked: "Your administrator hasn't allowed you to change this bot's approval mode.",
   },
   runtime_computer: {
     busy: "The cloud computer is working or being changed right now. Try again shortly.",

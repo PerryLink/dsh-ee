@@ -60,15 +60,6 @@ INSERT IGNORE INTO runtime_computer_orphans (sandbox_id, creation_key, bot_id, r
 
 DROP TABLE IF EXISTS runtime_bot_computers;
 
--- 每轮云任务的短期凭证对应哪一轮：/mcp 上的机器人协作工具（bots__*）按令牌找回发起调用的任务和机器人。
--- 只存令牌 ID，不存令牌本身；令牌在这一轮结束时吊销，之后这条映射就没有用了。
-CREATE TABLE IF NOT EXISTS runtime_task_credentials (
- token_id BIGINT NOT NULL PRIMARY KEY,
- task_id BIGINT NOT NULL,
- created_at DATETIME(3) NOT NULL,
- KEY idx_runtime_task_credential_task (task_id)
-);
-
 -- 机器人之间派任务。owner_id 是这些机器人共同的所有者（也是运行身份），只能派给他自己的机器人。
 -- 一次委派先是 pending（发起的那一轮还在跑，电脑被它占着），那一轮成功结束后才在目标机器人的线程里入队一轮
 -- （dispatched，child_task_id 指向那一轮，状态和结果直接读那一轮任务）；派不出去是 failed，发起轮失败是 canceled。

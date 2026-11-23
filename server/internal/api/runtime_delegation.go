@@ -17,7 +17,7 @@ import (
 
 // 机器人之间派任务（docs/dev/bot-delegation.md）。
 //
-// 云端机器人在一轮里通过 /mcp 上的 bots__* 工具协作，认证用的就是这一轮的短期令牌（runtime_task_credentials
+// 云端机器人在一轮里通过 /mcp 上的 bots__* 工具协作，认证用的就是这一轮的短期令牌（runtime_tasks.credential_token_id
 // 把令牌对回这一轮）：
 //   - bots__list：同一位员工、现在可对话的其他机器人；
 //   - bots__send：给其中一个派任务（kind=task，结果回来后发起方接着处理）或发消息（kind=message，不追加回合）；
@@ -37,7 +37,7 @@ const botsConn = "bots"
 // runtimeDelegationNote 在机器人的轮次里加在提示词最前面，说明 bots__ 工具的用法。
 const runtimeDelegationNote = "You can work with the employee's other cloud bots through the bots__ tools: bots__list shows them; " +
 	"bots__send hands one of them a task (kind \"task\": when it is done, its result comes back to you in a follow-up turn of this conversation) " +
-	"or a message (kind \"message\": no follow-up); bots__result checks a delegation; bots__create proposes a new helper bot, which the employee must approve. " +
+	"or a message (kind \"message\": no follow-up); bots__result checks a delegation; bots__create can create a helper bot subject to write approval. " +
 	"Delegated work starts only after your current turn ends, because these bots share one computer and run one at a time: " +
 	"after delegating, put any files the other bot needs in " + runtimeSharedDir + ", finish your turn and tell the employee what you handed off.\n\n"
 
@@ -56,7 +56,7 @@ type botCaller struct {
 // runtimeBotCaller 按这一轮的短期令牌找回发起调用的任务和机器人。不是云任务令牌、任务已不在运行、不属于机器人、
 // 运行身份已不合格时都返回错误。团队对话的轮次（以发消息的人运行，机器人属于别人）返回 errBotsTeamTurn。
 func (s *Server) runtimeBotCaller(ctx context.Context, pr *Principal) (*botCaller, error) {
-	if pr == nil || !pr.RuntimeReadOnly || pr.TokenID == 0 {
+	if pr == nil || !pr.Runtime || pr.TokenID == 0 {
 		return nil, errBotsNotRuntime
 	}
 	task, err := s.store.RuntimeTaskByCredential(ctx, pr.TokenID)
@@ -117,8 +117,8 @@ func botsToolDefs() []map[string]any {
 		tool("result", "Check the status and result of a delegation you made.", map[string]any{
 			"delegation_id": idProp("Delegation id returned by bots__send."),
 		}, []string{"delegation_id"}, true),
-		tool("create", "Propose a new cloud bot for the employee (for example a temporary helper). The employee must approve it on a web page first; "+
-			"after approval, call again with exactly the same arguments.", map[string]any{
+		tool("create", "Create a new cloud bot for the employee (for example a temporary helper), subject to this bot's write approval mode. "+
+			"If asked to obtain approval, call again with exactly the same arguments after the employee approves.", map[string]any{
 			"name":   str("Bot name.", 128),
 			"prompt": str("The new bot's standing instructions.", runtimeChatMaxContent),
 		}, []string{"name", "prompt"}, false),
@@ -274,14 +274,33 @@ func (s *Server) botsResult(ctx context.Context, caller *botCaller, id int64) js
 	return botsText(text, false)
 }
 
-// botCreateApproval 是机器人新建机器人的审批：返回非 nil 时把它交回给模型（请员工确认），这次不建。
-// 现在沿用写操作的服务端确认（write_confirm.go）：不论全局方式如何，一律先由员工本人在网页上同意，
-// 同意后用同样的参数再调一次才执行，一次同意只能用一次。审批模式（#319）合进来后在这里按机器人的模式决定
-// （只读：拒绝；逐个审批：确认；自动审批：按规则；完全放行：直接执行），见 PR 说明。
-func (s *Server) botCreateApproval(r *http.Request, pr *Principal, caller *botCaller, raw json.RawMessage) json.RawMessage {
+func (s *Server) botCreateApproval(r *http.Request, pr *Principal, caller *botCaller, raw json.RawMessage, detail map[string]any) json.RawMessage {
+	tool := mcpToolName(botsConn, "create")
+	mode := store.RuntimeApprovalReadOnly
+	var rules []string
+	if wc := s.runtimeWriteContext(r.Context(), pr); wc != nil && wc.BotID == caller.botID && wc.TaskID == caller.task.ID {
+		mode, rules = wc.ApprovalMode, wc.ApprovalRules
+	}
+	detail["approval_mode"] = mode
+	d := decideRuntimeWrite(mode, rules, tool)
+	switch d.Action {
+	case runtimeWriteAllow:
+		detail["approved_by"] = d.Via
+		if d.Rule != "" {
+			detail["rule"] = d.Rule
+		}
+		return nil
+	case runtimeWriteBlock:
+		detail["reason"] = "read_only"
+		return botsText(runtimeReadOnlyRejection, true)
+	}
 	v := viewer{user: pr.User, access: pr.Access, tokenID: pr.TokenID, clientKind: pr.ClientKind}
-	return s.askConfirmation(r, v, 0, mcpToolName(botsConn, "create"),
+	ask := s.askConfirmation(r, v, 0, caller.task.ID, tool,
 		"机器人「"+caller.botName+"」想替你新建一个云端机器人，要先由你本人在网页上确认，现在还没有建。", raw)
+	if ask == nil {
+		detail["approved_by"], detail["approver_id"] = "user", pr.User.ID
+	}
+	return ask
 }
 
 func (s *Server) botsCreate(r *http.Request, pr *Principal, caller *botCaller, raw json.RawMessage, name, prompt string) json.RawMessage {
@@ -301,8 +320,12 @@ func (s *Server) botsCreate(r *http.Request, pr *Principal, caller *botCaller, r
 		s.auditToken(r, pr, "runtime.bot.create_reject", "user:"+strconv.FormatInt(caller.task.OwnerID, 10), detail)
 		return botsText(fmt.Sprintf("Not created: bots can create at most %d bots per employee. Ask the employee to remove one first.", store.RuntimeBotCreatedLimit), true)
 	}
-	if ask := s.botCreateApproval(r, pr, caller, raw); ask != nil {
-		s.auditToken(r, pr, "runtime.bot.create_request", "user:"+strconv.FormatInt(caller.task.OwnerID, 10), detail)
+	if ask := s.botCreateApproval(r, pr, caller, raw, detail); ask != nil {
+		action := "runtime.bot.create_request"
+		if detail["reason"] == "read_only" {
+			action = "runtime.bot.create_reject"
+		}
+		s.auditToken(r, pr, action, "user:"+strconv.FormatInt(caller.task.OwnerID, 10), detail)
 		return ask
 	}
 	b := &store.RuntimeBot{OwnerID: caller.task.OwnerID, Name: name, Prompt: prompt, Schedule: "0 9 * * *", DeliveryTarget: runtimeFeishuOwner}
@@ -493,7 +516,7 @@ func (s *Server) dispatchDelegation(ctx context.Context, parent *store.RuntimeTa
 		OwnerID: d.OwnerID, ConversationID: conv.ID, Content: d.Content, Title: runtimeChatTitle(d.Content),
 		IdempotencyKey: "delegation:" + strconv.FormatInt(d.ID, 10), TimeoutSeconds: int(runtimeTimeout.Seconds()),
 	}, store.RuntimeChatPlanner{Fold: runtimeChatFold, Prompt: func(bot *store.RuntimeBot, memory string, recent []store.RuntimeChatTurn) (string, string, int) {
-		return runtimeChatPlanWith(bot.Prompt, memory, recent, d.Content, header)
+		return runtimeChatPlanAs(bot.Prompt, bot.ApprovalMode, memory, recent, d.Content, "", header)
 	}})
 	if err != nil {
 		fail(err)
@@ -560,7 +583,7 @@ func (s *Server) delegationFollowup(ctx context.Context, parentTaskID int64) {
 		OwnerID: first.OwnerID, ConversationID: *first.ParentConversationID, Content: content, Title: runtimeChatTitle(content),
 		IdempotencyKey: "delegation-followup:" + strconv.FormatInt(parentTaskID, 10), TimeoutSeconds: int(runtimeTimeout.Seconds()),
 	}, store.RuntimeChatPlanner{Fold: runtimeChatFold, Prompt: func(bot *store.RuntimeBot, memory string, recent []store.RuntimeChatTurn) (string, string, int) {
-		return runtimeChatPlanWith(bot.Prompt, memory, recent, encoded, header)
+		return runtimeChatPlanAs(bot.Prompt, bot.ApprovalMode, memory, recent, encoded, "", header)
 	}})
 	if err != nil {
 		if !errors.Is(err, store.ErrRuntimeChatBusy) && !errors.Is(err, store.ErrRuntimeQueueFull) && !errors.Is(err, store.ErrRuntimeChatBotUnavailable) {

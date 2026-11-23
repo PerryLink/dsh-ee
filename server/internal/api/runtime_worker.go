@@ -167,13 +167,6 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 	if err := s.store.CreateAccessToken(ctx, t, secret.Hash(raw)); err != nil {
 		return "", nil, errors.New("creating cloud task credential failed")
 	}
-	// /mcp 上的机器人协作工具按令牌找回这一轮。记不下来就吊销，不留一张找不回任务的令牌。
-	if err := s.store.SetRuntimeTaskCredential(ctx, t.ID, task.ID); err != nil {
-		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer stop()
-		_ = s.store.RevokeToken(c, t.ID)
-		return "", nil, errors.New("creating cloud task credential failed")
-	}
 	revoke := func() bool {
 		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
@@ -182,6 +175,11 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 			return false
 		}
 		return true
+	}
+	// 记下这一轮的凭证：/mcp 按它找回任务和机器人的审批模式（runtime_approval.go）
+	if err := s.store.SetRuntimeTaskCredential(ctx, task.ID, t.ID); err != nil {
+		revoke()
+		return "", nil, errors.New("recording cloud task credential failed")
 	}
 	return raw, revoke, nil
 }
@@ -260,7 +258,13 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	}
 	// 吊销失败时保留租约：令牌在本轮截止时失效，早于租约到期，避免休眠电脑留下有效令牌。
 	defer func() { releaseComputer = revoke() }()
-	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. " + runtimeFileRule + " Return a short final summary of the result without a step-by-step account."
+	writes := "The enterprise task is read-only. "
+	if task.BotID != nil {
+		if bot, err := s.store.RuntimeBot(ctx, *task.BotID); err == nil && bot.ApprovalMode != store.RuntimeApprovalReadOnly {
+			writes = runtimeWriteGuidance(bot.ApprovalMode)
+		}
+	}
+	prompt := "Enterprise task:\n" + task.Prompt + "\n\n" + writes + runtimeFileRule + " Return a short final summary of the result without a step-by-step account."
 	if task.ChatConversationID != nil {
 		// 网页对话要的是直接回答员工，而不是任务摘要。当前消息必须留在最后。
 		prompt = task.Prompt
@@ -271,7 +275,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	} else {
 		prompt = runtimeEphemeralNote + prompt
 	}
-	if computer.persistent && computer.botID != 0 {
+	if computer.persistent && computer.ownerKind == store.RuntimeComputerOwnerUser {
 		// 机器人协作工具（bots__*）的用法：同一台电脑上的机器人才谈得上互相派任务、共享文件。只往前加。
 		prompt = runtimeDelegationNote + prompt
 	}
