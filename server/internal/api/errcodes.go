@@ -80,6 +80,18 @@ const (
 	codeRuntimeChatNoDepartment = "runtime_chat.no_department"
 	// codeRuntimeChatInvalidDepartment：管理员共享机器人时给的部门名为空白以外的非法值（超长、含控制字符），400。params：max（最大字符数）。
 	codeRuntimeChatInvalidDepartment = "runtime_chat.invalid_department"
+	// codeRuntimeChatUploadTooLarge：拖进对话框的文件超过单个文件上限，413。params：max_mb（上限，MB）。
+	codeRuntimeChatUploadTooLarge = "runtime_chat.upload_too_large"
+	// codeRuntimeChatUploadUnsupported：附件不是 PDF / Word / Excel / CSV / PPT / Markdown / 纯文本，400。params 无。
+	codeRuntimeChatUploadUnsupported = "runtime_chat.upload_unsupported"
+	// codeRuntimeChatUploadUnreadable：附件格式支持但读不出内容（损坏、加密、扫描件、超出转换上限），400。params 无。
+	codeRuntimeChatUploadUnreadable = "runtime_chat.upload_unreadable"
+	// codeRuntimeChatUploadBusy：同时在转换的文件太多，429。params 无。
+	codeRuntimeChatUploadBusy = "runtime_chat.upload_busy"
+	// codeRuntimeChatTooManyUploads：一条消息带的附件超过上限，400。params：max（最多几个）。
+	codeRuntimeChatTooManyUploads = "runtime_chat.too_many_uploads"
+	// codeRuntimeChatUploadUnavailable：附件不存在、不属于本人这段对话或已经随别的消息发出，发消息时 409、删除时 404。params 无。
+	codeRuntimeChatUploadUnavailable = "runtime_chat.upload_unavailable"
 	// codeRuntimeApprovalInvalidMode：云端机器人的审批模式不是 read_only / manual / auto / full，400。params 无。
 	codeRuntimeApprovalInvalidMode = "runtime_approval.invalid_mode"
 	// codeRuntimeApprovalInvalidRules：自动审批规则不合法（空模式、单独的 *、含空白或斜杠、超长或超过条数上限），400。params：max（最多条数）。

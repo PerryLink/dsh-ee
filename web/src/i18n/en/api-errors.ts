@@ -223,6 +223,12 @@ export default {
     team_forbidden: "This bot isn't shared with your department.",
     no_department: "Your account has no department, so you can't share the bot.",
     invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
+    upload_too_large: "Each file can be at most {{max_mb}} MB.",
+    upload_unsupported: "Only PDF, Word (.docx), Excel (.xlsx), CSV, PowerPoint (.pptx), Markdown and plain-text files are supported.",
+    upload_unreadable: "This file's content can't be read. It may be corrupted, encrypted or a scanned image.",
+    upload_busy: "Too many files are being processed right now. Try again shortly.",
+    too_many_uploads: "A message can carry at most {{max}} attachments.",
+    upload_unavailable: "The attachment doesn't exist or was already sent. Upload it again.",
   },
   runtime_approval: {
     invalid_mode: "The approval mode must be read-only, approve each, auto-approve or full access.",

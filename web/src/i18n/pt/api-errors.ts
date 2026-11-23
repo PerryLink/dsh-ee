@@ -223,6 +223,12 @@ export default {
     team_forbidden: "This bot isn't shared with your department.",
     no_department: "Your account has no department, so you can't share the bot.",
     invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
+    upload_too_large: "Cada arquivo pode ter no máximo {{max_mb}} MB.",
+    upload_unsupported: "Somente arquivos PDF, Word (.docx), Excel (.xlsx), CSV, PowerPoint (.pptx), Markdown e texto simples são aceitos.",
+    upload_unreadable: "Não foi possível ler o conteúdo deste arquivo. Ele pode estar corrompido, criptografado ou ser uma imagem digitalizada.",
+    upload_busy: "Há arquivos demais sendo processados agora. Tente novamente em instantes.",
+    too_many_uploads: "Uma mensagem pode levar no máximo {{max}} anexos.",
+    upload_unavailable: "O anexo não existe ou já foi enviado. Envie-o novamente.",
   },
   runtime_approval: {
     invalid_mode: "O modo de aprovação deve ser somente leitura, aprovar cada uma, aprovação automática ou acesso total.",

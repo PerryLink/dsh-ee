@@ -230,6 +230,12 @@ export default {
     team_forbidden: "这个机器人没有共享给你所在的部门",
     no_department: "你的账号没有填写部门，不能共享机器人",
     invalid_department: "部门名不能超过 {{max}} 个字符，也不能含控制字符",
+    upload_too_large: "单个文件不能超过 {{max_mb}} MB",
+    upload_unsupported: "只支持 PDF、Word（.docx）、Excel（.xlsx）、CSV、PPT（.pptx）、Markdown 和纯文本文件",
+    upload_unreadable: "读不出这个文件的内容，可能已损坏、加密或是扫描件",
+    upload_busy: "同时在处理的文件太多，请稍后再试",
+    too_many_uploads: "一条消息最多带 {{max}} 个附件",
+    upload_unavailable: "附件不存在或已经发出，请重新上传",
   },
   runtime_approval: {
     invalid_mode: "审批模式只能是只读、逐个审批、自动审批或完全放行",

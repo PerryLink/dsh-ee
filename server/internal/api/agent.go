@@ -92,6 +92,8 @@ var agentExcluded = map[string]string{
 	"POST /api/runtime/chat/conversations":               "网页对话只能由员工本人在浏览器里发起",
 	"GET /api/runtime/chat/conversations/{id}":           "网页对话记录只供员工本人查看",
 	"POST /api/runtime/chat/conversations/{id}/messages": "网页对话消息只能由员工本人显式发送",
+	"POST /api/runtime/chat/conversations/{id}/uploads":  "网页对话的附件只能由员工本人在浏览器里拖进对话框上传",
+	"DELETE /api/runtime/chat/uploads/{id}":              "网页对话的附件只能由员工本人在浏览器里移除",
 	"PUT /api/runtime/chat/bots/{id}/share":              "共享机器人给团队只能由所有者本人在浏览器里显式操作",
 	"GET /api/admin/runtime/bots":                        "云机器人由管理员管理",
 	"POST /api/admin/runtime/bots":                       "云机器人由管理员管理",
