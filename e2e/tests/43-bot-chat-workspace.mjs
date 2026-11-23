@@ -24,6 +24,13 @@ export default async function (t) {
   const botA = { id: 11, name: `客服助手-${tag}` };
   const botB = { id: 12, name: `报销助手-${tag}` };
   const botC = { id: 13, name: `周报助手-${tag}` };
+  const delegationFailures = [
+    ["the target bot was busy with another message", "目标机器人正在处理另一条消息。", "The target bot was busy with another message."],
+    ["the employee already has 5 cloud tasks queued or running", "你排队或运行中的云任务已达到 5 个的上限。", "You have reached the limit of 5 queued or running cloud tasks."],
+    ["the delegating turn is being retried", "发起委派的对话轮次正在重试。", "The delegating turn is being retried."],
+    ["unrecognized backend reason", "委派未能完成。", "The delegation could not be completed."],
+  ];
+  let showDelegationFailures = false;
   const turn = (id, content, summary, created_at, status = "succeeded") => ({ id, content, status, summary, created_at });
   const threads = {
     501: {
@@ -107,7 +114,22 @@ export default async function (t) {
       const older = before ? thread.messages.filter((m) => m.id < Number(before)) : thread.messages;
       const pageOf = older.slice(-PAGE_SIZE);
       const more = older.length > pageOf.length;
-      return json(route, { conversation: conversationOf(id), messages: pageOf, ...(more ? { next_before: pageOf[0].id } : {}) });
+      const delegations = showDelegationFailures && thread.bot === botA && !before
+        ? delegationFailures.map(([error], i) => ({
+            id: i + 1,
+            parent_task_id: pageOf.at(-1).id,
+            parent_bot_id: botA.id,
+            parent_bot_name: botA.name,
+            target_bot_id: botB.id,
+            target_bot_name: botB.name,
+            kind: "task",
+            status: i === 2 ? "canceled" : "failed",
+            content: "Check the report",
+            depth: 1,
+            error,
+          }))
+        : [];
+      return json(route, { conversation: conversationOf(id), messages: pageOf, delegations, ...(more ? { next_before: pageOf[0].id } : {}) });
     });
     await p.route("**/api/runtime/tasks/*/artifacts/*", (route) =>
       route.request().url().endsWith("/artifacts/8")
@@ -320,6 +342,12 @@ export default async function (t) {
   assertEq(await workspace(phone).getAttribute("data-fullscreen"), "false", "窄屏可以退出全屏");
   step("窄屏上可以选择机器人、打开并关闭资料");
 
+  showDelegationFailures = true;
+  await page.reload();
+  for (const [i, [, zh]] of delegationFailures.entries()) {
+    await page.locator(`[data-delegation="${i + 1}"]`).getByText(`没有完成：${zh}`, { exact: true }).waitFor();
+  }
+
   // ---- 英文界面：页签与输入提示有本地化文案 ----
   const en = await newPage(t, { lang: "en" });
   await mock(en);
@@ -331,4 +359,8 @@ export default async function (t) {
   await enPane.getByRole("tab", { name: "Library", exact: true }).click();
   await enPane.getByRole("link", { name: `Download report-${tag}.csv`, exact: true }).waitFor();
   step("英文界面显示 Activity / Library 与 Message <bot>");
+  for (const [i, [, , english]] of delegationFailures.entries()) {
+    await en.locator(`[data-delegation="${i + 1}"]`).getByText(`Not done: ${english}`, { exact: true }).waitFor();
+  }
+  step("委派失败和取消原因以当前语言显示，未知原因不直接展示");
 }

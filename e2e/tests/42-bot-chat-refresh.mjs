@@ -13,13 +13,14 @@ export default async function (t) {
   const username = `botchat-emp-${tag}`;
   const password = "botchat-employee-password-1";
 
-  const botA = { id: 1, name: `客服助手-${tag}`, thread_id: 101 };
-  const botB = { id: 2, name: `报销助手-${tag}`, thread_id: 102 };
+  const botA = { id: 2, name: `客服助手-${tag}`, thread_id: 101 };
+  const botB = { id: 3, name: `报销助手-${tag}`, thread_id: 102 };
+  const botEarlier = { id: 1, name: `排在前面的助手-${tag}`, thread_id: 103 };
   // 页面以机器人为中心：选中的机器人会读它那条对话和资料，这里给空的
   const mockThreads = async (p) => {
     await p.route("**/api/runtime/chat/conversations/*", (route) => {
       const id = Number(new URL(route.request().url()).pathname.split("/").pop());
-      const bot = [botA, botB].find((b) => b.thread_id === id) ?? botA;
+      const bot = [botA, botB, botEarlier].find((b) => b.thread_id === id) ?? botA;
       const conversation = { id, bot_id: bot.id, bot_name: bot.name, title: "", updated_at: new Date().toISOString() };
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ conversation, messages: [] }) });
     });
@@ -110,6 +111,19 @@ export default async function (t) {
   assertEq(await alert.count(), 0, "刷新成功后失败提示应消失");
   assert(await radio(botA).isVisible(), "刷新成功后原有机器人仍在");
   step("刷新失败保留原列表并提示，重试成功后提示消失");
+
+  // 没有 ?bot= 时，新机器人排到第一也不能切走正在看的对话。
+  assertEq(new URL(page.url()).searchParams.get("bot"), null, "回归场景不带 bot 参数");
+  assertEq(await radio(botA).getAttribute("aria-checked"), "true", "刷新前应选中原来的机器人");
+  bots = [botEarlier, botA, botB];
+  await refreshBtn().first().click();
+  await radio(botEarlier).waitFor();
+  assertEq(await radio(botA).getAttribute("aria-checked"), "true", "刷新后应继续选中原来的机器人");
+  bots = [botEarlier, botB];
+  await refreshBtn().first().click();
+  await page.getByRole("radio", { name: botEarlier.name, exact: true, checked: true }).waitFor();
+  assertEq(await radio(botA).count(), 0, "收回当前机器人后应回退到可用机器人");
+  step("列表刷新保留当前对话，只有当前机器人被收回时才切换");
 
   // ---- 英文界面：刷新按钮有本地化文案 ----
   const en = await newPage(t, { lang: "en" });

@@ -190,6 +190,15 @@ export const botChat = {
     less: "收起",
     open: "打开「{{bot}}」的对话",
     error: "没有完成：{{reason}}",
+    reasons: {
+      targetBusy: "目标机器人正在处理另一条消息。",
+      queueFull: "你排队或运行中的云任务已达到 {{limit}} 个的上限。",
+      targetUnavailable: "目标机器人已不可用。",
+      notQueued: "委派未能加入队列。",
+      parentFailed: "发起委派的对话轮次未成功完成。",
+      parentRetry: "发起委派的对话轮次正在重试。",
+      unknown: "委派未能完成。",
+    },
     status: {
       pending: "等这一轮结束后开始",
       queued: "排队中",
