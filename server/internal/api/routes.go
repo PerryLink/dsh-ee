@@ -263,7 +263,8 @@ func (s *Server) routes() []route {
 		prm("GET /api/admin/embed-settings", s.handleAdminEmbedSettings, rbac.SettingsManage),
 		// 嵌入运行概览（embed_stats.go）：只聚合数量，给设置页的运行概览卡片用
 		prm("GET /api/admin/embed/stats", s.handleAdminEmbedStats, rbac.SettingsManage),
-		prm("PUT /api/admin/settings", s.handlePutSettings, rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage),
+		// 按段落再校验：这里放行所有可能改设置的页面权限，distribution 段在 sectionPerms 里单独授权。
+		prm("PUT /api/admin/settings", s.handlePutSettings, rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage, rbac.DistributionManage),
 
 		// LDAP / AD 登录：配置里有服务账号，单独存、单独授权
 		prm("GET /api/admin/auth/ldap", s.handleGetLDAP, rbac.SettingsManage),
@@ -438,12 +439,14 @@ func (s *Server) routes() []route {
 		prm("GET /api/dsh/releases", s.handleDshReleases, rbac.PortalView),
 		prm("GET /dl/{target}/{file}", s.handleDownloadDshRelease, rbac.PortalView),
 		pub("GET /dl/connect/{file}", s.handleConnectTarball),
-		prm("GET /api/admin/dsh-releases", s.handleAdminDshReleases, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/import", s.handleImportDshRelease, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/check", s.handleCheckDshReleases, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/{id}/mirror", s.handleMirrorDshRelease, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/{id}/recommend", s.handleRecommendDshRelease, rbac.SettingsManage),
-		prm("DELETE /api/admin/dsh-releases/{id}", s.handleDeleteDshRelease, rbac.SettingsManage),
+		// DSH 分发页的操作权限：settings.manage 是旧行为，distribution.manage 是该页菜单对应的
+		// 权限点；两者任一即可，只给「管理 DSH 分发」的角色不再看到页面却处处 403。
+		prm("GET /api/admin/dsh-releases", s.handleAdminDshReleases, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/import", s.handleImportDshRelease, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/check", s.handleCheckDshReleases, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/{id}/mirror", s.handleMirrorDshRelease, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/{id}/recommend", s.handleRecommendDshRelease, rbac.SettingsManage, rbac.DistributionManage),
+		prm("DELETE /api/admin/dsh-releases/{id}", s.handleDeleteDshRelease, rbac.SettingsManage, rbac.DistributionManage),
 		pub("/mcp", s.handleMCP),
 
 		// 管理员向导：首次部署清单、日常巡检、审核时读内容、连接申请
