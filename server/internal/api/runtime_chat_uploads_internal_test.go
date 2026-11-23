@@ -119,6 +119,25 @@ func TestRuntimeChatUploadsReachSandbox(t *testing.T) {
 	// 发出去的附件不能再挂到别的消息上，也不能删。
 	expectRuntimeChatCode(t, "reuse a sent upload", send("再看一遍", "again", up.ID), http.StatusConflict, codeRuntimeChatUploadUnavailable)
 	expectRuntimeChatCode(t, "delete a sent upload", owner("DELETE", fmt.Sprintf("%s/uploads/%d", chat, up.ID), ""), http.StatusNotFound, codeRuntimeChatUploadUnavailable)
+
+	// budget.csv 的正文副本和原件 budget.csv.md 不能落到同一个路径上。
+	csv := decodeRuntimeChat[store.RuntimeChatUpload](t, "upload csv", upload(threadPath+"/uploads", "budget.csv", []byte("item,amount\nrent,100\n")), http.StatusCreated)
+	md := decodeRuntimeChat[store.RuntimeChatUpload](t, "upload csv.md", upload(threadPath+"/uploads", "budget.csv.md", []byte("# 另一份预算\n")), http.StatusCreated)
+	pair := decodeRuntimeChat[store.RuntimeChatTurn](t, "send pair", send("对比一下", "pair", csv.ID, md.ID), http.StatusAccepted)
+	c.runNext()
+	dir = ws.dirs[len(ws.dirs)-1]
+	base := fmt.Sprintf("%s/.uploads/%d/", dir, pair.ID)
+	renamed := fmt.Sprintf("%s%d-budget.csv.md", base, md.ID)
+	if !strings.Contains(ws.files[base+"budget.csv.md"], "rent") || ws.files[renamed] != "# 另一份预算\n" || !strings.Contains(ws.prompt, renamed[len(dir)+1:]) {
+		t.Fatalf("colliding attachment names: %v", ws.files)
+	}
+
+	// 只上传不发：本人还没发出的附件合计有上限。
+	if _, err := c.s.store.DB().ExecContext(context.Background(), `INSERT INTO runtime_chat_uploads (owner_id, conversation_id, task_id, name, size, format, text_bytes, storage_key, created_at)
+		VALUES (?,?,NULL,'hoard.txt',?,'txt',0,'hoard',?)`, ownerID, thread.ID, runtimeChatUploadPendingMax, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	expectRuntimeChatCode(t, "pending quota", upload(threadPath+"/uploads", "one-more.txt", []byte("x")), http.StatusTooManyRequests, codeRuntimeChatUploadQuota)
 }
 
 func TestRuntimeChatUploadPrune(t *testing.T) {

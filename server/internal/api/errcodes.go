@@ -88,6 +88,8 @@ const (
 	codeRuntimeChatUploadUnreadable = "runtime_chat.upload_unreadable"
 	// codeRuntimeChatUploadBusy：同时在转换的文件太多，429。params 无。
 	codeRuntimeChatUploadBusy = "runtime_chat.upload_busy"
+	// codeRuntimeChatUploadQuota：本人还没发出的附件总量到了上限，429。params: max_mb。
+	codeRuntimeChatUploadQuota = "runtime_chat.upload_quota"
 	// codeRuntimeChatTooManyUploads：一条消息带的附件超过上限，400。params：max（最多几个）。
 	codeRuntimeChatTooManyUploads = "runtime_chat.too_many_uploads"
 	// codeRuntimeChatUploadUnavailable：附件不存在、不属于本人这段对话或已经随别的消息发出，发消息时 409、删除时 404。params 无。

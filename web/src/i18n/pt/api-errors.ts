@@ -227,6 +227,7 @@ export default {
     upload_unsupported: "Somente arquivos PDF, Word (.docx), Excel (.xlsx), CSV, PowerPoint (.pptx), Markdown e texto simples são aceitos.",
     upload_unreadable: "Não foi possível ler o conteúdo deste arquivo. Ele pode estar corrompido, criptografado ou ser uma imagem digitalizada.",
     upload_busy: "Há arquivos demais sendo processados agora. Tente novamente em instantes.",
+    upload_quota: "Há anexos não enviados demais (até {{max_mb}} MB no total). Envie ou remova alguns primeiro.",
     too_many_uploads: "Uma mensagem pode levar no máximo {{max}} anexos.",
     upload_unavailable: "O anexo não existe ou já foi enviado. Envie-o novamente.",
   },

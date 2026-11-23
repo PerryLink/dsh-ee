@@ -61,6 +61,13 @@ func (s *Store) CreateRuntimeChatUpload(ctx context.Context, u *RuntimeChatUploa
 	return err
 }
 
+// RuntimeChatPendingUploadBytes 是本人所有还没发出的附件（原件 + 正文）合计的字节数。
+func (s *Store) RuntimeChatPendingUploadBytes(ctx context.Context, ownerID int64) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(size + text_bytes), 0) FROM runtime_chat_uploads WHERE owner_id=? AND task_id IS NULL`, ownerID).Scan(&n)
+	return n, err
+}
+
 // DeleteRuntimeChatUpload 删掉本人一个还没发出的附件，返回它（调用方删文件）。已发出或不属于本人时 ErrNotFound。
 func (s *Store) DeleteRuntimeChatUpload(ctx context.Context, ownerID, id int64) (*RuntimeChatUpload, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeChatUploadColumns+` FROM runtime_chat_uploads WHERE id=? AND owner_id=? AND task_id IS NULL`, id, ownerID)

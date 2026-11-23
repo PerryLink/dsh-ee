@@ -234,6 +234,7 @@ export default {
     upload_unsupported: "只支持 PDF、Word（.docx）、Excel（.xlsx）、CSV、PPT（.pptx）、Markdown 和纯文本文件",
     upload_unreadable: "读不出这个文件的内容，可能已损坏、加密或是扫描件",
     upload_busy: "同时在处理的文件太多，请稍后再试",
+    upload_quota: "还没发出的附件太多了（合计不超过 {{max_mb}} MB），先发出或删掉一些再上传",
     too_many_uploads: "一条消息最多带 {{max}} 个附件",
     upload_unavailable: "附件不存在或已经发出，请重新上传",
   },

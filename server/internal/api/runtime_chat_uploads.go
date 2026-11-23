@@ -28,10 +28,12 @@ import (
 // 不支持的格式、扫描件、超限当场报错），原件和正文存在 DSH_EE_DATA_DIR/runtime-chat-uploads；
 // 发消息时带上附件 ID，执行这一轮时 worker 把原件和正文写进机器人的工作目录 .uploads/<轮次>/，并在提示词前面告诉它。
 const (
-	runtimeChatUploadMax  = 50 << 20
-	runtimeChatUploadTTL  = 24 * time.Hour
-	runtimeChatUploadsDir = "runtime-chat-uploads"
-	runtimeChatUploadName = 120
+	runtimeChatUploadMax = 50 << 20
+	runtimeChatUploadTTL = 24 * time.Hour
+	// runtimeChatUploadPendingMax 是一位员工所有还没发出的附件（原件 + 正文）合计的上限，防止只上传不发把数据盘占满。
+	runtimeChatUploadPendingMax = 500 << 20
+	runtimeChatUploadsDir       = "runtime-chat-uploads"
+	runtimeChatUploadName       = 120
 	// runtimeChatUploadsWorkDir 是附件在机器人工作目录里的位置（相对路径），按轮次分子目录。
 	runtimeChatUploadsWorkDir = ".uploads"
 )
@@ -110,6 +112,8 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer file.Close()
+	// FormFile 解析的是 requireUser 换过 context 的请求副本，net/http 只清理原请求的临时文件
+	defer r.MultipartForm.RemoveAll()
 	if header.Size > runtimeChatUploadMax {
 		tooLarge()
 		return
@@ -124,6 +128,16 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	name := runtimeChatUploadFileName(header.Filename)
+	pending, err := s.store.RuntimeChatPendingUploadBytes(r.Context(), owner)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	if pending+int64(len(data)) > runtimeChatUploadPendingMax {
+		writeErrCode(w, http.StatusTooManyRequests, codeRuntimeChatUploadQuota, map[string]any{"max_mb": runtimeChatUploadPendingMax >> 20},
+			"还没发出的附件太多了，先发出或删掉一些再上传")
+		return
+	}
 	release, ok := beginKBConvert()
 	if !ok {
 		writeErrCode(w, http.StatusTooManyRequests, codeRuntimeChatUploadBusy, nil, "同时在转换的文件太多，请稍后再试")
@@ -221,11 +235,12 @@ func (s *Server) writeRuntimeChatUploads(ctx context.Context, task *store.Runtim
 	note.WriteString("The employee attached these documents to the current message. They are in your working directory; next to each original is an extracted-text copy (same path plus .md). Read the .md copy to answer, and open the original only if you need something the text lost:\n")
 	used := map[string]bool{}
 	for _, u := range uploads {
+		// 原件和正文副本（加 .md）都不能跟别的附件撞名：budget.csv 的正文和原件 budget.csv.md 是同一个路径
 		name := u.Name
-		if used[name] {
+		if used[name] || used[name+".md"] {
 			name = strconv.FormatInt(u.ID, 10) + "-" + name
 		}
-		used[name] = true
+		used[name], used[name+".md"] = true, true
 		for _, f := range []struct{ local, remote string }{
 			{s.runtimeChatUploadPath(u.StorageKey), path.Join(workDir, rel, name)},
 			{s.runtimeChatUploadPath(u.StorageKey) + ".md", path.Join(workDir, rel, name+".md")},
