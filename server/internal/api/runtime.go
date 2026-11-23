@@ -182,11 +182,20 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id, owner := runtimeID(r, "id"), runtimeOwner(r)
-	if _, err := s.store.RuntimeTask(r.Context(), id, owner); err != nil {
+	task, err := s.store.RuntimeTask(r.Context(), id, owner)
+	if notFound(err) && owner != 0 {
+		// 团队线程里别的成员触发的一轮：此刻在这个团队里就能看和下载它的产物，团队外 403。
+		task, err = s.store.RuntimeTeamChatTask(r.Context(), id, owner)
+		if errors.Is(err, store.ErrRuntimeChatTeamForbidden) {
+			writeErrCode(w, http.StatusForbidden, codeRuntimeChatTeamForbidden, nil, "这个机器人没有共享给你所在的部门")
+			return
+		}
+	}
+	if err != nil {
 		s.runtimeError(w, r, err)
 		return
 	}
-	files, err := s.store.RuntimeArtifacts(r.Context(), id, owner)
+	files, err := s.store.RuntimeArtifacts(r.Context(), id, task.OwnerID)
 	if err != nil {
 		s.runtimeError(w, r, err)
 		return

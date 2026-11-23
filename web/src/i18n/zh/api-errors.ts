@@ -227,5 +227,8 @@ export default {
     busy: "上一条消息还在处理中，请等待回复后再发送",
     idempotency_conflict: "这条消息与之前的发送请求冲突，请重新发送",
     queue_full: "你排队中的云任务已达上限，请稍后再试",
+    team_forbidden: "这个机器人没有共享给你所在的部门",
+    no_department: "你的账号没有填写部门，不能共享机器人",
+    invalid_department: "部门名不能超过 {{max}} 个字符，也不能含控制字符",
   },
 };

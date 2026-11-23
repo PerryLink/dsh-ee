@@ -87,7 +87,8 @@ func TestRuntimeChatThreadMigration(t *testing.T) {
 	}
 
 	// 回到迁移前的形态：没有唯一索引，同一对 (owner, bot) 有三段对话，轮次交错。
-	exec(`ALTER TABLE runtime_chat_conversations DROP INDEX uq_runtime_chat_owner_bot`)
+	// 0055 把唯一索引换成了带部门列的 uq_runtime_chat_owner_bot_team，一并去掉。
+	exec(`ALTER TABLE runtime_chat_conversations DROP INDEX uq_runtime_chat_owner_bot_team`)
 	botA, botB, botC := bot(owner, "A"), bot(owner, "B"), bot(other, "C")
 	first := conversation(owner, botA, "", base.Add(2*time.Hour), base.Add(3*time.Hour))
 	second := conversation(owner, botA, "Earliest titled", base, base.Add(time.Hour))

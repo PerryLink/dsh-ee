@@ -91,10 +91,12 @@ var agentExcluded = map[string]string{
 	"POST /api/runtime/chat/conversations":               "网页对话只能由员工本人在浏览器里发起",
 	"GET /api/runtime/chat/conversations/{id}":           "网页对话记录只供员工本人查看",
 	"POST /api/runtime/chat/conversations/{id}/messages": "网页对话消息只能由员工本人显式发送",
+	"PUT /api/runtime/chat/bots/{id}/share":              "共享机器人给团队只能由所有者本人在浏览器里显式操作",
 	"GET /api/admin/runtime/bots":                        "云机器人由管理员管理",
 	"POST /api/admin/runtime/bots":                       "云机器人由管理员管理",
 	"PUT /api/admin/runtime/bots/{id}":                   "云机器人由管理员管理",
 	"POST /api/admin/runtime/bots/{id}/run":              "云机器人只能由管理员手动触发",
+	"PUT /api/admin/runtime/bots/{id}/share":             "共享云机器人给团队由管理员管理",
 
 	"POST /api/auth/feishu/event":               "飞书事件使用独立来源验证，不由 Agent 调用",
 	"GET /api/me/feishu-chat":                   "员工界面与接入插件查询机器人状态",

@@ -132,10 +132,12 @@ func (s *Server) routes() []route {
 		usr("POST /api/runtime/chat/conversations", s.handleRuntimeChatCreate),
 		usr("GET /api/runtime/chat/conversations/{id}", s.handleRuntimeChatConversation),
 		usr("POST /api/runtime/chat/conversations/{id}/messages", s.handleRuntimeChatMessage),
+		usr("PUT /api/runtime/chat/bots/{id}/share", s.handleRuntimeChatShare),
 		prm("GET /api/admin/runtime/bots", s.handleRuntimeBots, rbac.SettingsManage),
 		prm("POST /api/admin/runtime/bots", s.handleRuntimeSaveBot, rbac.SettingsManage),
 		prm("PUT /api/admin/runtime/bots/{id}", s.handleRuntimeSaveBot, rbac.SettingsManage),
 		prm("POST /api/admin/runtime/bots/{id}/run", s.handleRuntimeRunBot, rbac.SettingsManage),
+		prm("PUT /api/admin/runtime/bots/{id}/share", s.handleRuntimeShareBot, rbac.SettingsManage),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
 		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
 		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),
