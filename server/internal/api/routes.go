@@ -134,6 +134,8 @@ func (s *Server) routes() []route {
 		usr("POST /api/runtime/chat/conversations", s.handleRuntimeChatCreate),
 		usr("GET /api/runtime/chat/conversations/{id}", s.handleRuntimeChatConversation),
 		usr("POST /api/runtime/chat/conversations/{id}/messages", s.handleRuntimeChatMessage),
+		usr("POST /api/runtime/chat/conversations/{id}/uploads", s.handleRuntimeChatUpload),
+		usr("DELETE /api/runtime/chat/uploads/{id}", s.handleRuntimeChatUploadDelete),
 		usr("PUT /api/runtime/chat/bots/{id}/share", s.handleRuntimeChatShare),
 		usr("POST /api/runtime/chat/bots/{id}/computer/{action}", s.handleRuntimeChatComputer),
 		prm("GET /api/admin/runtime/bots", s.handleRuntimeBots, rbac.SettingsManage),

@@ -6,7 +6,7 @@ title_en: "Sharing a bot with a team"
 summary: "把云端机器人共享给一个部门：成员共用一条团队对话、看到彼此的消息和文件，每条消息都用发送人自己的权限运行。"
 summary_en: "Share a cloud bot with a department: members use one team chat and see each other's messages and files, and every message runs with the sender's own permissions."
 tags: [机器人对话, 云端机器人, 团队, 权限]
-updated_at: 2026-11-22
+updated_at: 2026-11-23
 status: draft
 since: 2026-11-22
 lang: zh-CN
@@ -55,6 +55,8 @@ lang: zh-CN
 - **管理员**：「云端常驻机器人」设置里编辑机器人，在「共享给部门」填部门名（与员工资料里的部门名一致），留空表示不共享。
 
 同一时刻一个机器人只共享给一个部门。
+
+机器人替员工新建的机器人（[`bots__create`](./bot-delegation.md#新建机器人) 建的临时助手）**不能由所有者共享给部门**：它的提示词由机器人 / 模型控制，共享给部门就等于让同事用本人的权限执行别人写的提示词。确实需要共享的，由管理员在「云端常驻机器人」设置里另行处理。
 
 ## 取消共享和改部门
 
