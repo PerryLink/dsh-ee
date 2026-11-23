@@ -1621,6 +1621,8 @@ function Workspace({
   } | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
+  const uploadQueue = useRef<Promise<void>>(Promise.resolve());
+  const removedUploads = useRef(new Set<string>());
 
   const draft = drafts[selKey] ?? "";
   const setDraft = (value: string) => setDrafts((d) => ({ ...d, [selKey]: value }));
@@ -1659,58 +1661,30 @@ function Workspace({
     const conv = thread.convId;
     const notes: string[] = [];
     const max = CHAT_UPLOAD_MAX_BYTES >> 20;
+    const tooMany = t("botChat.composer.attachTooMany", { max: CHAT_UPLOADS_PER_MESSAGE });
     let room = CHAT_UPLOADS_PER_MESSAGE - pendingUploads.filter((u) => !u.error).length;
     const accepted: PendingUpload[] = [];
     for (const file of files) {
       if (!chatUploadSupported(file.name)) notes.push(t("botChat.composer.attachUnsupported", { name: file.name }));
       else if (file.size > CHAT_UPLOAD_MAX_BYTES) notes.push(t("botChat.composer.attachTooLarge", { name: file.name, max }));
       else if (room <= 0) {
-        if (
-          !notes.includes(
-            t("botChat.composer.attachTooMany", {
-              max: CHAT_UPLOADS_PER_MESSAGE,
-            }),
-          )
-        )
-          notes.push(
-            t("botChat.composer.attachTooMany", {
-              max: CHAT_UPLOADS_PER_MESSAGE,
-            }),
-          );
+        if (!notes.includes(tooMany)) notes.push(tooMany);
       } else {
         room--;
-        accepted.push({
-          key: newIdempotencyKey(),
-          name: file.name,
-          size: file.size,
-          done: null,
-          error: null,
+        const key = newIdempotencyKey();
+        accepted.push({ key, name: file.name, size: file.size, done: null, error: null });
+        // 一个接一个传：服务端同时只转两个文件，一次拖五个并发上传会把后面的挤成「太忙」
+        uploadQueue.current = uploadQueue.current.then(async () => {
+          if (removedUploads.current.has(key)) return;
+          try {
+            const done = await chatApi.upload(conv, file);
+            // 读取期间员工已经把它移除了（或离开了页面）：服务端那份也删掉
+            if (!alive.current || removedUploads.current.has(key)) void chatApi.removeUpload(done.id).catch(() => undefined);
+            else patchUpload(bot, key, { done });
+          } catch (err) {
+            if (alive.current) patchUpload(bot, key, { error: err instanceof Error ? err.message : t("botChat.errors.generic") });
+          }
         });
-        const key = accepted[accepted.length - 1].key;
-        void chatApi.upload(conv, file).then(
-          (done) => {
-            if (!alive.current) return;
-            let kept = false;
-            setUploads((s) => {
-              const list = s[bot] ?? [];
-              kept = list.some((u) => u.key === key);
-              return kept
-                ? {
-                    ...s,
-                    [bot]: list.map((u) => (u.key === key ? { ...u, done } : u)),
-                  }
-                : s;
-            });
-            // 读取期间员工已经把它移除了：服务端那份也删掉
-            if (!kept) void chatApi.removeUpload(done.id).catch(() => undefined);
-          },
-          (err: unknown) => {
-            if (alive.current)
-              patchUpload(bot, key, {
-                error: err instanceof Error ? err.message : t("botChat.errors.generic"),
-              });
-          },
-        );
       }
     }
     setUploadNotes(notes.length ? { bot, notes } : null);
@@ -1718,6 +1692,7 @@ function Workspace({
   };
 
   const removeUpload = (u: PendingUpload) => {
+    removedUploads.current.add(u.key);
     patchUpload(selKey, u.key, null);
     if (u.done) void chatApi.removeUpload(u.done.id).catch(() => undefined);
     inputRef.current?.focus();
