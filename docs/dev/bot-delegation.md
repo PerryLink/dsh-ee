@@ -6,7 +6,7 @@ title_en: "Employee computers and bot delegation"
 summary: "一个员工一台云电脑，他的机器人共用工作目录；机器人之间可以派任务、取回结果、新建助手，带防循环上限和完整审计。"
 summary_en: "One cloud computer per employee shared by their bots; bots can delegate tasks to each other, get results back and create helpers, with loop limits and full audit."
 tags: [云端机器人, OpenSandbox, 机器人对话, 派任务, 审计]
-updated_at: 2026-11-22
+updated_at: 2026-11-23
 status: draft
 since: 2026-11-22
 lang: zh-CN
@@ -94,6 +94,8 @@ lang: zh-CN
 ### 新建机器人
 
 `bots__create` 按[写操作审批模式](./bot-approval.md)放行：只读拒绝，完全放行直接执行，自动审批只在命中规则时直接执行。需要逐个审批时，对话里出现审批卡，工具也会返回 `/confirm/{id}` 链接；员工点同意后，机器人用相同参数再调一次，一次同意只能建一次。新机器人归同一位员工、以他身份运行、只读、开着网页对话、不开定时，和他的其他机器人共用一台电脑。机器人替一位员工建的机器人（仍然存在的）最多 5 个，到上限时直接拒绝，不再请员工确认。
+
+机器人替员工新建的机器人不能由所有者共享给部门（见[团队共享机器人](./bot-team-sharing.md)）：要共享给团队，由管理员另行处理。
 
 ## 审计
 

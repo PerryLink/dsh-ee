@@ -121,6 +121,8 @@ type RuntimeChatTurn struct {
 	CreatedAt  time.Time `json:"created_at"`
 	SenderID   int64     `json:"sender_id,omitempty"`
 	SenderName string    `json:"sender_name,omitempty"`
+	// Attachments 是员工随这条消息上传的文档（只有文件名、大小等，没有内容）。
+	Attachments []RuntimeChatUpload `json:"attachments,omitempty"`
 	// Replayed 为真表示 EnqueueRuntimeChatTurn 按幂等键返回了已有的一轮，没有新建任务。
 	Replayed bool `json:"-"`
 }
@@ -134,6 +136,8 @@ type RuntimeChatMessage struct {
 	Title          string
 	IdempotencyKey string
 	TimeoutSeconds int
+	// Uploads 是这条消息带的附件（本人在这条对话里上传、还没发出的），入队时挂到新的一轮上。
+	Uploads []int64
 }
 
 // RuntimeChatPlanner 由调用方提供，在入队事务里决定这一轮的上下文。两个函数都必须是确定性的纯函数。
@@ -690,6 +694,9 @@ func (s *Store) EnqueueRuntimeChatTurn(ctx context.Context, m RuntimeChatMessage
 		return nil, err
 	}
 	if err := appendRuntimeEvent(ctx, tx, id, RuntimeQueued, 0, created); err != nil {
+		return nil, err
+	}
+	if err := attachRuntimeChatUploads(ctx, tx, m, id); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE runtime_chat_conversations SET updated_at=?, title=IF(title='', ?, title),

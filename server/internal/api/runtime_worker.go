@@ -249,6 +249,10 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil || setup.ExitCode != 0 {
 		return "", nil, errors.New("preparing cloud sandbox failed")
 	}
+	attachments, err := s.writeRuntimeChatUploads(ctx, task, sandbox, workDir)
+	if err != nil {
+		return "", nil, err
+	}
 	if err := sandbox.WriteFile(ctx, runtimePatchPath, runtimeDSHPatch(opts.BaseURL, opts.Model)); err != nil {
 		return "", nil, errors.New("writing DSH configuration failed")
 	}
@@ -269,6 +273,8 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		// 网页对话要的是直接回答员工，而不是任务摘要。当前消息必须留在最后。
 		prompt = task.Prompt
 	}
+	// 只往前加：网页对话的当前消息必须留在提示词最后。
+	prompt = attachments + prompt
 	if computer.persistent {
 		// 只往前加：网页对话的当前消息必须留在提示词最后。
 		prompt = runtimeComputerNote(computer.ownerKind, computer.botID) + prompt
