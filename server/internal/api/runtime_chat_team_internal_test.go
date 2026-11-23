@@ -160,7 +160,7 @@ func TestRuntimeTeamChatSharing(t *testing.T) {
 	if task.ID != first.ID || task.OwnerID != aliceID || task.RunAsID != aliceID || tokenUser != aliceID {
 		t.Fatalf("team turn ran as owner %d / run_as %d / token user %d, want alice %d", task.OwnerID, task.RunAsID, tokenUser, aliceID)
 	}
-	if !strings.HasPrefix(prompt, "Bot instructions:\nPersona of Team analyst\n") || !strings.Contains(prompt, "shared by a team of colleagues") ||
+	if !strings.HasPrefix(prompt, runtimeEphemeralNote+"Bot instructions:\nPersona of Team analyst\n") || !strings.Contains(prompt, "shared by a team of colleagues") ||
 		!strings.Contains(prompt, `The current message is from "alice"`) || !strings.HasSuffix(prompt, "\n本周的发布风险有哪些？") {
 		t.Fatalf("team prompt: %q", prompt)
 	}
@@ -248,6 +248,7 @@ func TestRuntimeTeamChatSharing(t *testing.T) {
 		}
 	}
 	expectRuntimeChatCode(t, "bob downloads after unshare", bob("GET", download, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
+	expectRuntimeChatCode(t, "alice downloads her turn after unshare", alice("GET", download, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
 	if canceled, err := st.RuntimeTask(ctx, pending.ID, aliceID); err != nil || canceled.Status != store.RuntimeCanceled {
 		t.Fatalf("pending team turn after unshare: %+v, %v", canceled, err)
 	}
