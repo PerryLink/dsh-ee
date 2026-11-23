@@ -310,6 +310,25 @@ function mergeDelegations(prev: ChatDelegation[], next: ChatDelegation[]): ChatD
 const delegationDone = (d: ChatDelegation) => d.status === "succeeded";
 const delegationFailed = (d: ChatDelegation) => d.status === "failed" || d.status === "canceled";
 
+function delegationErrorReason(error: string) {
+  switch (error) {
+    case "the target bot was busy with another message":
+      return { key: "targetBusy" } as const;
+    case "the target bot is no longer available":
+      return { key: "targetUnavailable" } as const;
+    case "the delegation could not be queued":
+      return { key: "notQueued" } as const;
+    case "the delegating turn did not finish successfully":
+      return { key: "parentFailed" } as const;
+    case "the delegating turn is being retried":
+      return { key: "parentRetry" } as const;
+    default: {
+      const queueLimit = /^the employee already has (\d+) cloud tasks queued or running$/.exec(error);
+      return queueLimit ? ({ key: "queueFull", limit: queueLimit[1] } as const) : ({ key: "unknown" } as const);
+    }
+  }
+}
+
 /** 委派卡片：派给谁、状态、结果，能跳到那个机器人的对话。 */
 function DelegationCard({ d, onOpenBot }: { d: ChatDelegation; onOpenBot: (botId: ChatId) => void }) {
   const { t } = useTranslation();
@@ -317,6 +336,7 @@ function DelegationCard({ d, onOpenBot }: { d: ChatDelegation; onOpenBot: (botId
   const k = "botChat.delegation";
   const tone = delegationDone(d) ? "bg-emerald-500" : delegationFailed(d) ? "bg-red-500" : "bg-amber-500";
   const result = d.result?.trim() ?? "";
+  const error = d.error ? delegationErrorReason(d.error) : null;
   return (
     <div
       className="mt-3 rounded-lg border border-neutral-200 bg-card p-3 text-[13px] leading-5 dark:border-white/10"
@@ -334,7 +354,7 @@ function DelegationCard({ d, onOpenBot }: { d: ChatDelegation; onOpenBot: (botId
         </span>
       </div>
       <p className="mt-1.5 line-clamp-3 text-xs break-words whitespace-pre-wrap text-neutral-600 [overflow-wrap:anywhere]">{d.content}</p>
-      {d.error && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{t(`${k}.error`, { reason: d.error })}</p>}
+      {error && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{t(`${k}.error`, { reason: t(`${k}.reasons.${error.key}`, { limit: error.limit }) })}</p>}
       {result && (
         <div className="mt-2 border-t border-neutral-100 pt-2 dark:border-white/10">
           <div className="text-xs font-medium text-neutral-500">{t(`${k}.result`)}</div>
@@ -1053,8 +1073,17 @@ function Workspace({
     };
   }, [resolving, convParam, alive, setParams]);
 
-  const selected = resolving ? null : (bots.find((b) => sameId(b.id, botParam)) ?? bots[0] ?? null);
+  const [previousSelection, setPreviousSelection] = useState({ botParam, key: "" });
+  const selected = resolving
+    ? null
+    : (bots.find((b) => sameId(b.id, botParam)) ??
+      (previousSelection.botParam === botParam ? bots.find((b) => sameId(b.id, previousSelection.key)) : undefined) ??
+      bots[0] ??
+      null);
   const selKey = selected ? String(selected.id) : "";
+  if (previousSelection.botParam !== botParam || previousSelection.key !== selKey) {
+    setPreviousSelection({ botParam, key: selKey });
+  }
   const selKeyRef = useRef(selKey);
   selKeyRef.current = selKey;
 
@@ -1081,8 +1110,18 @@ function Workspace({
   const profileCloseRef = useRef<HTMLButtonElement>(null);
   const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
+  const navigateToBot = (botId: ChatId) => {
+    if (sameId(botId, selKey)) return;
+    if (selKey && botParam !== selKey) {
+      // 先把隐式选中的机器人写进当前历史项，让后退能回到这个对话。
+      const current = new URLSearchParams(params);
+      current.set("bot", selKey);
+      setParams(current, { replace: true });
+    }
+    setParams({ bot: String(botId) });
+  };
   const selectBot = (bot: ChatBot) => {
-    if (!sameId(bot.id, selKey)) setParams({ bot: String(bot.id) });
+    navigateToBot(bot.id);
     setListOpen(false);
   };
   /** 委派卡片上的「打开对话」：只跳到当前员工能对话的机器人。 */
@@ -1631,7 +1670,7 @@ function Workspace({
     if (!step || !bots.length) return;
     e.preventDefault();
     const next = bots[(index + step + bots.length) % bots.length];
-    if (!sameId(next.id, selKey)) setParams({ bot: String(next.id) });
+    navigateToBot(next.id);
     radioRefs.current[String(next.id)]?.focus();
   };
 

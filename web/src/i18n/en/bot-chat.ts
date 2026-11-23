@@ -190,6 +190,15 @@ export const botChat = {
     less: "Show less",
     open: "Open chat with “{{bot}}”",
     error: "Not done: {{reason}}",
+    reasons: {
+      targetBusy: "The target bot was busy with another message.",
+      queueFull: "You have reached the limit of {{limit}} queued or running cloud tasks.",
+      targetUnavailable: "The target bot is no longer available.",
+      notQueued: "The delegation could not be queued.",
+      parentFailed: "The delegating turn did not finish successfully.",
+      parentRetry: "The delegating turn is being retried.",
+      unknown: "The delegation could not be completed.",
+    },
     status: {
       pending: "Starts when this turn ends",
       queued: "Queued",
