@@ -13,10 +13,10 @@
  * 沿用原有的保护：有排队 / 运行中的回复时才轮询，且上一次请求回来之后才发下一次；
  * 本地追加消息之前发出的读取结果一律丢弃；发送失败时内容留在输入框里，重试复用同一个幂等键。
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, ArrowUpRight, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Maximize2, Minimize2, Monitor, RefreshCw, Send, Share2, ShieldAlert, ShieldCheck, Users, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Bot, CalendarClock, FileUp, Paperclip, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Maximize2, Minimize2, Monitor, RefreshCw, Send, Share2, ShieldAlert, ShieldCheck, Users, X } from "lucide-react";
 import { Badge, Button, Card, Empty, Notice, Spinner, cx, tabCls, tabListCls } from "../components/ui";
 import { ChatMarkdown } from "../components/chat-markdown";
 import { FullAccessDialog } from "../components/full-access-dialog";
@@ -29,7 +29,11 @@ import { formatBytes, formatDateOnly, formatDateTime, formatNumber, formatTimeOn
 import {
   APPROVAL_MODES,
   CHAT_CONTENT_MAX_BYTES,
+  CHAT_UPLOAD_FORMATS,
+  CHAT_UPLOAD_MAX_BYTES,
+  CHAT_UPLOADS_PER_MESSAGE,
   botRef,
+  chatUploadSupported,
   approvalModeOf,
   chatApi,
   getLastRead,
@@ -45,6 +49,7 @@ import {
   type ApprovalMode,
   type ChatApproval,
   type ChatArtifact,
+  type ChatAttachment,
   type ChatBot,
   type ChatBotProfile,
   type ChatComputer,
@@ -62,6 +67,15 @@ const POLL_MS = 2500;
 const PROFILE_POLL_MS = 5000;
 /** 离底部这么近就算「在看最新消息」，新内容到了跟着滚下去。 */
 const STICK_PX = 96;
+
+/** 输入框里一个待发的附件：done 是上传并读取成功后服务端给的记录，error 是失败原因。 */
+interface PendingUpload {
+  key: string;
+  name: string;
+  size: number;
+  done: ChatAttachment | null;
+  error: string | null;
+}
 /** 滚到离顶部这么近就去读更早的消息。 */
 const EARLIER_PX = 48;
 
@@ -232,6 +246,61 @@ function dailyLocalTime(cron: string, lang: string): string | null {
 // ---------- 对话里的一轮 ----------
 
 /** 成功回复生成的文件：员工点了才读列表，点了文件名才下载。 */
+/** 附件小卡片：消息里和输入框里共用。 */
+function AttachmentChip({
+  name,
+  detail,
+  state,
+  onRemove,
+  removeLabel,
+}: {
+  name: string;
+  detail: ReactNode;
+  state?: "uploading" | "error";
+  onRemove?: () => void;
+  removeLabel?: string;
+}) {
+  return (
+    <span
+      className={cx(
+        "inline-flex max-w-full min-w-0 items-center gap-2 rounded-xl border bg-card py-1.5 pr-2 pl-2.5 text-left text-xs shadow-control",
+        state === "error" ? "border-red-300 dark:border-red-500/40" : "border-neutral-200 dark:border-white/10",
+      )}
+      data-attachment=""
+      data-attachment-state={state ?? "ready"}
+    >
+      {state === "uploading" ? (
+        <Spinner size={14} />
+      ) : (
+        <FileText size={16} aria-hidden className={state === "error" ? "shrink-0 text-red-500" : "shrink-0 text-brand-500"} />
+      )}
+      <span className="min-w-0">
+        <span className="block truncate font-medium text-neutral-800 dark:text-neutral-100" title={name}>
+          {name}
+        </span>
+        <span className={cx("block truncate", state === "error" ? "text-red-600 dark:text-red-400" : "text-neutral-500")}>{detail}</span>
+      </span>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={removeLabel}
+          title={removeLabel}
+          className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-white/10"
+        >
+          <X size={14} aria-hidden />
+        </button>
+      )}
+    </span>
+  );
+}
+
+function attachmentDetail(a: ChatAttachment, t: (key: "botChat.composer.pages", opts: { count: number }) => string): string {
+  const parts = [a.format.toUpperCase(), formatBytes(a.size)];
+  if (a.pages) parts.splice(1, 0, t("botChat.composer.pages", { count: a.pages }));
+  return parts.join(" · ");
+}
+
 function TurnFiles({ taskId, onPreview }: { taskId: ChatId; onPreview: (file: PreviewFile) => void }) {
   const { t } = useTranslation();
   const alive = useAlive();
@@ -529,9 +598,18 @@ function Turn({
           ) : (
             <span className="sr-only">{t("botChat.thread.you")}</span>
           )}
-          <div className="max-w-[88%] rounded-2xl rounded-br-md bg-neutral-100 px-4 py-2.5 text-sm leading-6 break-words whitespace-pre-wrap text-neutral-900 [overflow-wrap:anywhere] sm:max-w-[80%]">
-            {turn.content}
-          </div>
+          {!!turn.attachments?.length && (
+            <div className="mb-1.5 flex max-w-[88%] flex-wrap justify-end gap-1.5 sm:max-w-[80%]" data-turn-attachments="">
+              {turn.attachments.map((a) => (
+                <AttachmentChip key={a.id} name={a.name} detail={attachmentDetail(a, t)} />
+              ))}
+            </div>
+          )}
+          {turn.content && (
+            <div className="max-w-[88%] rounded-2xl rounded-br-md bg-neutral-100 px-4 py-2.5 text-sm leading-6 break-words whitespace-pre-wrap text-neutral-900 [overflow-wrap:anywhere] sm:max-w-[80%]">
+              {turn.content}
+            </div>
+          )}
           <time dateTime={turn.created_at} className="mt-1 text-[11px] text-neutral-400">
             {formatTimeOnly(turn.created_at, i18n.language)}
           </time>
@@ -1532,17 +1610,122 @@ function Workspace({
   /** 发送时后端明确说这个机器人已停用（bot_disabled）。 */
   const [blocked, setBlocked] = useState<string[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const idem = useRef<{ bot: string; content: string; key: string } | null>(null);
+  /** 每个机器人的待发附件（拖进来或点回形针选的），发出后清空。 */
+  const [uploads, setUploads] = useState<Record<string, PendingUpload[]>>({});
+  /** 前端就能判断的拒绝（格式、大小、个数），显示在输入框上方。 */
+  const [uploadNotes, setUploadNotes] = useState<{
+    bot: string;
+    notes: string[];
+  } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const uploadQueue = useRef<Promise<void>>(Promise.resolve());
+  const removedUploads = useRef(new Set<string>());
 
   const draft = drafts[selKey] ?? "";
   const setDraft = (value: string) => setDrafts((d) => ({ ...d, [selKey]: value }));
   const content = draft.trim();
   const bytes = useMemo(() => utf8Bytes(content), [content]);
   const tooLong = bytes > CHAT_CONTENT_MAX_BYTES;
+  const pendingUploads = uploads[selKey] ?? [];
+  const readyUploads = pendingUploads.flatMap((u) => (u.done ? [u.done] : []));
+  const uploadingFiles = pendingUploads.some((u) => !u.done && !u.error);
 
   const botDisabled = ready && blocked.includes(selKey);
   const isSending = sending === selKey && !!selKey;
-  const canSend = ready && !!thread?.convId && !botDisabled && sending === null && !replying && content.length > 0 && !tooLong;
+  const canAttach = ready && !!thread?.convId && !botDisabled && !isSending;
+  const canSend =
+    ready &&
+    !!thread?.convId &&
+    !botDisabled &&
+    sending === null &&
+    !replying &&
+    (content.length > 0 || readyUploads.length > 0) &&
+    !tooLong &&
+    !uploadingFiles;
+
+  const patchUpload = (bot: string, key: string, patch: Partial<PendingUpload> | null) =>
+    setUploads((s) => {
+      const list = s[bot] ?? [];
+      return {
+        ...s,
+        [bot]: patch ? list.map((u) => (u.key === key ? { ...u, ...patch } : u)) : list.filter((u) => u.key !== key),
+      };
+    });
+
+  const addFiles = (files: File[]) => {
+    if (!canAttach || !thread?.convId || files.length === 0) return;
+    const bot = selKey;
+    const conv = thread.convId;
+    const notes: string[] = [];
+    const max = CHAT_UPLOAD_MAX_BYTES >> 20;
+    const tooMany = t("botChat.composer.attachTooMany", { max: CHAT_UPLOADS_PER_MESSAGE });
+    let room = CHAT_UPLOADS_PER_MESSAGE - pendingUploads.filter((u) => !u.error).length;
+    const accepted: PendingUpload[] = [];
+    for (const file of files) {
+      if (!chatUploadSupported(file.name)) notes.push(t("botChat.composer.attachUnsupported", { name: file.name }));
+      else if (file.size > CHAT_UPLOAD_MAX_BYTES) notes.push(t("botChat.composer.attachTooLarge", { name: file.name, max }));
+      else if (room <= 0) {
+        if (!notes.includes(tooMany)) notes.push(tooMany);
+      } else {
+        room--;
+        const key = newIdempotencyKey();
+        accepted.push({ key, name: file.name, size: file.size, done: null, error: null });
+        // 一个接一个传：服务端同时只转两个文件，一次拖五个并发上传会把后面的挤成「太忙」
+        uploadQueue.current = uploadQueue.current.then(async () => {
+          if (removedUploads.current.has(key)) return;
+          try {
+            const done = await chatApi.upload(conv, file);
+            // 读取期间员工已经把它移除了（或离开了页面）：服务端那份也删掉
+            if (!alive.current || removedUploads.current.has(key)) void chatApi.removeUpload(done.id).catch(() => undefined);
+            else patchUpload(bot, key, { done });
+          } catch (err) {
+            if (alive.current) patchUpload(bot, key, { error: err instanceof Error ? err.message : t("botChat.errors.generic") });
+          }
+        });
+      }
+    }
+    setUploadNotes(notes.length ? { bot, notes } : null);
+    if (accepted.length) setUploads((s) => ({ ...s, [bot]: [...(s[bot] ?? []), ...accepted] }));
+  };
+
+  const removeUpload = (u: PendingUpload) => {
+    removedUploads.current.add(u.key);
+    patchUpload(selKey, u.key, null);
+    if (u.done) void chatApi.removeUpload(u.done.id).catch(() => undefined);
+    inputRef.current?.focus();
+  };
+
+  // 拖文件进对话区：只认文件（拖文字、链接不拦），离开整个区域才收起提示
+  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  const dropHandlers = {
+    onDragEnter: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current++;
+      if (canAttach) setDragging(true);
+    },
+    onDragOver: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = canAttach ? "copy" : "none";
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragging(false);
+    },
+    onDrop: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragging(false);
+      addFiles(Array.from(e.dataTransfer.files));
+      inputRef.current?.focus();
+    },
+  };
 
   const send = async () => {
     if (!canSend || !selected || !thread?.convId) return;
@@ -1551,16 +1734,23 @@ function Workspace({
     const conv = thread.convId;
     const ctl = ctlOf(key);
     const reuse = idem.current;
-    const idemKey = reuse && reuse.bot === key && reuse.content === content ? reuse.key : newIdempotencyKey();
-    idem.current = { bot: key, content, key: idemKey };
+    const attached = readyUploads.map((u) => u.id);
+    const sig = `${content}\u0000${attached.join(",")}`;
+    const idemKey = reuse && reuse.bot === key && reuse.content === sig ? reuse.key : newIdempotencyKey();
+    idem.current = { bot: key, content: sig, key: idemKey };
     setSending(key);
     setSendError(null);
+    setUploadNotes(null);
     try {
-      const turn = await chatApi.send(conv, content, idemKey);
+      const turn = await chatApi.send(conv, content, idemKey, attached);
       if (idem.current?.key === idemKey) idem.current = null;
       if (!alive.current) return;
       // 等待期间输入框里换了内容（例如点了「重新编辑」）：那是新草稿，原样留着
       setDrafts((d) => ((d[key] ?? "").trim() === content ? { ...d, [key]: "" } : d));
+      setUploads((s) => ({
+        ...s,
+        [key]: (s[key] ?? []).filter((u) => !u.done || !attached.includes(u.done.id)),
+      }));
       // 发送前发出的读取不含这条消息，回来后会被 version 丢弃；等它结束后补读一次
       // （loadThread 自带去重，不会和轮询重叠）。
       const pendingRead = ctl.inflight;
@@ -1988,8 +2178,23 @@ function Workspace({
 
         {/* 输入区 */}
         {selected && ready && thread && (
-          <form onSubmit={onSubmit} className="px-3 pt-2 pb-3 sm:px-6">
-            <div className="mx-auto max-w-3xl">
+          <form onSubmit={onSubmit} className="px-3 pt-2 pb-3 sm:px-6" {...dropHandlers} data-chat-dropzone="">
+            <div className="relative mx-auto max-w-3xl">
+              {dragging && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex min-h-28 flex-col items-center justify-center gap-1 rounded-3xl border-2 border-dashed border-brand-400 bg-brand-50/95 px-4 text-center dark:bg-brand-500/15"
+                  data-drop-overlay=""
+                >
+                  <FileUp size={22} aria-hidden className="text-brand-600 dark:text-brand-300" />
+                  <span className="text-sm font-medium text-brand-700 dark:text-brand-200">{t("botChat.composer.dropTitle")}</span>
+                  <span className="text-xs text-brand-700/80 dark:text-brand-200/80">
+                    {t("botChat.composer.dropHint", {
+                      max: CHAT_UPLOAD_MAX_BYTES >> 20,
+                      count: CHAT_UPLOADS_PER_MESSAGE,
+                    })}
+                  </span>
+                </div>
+              )}
               {thread.refreshError && (
                 <Notice tone="warn" role="status" className="mb-2">
                   <span className="mr-2">{t("botChat.thread.refreshFailed", { reason: errText(thread.refreshError) })}</span>
@@ -2018,13 +2223,76 @@ function Workspace({
                   {t("botChat.composer.failed", { reason: errText(activeSendError) })}
                 </Notice>
               )}
+              {uploadNotes && uploadNotes.bot === selKey && (
+                <Notice tone="warn" role="alert" className="mb-2" data-upload-notes="">
+                  <span className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1">
+                      {uploadNotes.notes.map((n) => (
+                        <span key={n} className="block">
+                          {n}
+                        </span>
+                      ))}
+                    </span>
+                    <button type="button" aria-label={t("botChat.composer.attachDismiss")} onClick={() => setUploadNotes(null)} className="shrink-0">
+                      <X size={14} aria-hidden />
+                    </button>
+                  </span>
+                </Notice>
+              )}
+              {pendingUploads.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5" data-pending-uploads="">
+                  {pendingUploads.map((u) => (
+                    <AttachmentChip
+                      key={u.key}
+                      name={u.name}
+                      state={u.error ? "error" : u.done ? undefined : "uploading"}
+                      detail={
+                        u.error
+                          ? t("botChat.composer.attachFailed", {
+                              name: u.name,
+                              reason: u.error,
+                            })
+                          : u.done
+                            ? attachmentDetail(u.done, t)
+                            : t("botChat.composer.uploading")
+                      }
+                      onRemove={isSending ? undefined : () => removeUpload(u)}
+                      removeLabel={t("botChat.composer.removeAttachment", {
+                        name: u.name,
+                      })}
+                    />
+                  ))}
+                </div>
+              )}
               <div
                 className={cx(
-                  "flex items-end gap-2 rounded-3xl border bg-card py-1.5 pr-1.5 pl-4 shadow-control transition-[border-color,box-shadow] duration-150 focus-within:border-brand-500 focus-within:ring-[3px] focus-within:ring-brand-500/20 dark:focus-within:border-brand-400",
+                  "flex items-end gap-2 rounded-3xl border bg-card py-1.5 pr-1.5 pl-1.5 shadow-control transition-[border-color,box-shadow] duration-150 focus-within:border-brand-500 focus-within:ring-[3px] focus-within:ring-brand-500/20 dark:focus-within:border-brand-400",
                   tooLong ? "border-red-400" : "border-neutral-300 dark:border-white/15",
                   botDisabled && "bg-neutral-50 opacity-70",
                 )}
               >
+                <input
+                  ref={fileRef}
+                  type="file"
+                  multiple
+                  hidden
+                  accept={CHAT_UPLOAD_FORMATS.join(",")}
+                  onChange={(e) => {
+                    addFiles(Array.from(e.target.files ?? []));
+                    e.target.value = "";
+                  }}
+                  data-chat-file-input=""
+                />
+                <button
+                  type="button"
+                  disabled={!canAttach}
+                  onClick={() => fileRef.current?.click()}
+                  aria-label={t("botChat.composer.attach")}
+                  title={t("botChat.composer.attach")}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+                >
+                  <Paperclip size={18} aria-hidden />
+                </button>
                 <label htmlFor={composerId} className="sr-only">
                   {t("botChat.composer.label")}
                 </label>

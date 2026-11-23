@@ -37,7 +37,7 @@ lang: zh-CN
 
 ## 审批卡怎么工作
 
-逐个审批复用写操作确认（[plugins.md §7.5](../plugins.md)，`write_confirmations` 表）：
+逐个审批复用写操作确认（[plugins.md §7.5](https://github.com/hikariming/dsh-ee/blob/main/docs/plugins.md#75-写操作要员工确认)，`write_confirmations` 表）：
 
 1. 沙箱里的 DSH 调 `/mcp` 的写工具。服务端按这一轮的短期凭证找回任务和机器人，现读审批模式（管理员改成只读立即生效）。
 2. 需要审批时建一条带 `runtime_task_id` 的待确认记录，这次 `/mcp` 调用停在服务端等待，最长 15 分钟且不超过这一轮任务的剩余时间。

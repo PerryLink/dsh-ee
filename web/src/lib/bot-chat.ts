@@ -83,6 +83,19 @@ export interface ChatTurn {
   /** 团队会话里才有：发这条消息的员工（这一轮也以他自己的身份运行）。 */
   sender_id?: ChatId | null;
   sender_name?: string | null;
+  /** 员工随这条消息上传的文档（只有文件名、大小，内容在机器人的工作目录里）。 */
+  attachments?: ChatAttachment[] | null;
+}
+
+/** 拖进对话框的一个文档：上传时服务端已转好正文，发消息时带上 id。 */
+export interface ChatAttachment {
+  id: number;
+  name: string;
+  size: number;
+  format: string;
+  pages?: number;
+  text_bytes: number;
+  created_at: string;
 }
 
 /**
@@ -175,6 +188,16 @@ export interface ChatBotProfile {
 /** 单条消息的内容上限（UTF-8 字节），与后端一致。 */
 export const CHAT_CONTENT_MAX_BYTES = 8000;
 
+/** 对话框附件：与服务端 runtimeChatUploadMax、RuntimeChatUploadsPerMessage、知识库的转换格式一致。 */
+export const CHAT_UPLOAD_MAX_BYTES = 50 << 20;
+export const CHAT_UPLOADS_PER_MESSAGE = 5;
+export const CHAT_UPLOAD_FORMATS = [".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".md", ".markdown", ".txt"];
+
+export function chatUploadSupported(name: string): boolean {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && CHAT_UPLOAD_FORMATS.includes(name.slice(dot).toLowerCase());
+}
+
 const base = "/api/runtime/chat";
 const tasksBase = "/api/runtime/tasks";
 const enc = (id: ChatId) => encodeURIComponent(String(id));
@@ -208,14 +231,29 @@ export const chatApi = {
       messages: d.messages ?? [],
       delegations: d.delegations ?? [],
     })),
-  send: (id: ChatId, content: string, idempotencyKey: string) =>
-    request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, { content, idempotency_key: idempotencyKey }),
+  send: (id: ChatId, content: string, idempotencyKey: string, uploads: number[] = []) =>
+    request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, {
+      content,
+      idempotency_key: idempotencyKey,
+      ...(uploads.length ? { uploads } : {}),
+    }),
+  /** 上传一个拖进对话框的文档；服务端当场转成正文，读不出来时直接报错。 */
+  upload: (id: ChatId, file: File) => {
+    const form = new FormData();
+    form.set("file", file, file.name);
+    return request<ChatAttachment>("POST", `${base}/conversations/${enc(id)}/uploads`, undefined, { raw: { body: form } });
+  },
+  /** 移除一个还没发出的附件。 */
+  removeUpload: (id: number) => request<void>("DELETE", `${base}/uploads/${enc(id)}`),
   artifacts: (taskId: ChatId) => request<ChatArtifact[] | null>("GET", `${tasksBase}/${enc(taskId)}/artifacts`).then((x) => x ?? []),
   /** 我待审批的云端机器人写操作（只取带 runtime_task_id 的）。 */
   approvals: () =>
     request<{ items: ChatApproval[] | null }>("GET", "/api/me/confirmations").then((x) => (x.items ?? []).filter((a) => a.runtime_task_id != null)),
   /** 批准或拒绝一张审批卡；机器人那一轮在等这个决定，批准后才执行。 */
-  decide: (id: ChatId, approve: boolean) => request<ChatApproval>("POST", `/api/me/confirmations/${enc(id)}`, { approve }),
+  decide: (id: ChatId, approve: boolean) =>
+    request<ChatApproval>("POST", `/api/me/confirmations/${enc(id)}`, {
+      approve,
+    }),
   /** 本人切换审批模式（需管理员允许）；切到完全放行必须带 confirmFullAccess。 */
   setApprovalMode: (botId: ChatId, mode: ApprovalMode, confirmFullAccess: boolean) =>
     request<{ approval_mode: ApprovalMode; approval_editable: boolean }>("PUT", `${base}/bots/${enc(botId)}/approval`, {
@@ -343,8 +381,18 @@ export interface ChatBotsState {
   refreshing: boolean;
 }
 
-const INELIGIBLE: ChatBotsState = { status: "forbidden", bots: [], error: null, refreshing: false };
-const IDLE: ChatBotsState = { status: "idle", bots: [], error: null, refreshing: false };
+const INELIGIBLE: ChatBotsState = {
+  status: "forbidden",
+  bots: [],
+  error: null,
+  refreshing: false,
+};
+const IDLE: ChatBotsState = {
+  status: "idle",
+  bots: [],
+  error: null,
+  refreshing: false,
+};
 
 let state: ChatBotsState = IDLE;
 let owner: number | null = null;

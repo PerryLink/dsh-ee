@@ -98,7 +98,10 @@ jobs:
 
   server:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 全量 `go test ./...` 在 GitHub 托管 runner 上已随测试增长到 22–30 分钟（api 包占绝大部分）。
+    # 30m 的 job 预算会把正常的慢跑误杀（2026-11-23 多个 PR 的 server job 在 30m 被取消、
+    # 25m 测试超时失败）。先给 60m 预算止血；更好的长期方案是把 api 包拆分/分片，见 PR 正文。
+    timeout-minutes: 60
     services:
       tidb:
         image: pingcap/tidb:v8.5.8
@@ -133,7 +136,10 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./...
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./...
-      - run: go test -count=1 -timeout 25m ./...
+      - name: go test（全量；api 包最慢）
+        # 2026-11-23 实测：server job 墙钟 22–30m，其中 api 包占绝大部分；25m 测试超时会误杀。
+        # 先给 50m 测试预算，若仍顶到上限应改为拆包/分片而不是继续放宽。
+        run: go test -count=1 -timeout 50m ./...
         working-directory: server
         env:
           DSH_EE_TEST_DSN: root:@tcp(127.0.0.1:4000)/

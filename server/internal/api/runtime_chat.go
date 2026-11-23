@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -56,6 +57,8 @@ func (s *Server) runtimeChatError(w http.ResponseWriter, r *http.Request, err er
 		writeErrCode(w, http.StatusConflict, codeRuntimeChatBusy, nil, "上一条消息还在处理中，请等回复后再发送")
 	case errors.Is(err, store.ErrConflict):
 		writeErrCode(w, http.StatusConflict, codeRuntimeChatIdempotencyConflict, nil, "幂等键已用于另一条消息")
+	case errors.Is(err, store.ErrRuntimeChatUploadUnavailable):
+		writeErrCode(w, http.StatusConflict, codeRuntimeChatUploadUnavailable, nil, "附件不存在或已经发出，请重新上传")
 	case errors.Is(err, store.ErrRuntimeQueueFull):
 		writeErrCode(w, http.StatusTooManyRequests, codeRuntimeChatQueueFull, nil, "排队或运行中的云任务已达上限，请稍后再试")
 	case notFound(err):
@@ -183,6 +186,14 @@ func (s *Server) handleRuntimeChatConversation(w http.ResponseWriter, r *http.Re
 		s.internalErr(w, r, err)
 		return
 	}
+	attachments, err := s.store.RuntimeChatUploadsForTasks(r.Context(), ids)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	for i := range turns {
+		turns[i].Attachments = attachments[turns[i].ID]
+	}
 	out := map[string]any{"conversation": conversation, "messages": turns, "delegations": delegations}
 	if next > 0 {
 		out["next_before"] = next
@@ -244,14 +255,21 @@ func (s *Server) handleRuntimeChatMessage(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var in struct {
-		Content        string `json:"content"`
-		IdempotencyKey string `json:"idempotency_key"`
+		Content        string  `json:"content"`
+		IdempotencyKey string  `json:"idempotency_key"`
+		Uploads        []int64 `json:"uploads"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
 	in.Content = strings.TrimSpace(in.Content)
-	if in.Content == "" || len(in.Content) > runtimeChatMaxContent || !utf8.ValidString(in.Content) || strings.ContainsRune(in.Content, 0) {
+	if len(in.Uploads) > store.RuntimeChatUploadsPerMessage {
+		writeErrCode(w, http.StatusBadRequest, codeRuntimeChatTooManyUploads, map[string]any{"max": store.RuntimeChatUploadsPerMessage},
+			fmt.Sprintf("一条消息最多带 %d 个附件", store.RuntimeChatUploadsPerMessage))
+		return
+	}
+	// 只发附件不写字也可以：员工拖进文件直接发送。
+	if (in.Content == "" && len(in.Uploads) == 0) || len(in.Content) > runtimeChatMaxContent || !utf8.ValidString(in.Content) || strings.ContainsRune(in.Content, 0) {
 		writeErrCode(w, http.StatusBadRequest, codeRuntimeChatInvalidMessage, map[string]any{"max": runtimeChatMaxContent}, "消息不能为空，且不能超过 8000 字节")
 		return
 	}
@@ -282,19 +300,30 @@ func (s *Server) handleRuntimeChatMessage(w http.ResponseWriter, r *http.Request
 	if conversation.Shared {
 		sender = displayOf(currentUser(r))
 	}
+	promptContent := in.Content
+	if promptContent == "" {
+		promptContent = "(The employee sent the attached documents without a message.)"
+	}
 	turn, err := s.store.EnqueueRuntimeChatTurn(r.Context(), store.RuntimeChatMessage{
 		OwnerID: owner, ConversationID: conversation.ID, Content: in.Content, Title: runtimeChatTitle(in.Content),
 		// 幂等键的命名空间是所有者 + 对话：唯一索引带 owner_id，这里再拼上请求路径里的对话 ID。
 		// 用请求的 ID 而不是保留线程的：合并前的轮次还带着旧 ID 的键，按旧 ID 重发才能重放到原来那一轮。
 		IdempotencyKey: "chat:" + strconv.FormatInt(requested, 10) + ":" + in.IdempotencyKey,
 		TimeoutSeconds: int(runtimeTimeout.Seconds()),
+		Uploads:        in.Uploads,
 	}, store.RuntimeChatPlanner{Fold: runtimeChatFold, Prompt: func(bot *store.RuntimeBot, memory string, recent []store.RuntimeChatTurn) (string, string, int) {
-		return runtimeChatPlanAs(bot.Prompt, bot.ApprovalMode, memory, recent, in.Content, sender, runtimeChatEmployeeHeader)
+		return runtimeChatPlanAs(bot.Prompt, bot.ApprovalMode, memory, recent, promptContent, sender, runtimeChatEmployeeHeader)
 	}})
 	if err != nil {
 		s.runtimeChatError(w, r, err)
 		return
 	}
+	attachments, err := s.store.RuntimeChatUploadsForTasks(r.Context(), []int64{turn.ID})
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	turn.Attachments = attachments[turn.ID]
 	if conversation.Shared && !turn.Replayed {
 		// 谁在团队线程里触发了任务：操作人就是发消息的员工，run_as 也是他，不是机器人的所有者。
 		s.audit(r, "runtime.chat.team_turn", strconv.FormatInt(turn.ID, 10), map[string]any{
