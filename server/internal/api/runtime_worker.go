@@ -256,6 +256,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 			writes = runtimeWriteGuidance(bot.ApprovalMode)
 		}
 	}
+	prompt := "Enterprise task:\n" + task.Prompt + "\n\n" + writes + runtimeFileRule + " Return a short final summary of the result without a step-by-step account."
 	if task.ChatConversationID != nil {
 		// 网页对话要的是直接回答员工，而不是任务摘要。当前消息必须留在最后。
 		prompt = task.Prompt
