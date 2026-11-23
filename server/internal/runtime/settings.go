@@ -26,6 +26,8 @@ type ComputerPolicy struct {
 	IdleTimeout time.Duration
 	// DiskLimitBytes：工作目录和 DSH 主目录加起来的上限，超过后新任务拒绝运行，直到重置。
 	DiskLimitBytes int64
+	// NativeDiskQuota also requests a writable-layer / ephemeral-storage quota from OpenSandbox.
+	NativeDiskQuota bool
 	// Retention：休眠超过这么久的电脑自动回收（删除），0 表示不自动回收。
 	Retention time.Duration
 }
@@ -58,6 +60,13 @@ func loadComputerPolicy(env func(string) string) (ComputerPolicy, error) {
 			return p, errors.New("DSH_EE_RUNTIME_COMPUTER_DISK_MB must be an integer between 64 and 1048576")
 		}
 		p.DiskLimitBytes = mb << 20
+	}
+	switch strings.TrimSpace(env("DSH_EE_RUNTIME_COMPUTER_NATIVE_DISK_QUOTA")) {
+	case "", "off":
+	case "on":
+		p.NativeDiskQuota = true
+	default:
+		return p, errors.New("DSH_EE_RUNTIME_COMPUTER_NATIVE_DISK_QUOTA must be on or off")
 	}
 	if v := strings.TrimSpace(env("DSH_EE_RUNTIME_COMPUTER_RETENTION")); v != "" {
 		d, err := time.ParseDuration(v)

@@ -39,10 +39,11 @@ type PersistentSandbox interface {
 }
 
 type SandboxSpec struct {
-	Image        string
-	Env          map[string]string
-	Timeout      time.Duration
-	AllowedHosts []string
+	Image          string
+	Env            map[string]string
+	Timeout        time.Duration
+	AllowedHosts   []string
+	DiskQuotaBytes int64
 }
 
 type Sandbox interface {

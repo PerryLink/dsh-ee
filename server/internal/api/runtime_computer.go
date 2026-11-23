@@ -144,7 +144,8 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 			s.log.Warn("释放机器人电脑失败", "bot_id", botID, "err", err)
 		}
 	}
-	limit := s.opts.Runtime.Computer.DiskLimitBytes
+	policy := s.opts.Runtime.Computer
+	limit := policy.DiskLimitBytes
 	if c.SandboxID != "" && limit > 0 && c.DiskBytes > limit {
 		release()
 		return nil, fmt.Errorf("%w (%d MB used of %d MB); reset the computer from the bot panel or ask an administrator to reclaim it",
@@ -175,9 +176,14 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 	if box == nil {
 		c.SandboxID, c.State, c.DiskBytes = "", store.RuntimeComputerWaking, 0
 		_ = save(false, false)
-		if box, err = pp.CreatePersistent(ctx, runtime.SandboxSpec{Image: spec.Image, AllowedHosts: spec.AllowedHosts}); err != nil {
+		createSpec := runtime.SandboxSpec{Image: spec.Image, AllowedHosts: spec.AllowedHosts}
+		if policy.NativeDiskQuota {
+			createSpec.DiskQuotaBytes = limit
+		}
+		if box, err = pp.CreatePersistent(ctx, createSpec); err != nil {
 			c.SandboxID = ""
 			_ = save(false, true)
+			s.log.Warn("创建常驻沙箱失败", "bot_id", botID, "native_disk_quota", policy.NativeDiskQuota, "err", err)
 			return nil, errors.New("creating cloud sandbox failed")
 		}
 		c.SandboxID = box.ID()

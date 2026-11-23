@@ -33,6 +33,7 @@ type fakeComputers struct {
 	wakes      int
 	hibernates int
 	disk       int64 // du 报告的 KB
+	diskQuota  int64
 	tokens     []string
 	check      func(token string) // 每轮 DSH 运行时检查凭证
 }
@@ -66,6 +67,7 @@ func (f *fakeComputers) CreatePersistent(_ context.Context, spec runtime.Sandbox
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.creates++
+	f.diskQuota = spec.DiskQuotaBytes
 	return f.newBox(spec.Env), nil
 }
 
@@ -264,6 +266,9 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 	if f.creates != 1 || f.ephemeral != 0 || len(f.boxes) != 1 {
 		t.Fatalf("first run should create one persistent computer: creates=%d ephemeral=%d", f.creates, f.ephemeral)
 	}
+	if f.diskQuota != 0 {
+		t.Fatalf("native disk quota must be opt-in, got %d", f.diskQuota)
+	}
 	if v := c.profile(); v.State != store.RuntimeComputerRunning || v.Busy || v.DiskBytes != 8<<10 {
 		t.Fatalf("computer after first run = %+v", v)
 	}
@@ -380,13 +385,16 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 
 func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	f := &fakeComputers{}
-	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Hour})
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Hour, DiskLimitBytes: 1 << 30, NativeDiskQuota: true})
 	task := &store.RuntimeTask{ID: 123, BotID: &c.bot.ID, OwnerID: c.employee, RunAsID: c.employee, TimeoutSeconds: 300}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	box, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if f.diskQuota != 1<<30 {
+		t.Fatalf("configured native disk quota was not passed to the computer: %d", f.diskQuota)
 	}
 	raw, revoke, err := c.s.cloudCredential(ctx, task)
 	if err != nil {

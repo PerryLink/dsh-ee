@@ -94,10 +94,14 @@ func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent b
 		return nil, errors.New("sandbox image and timeout are required")
 	}
 	var status sandboxStatus
+	limits := map[string]string{"cpu": "1", "memory": "1Gi"}
+	if spec.DiskQuotaBytes > 0 {
+		limits["disk"] = strconv.FormatInt(spec.DiskQuotaBytes, 10)
+	}
 	input := map[string]any{
 		"image":          map[string]string{"uri": spec.Image},
 		"entrypoint":     []string{"tail", "-f", "/dev/null"},
-		"resourceLimits": map[string]string{"cpu": "1", "memory": "1Gi"},
+		"resourceLimits": limits,
 	}
 	if !persistent {
 		input["timeout"] = max(60, int64((spec.Timeout-1)/time.Second)+1)

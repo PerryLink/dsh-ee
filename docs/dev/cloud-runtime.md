@@ -51,6 +51,7 @@ OpenSandbox 下，每个机器人有自己的一台云电脑（一个常驻沙�
 | `DSH_EE_RUNTIME_PERSISTENT` | `on`（默认）或 `off`。`off` 时所有任务都每轮新建、跑完销毁；以前留下的电脑空闲后仍会被休眠和按保留期回收 |
 | `DSH_EE_RUNTIME_COMPUTER_IDLE` | 闲置超时，Go 时长格式，`1m` 到 `24h`，默认 `15m` |
 | `DSH_EE_RUNTIME_COMPUTER_DISK_MB` | 每台电脑工作目录加 DSH 主目录的磁盘用量阈值（MB），默认 `2048`。每轮结束时用 `du` 统计；超过后新任务直接失败（不重试），重置电脑后恢复。不是文件系统写入的硬上限 |
+| `DSH_EE_RUNTIME_COMPUTER_NATIVE_DISK_QUOTA` | `on` 时在创建电脑时也向 OpenSandbox 请求上述大小的原生磁盘配额，`off`（默认）时只检查用量阈值。需要支持 `resourceLimits.disk` 的 OpenSandbox 及宿主配置（例如支持可写层配额的 Docker 存储驱动）；Kubernetes 对应临时存储限额，超量可能驱逐 Pod。启用或更改配额后，既有电脑需重新创建才生效 |
 | `DSH_EE_RUNTIME_COMPUTER_RETENTION` | 休眠多久后自动回收（删除整台电脑），默认 `720h`（30 天），`0` 表示不自动回收 |
 
 员工在 **机器人对话** 右侧面板的 **动态 → 云端电脑** 里看到电脑的真实状态（工作中、唤醒中、运行中、正在休眠、休眠中、未开机）和磁盘用量，可以手动 **休眠** 或 **重置**（删除整台电脑和其中的文件，已经收进文件库的产物不受影响）。对应接口是 `POST /api/runtime/chat/bots/{id}/computer/hibernate` 和 `.../computer/reset`，只对机器人的所有者本人开放。管理员在 **系统设置 → 云端常驻机器人** 下方看到所有电脑的状态、占用和磁盘用量，可以休眠或回收：`GET /api/admin/runtime/computers`、`POST /api/admin/runtime/computers/{id}/hibernate`、`DELETE /api/admin/runtime/computers/{id}`。电脑正在跑任务时手动操作返回 409 `runtime_computer.busy`。

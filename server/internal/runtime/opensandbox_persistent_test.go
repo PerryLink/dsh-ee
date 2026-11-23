@@ -89,7 +89,7 @@ func TestOpenSandboxHibernateAndWake(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	box, err := p.CreatePersistent(ctx, SandboxSpec{Image: "img", Env: nil})
+	box, err := p.CreatePersistent(ctx, SandboxSpec{Image: "img", DiskQuotaBytes: 2 << 30})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +101,10 @@ func TestOpenSandboxHibernateAndWake(t *testing.T) {
 	}
 	if _, ok := f.created["env"]; ok {
 		t.Fatal("a persistent sandbox must not be created with environment variables")
+	}
+	limits, ok := f.created["resourceLimits"].(map[string]any)
+	if !ok || limits["disk"] != "2147483648" {
+		t.Fatalf("provider must request the native disk quota in bytes: %v", limits)
 	}
 	if err := p.Hibernate(ctx, "bot-box"); err != nil {
 		t.Fatal(err)
