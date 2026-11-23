@@ -73,6 +73,32 @@ var demoSiteBlocked = map[string]bool{
 	"POST /api/admin/directory/entries/{id}/upgrade": true,
 	"POST /api/admin/dsh-releases/check":             true,
 	"POST /api/admin/dsh-releases/{id}/mirror":       true,
+	// 云任务 / 云电脑在 demo 一律关闭：会创建真实的 OpenSandbox 沙箱并产生账单。
+	// runtimeAvailable() 在演示模式下也整体关掉（404），这里是第二道保险。
+	"POST /api/runtime/tasks":                            true,
+	"GET /api/runtime/tasks":                             true,
+	"GET /api/runtime/tasks/{id}":                        true,
+	"GET /api/runtime/tasks/{id}/events":                 true,
+	"POST /api/runtime/tasks/{id}/cancel":                true,
+	"GET /api/runtime/tasks/{id}/artifacts":              true,
+	"GET /api/runtime/tasks/{id}/artifacts/{artifact}":   true,
+	"GET /api/runtime/chat/bots":                         true,
+	"GET /api/runtime/chat/bots/{id}/profile":            true,
+	"PUT /api/runtime/chat/bots/{id}/approval":           true,
+	"GET /api/runtime/chat/conversations":                true,
+	"POST /api/runtime/chat/conversations":               true,
+	"GET /api/runtime/chat/conversations/{id}":           true,
+	"POST /api/runtime/chat/conversations/{id}/messages": true,
+	"PUT /api/runtime/chat/bots/{id}/share":              true,
+	"POST /api/runtime/chat/bots/{id}/computer/{action}": true,
+	"GET /api/admin/runtime/bots":                        true,
+	"POST /api/admin/runtime/bots":                       true,
+	"PUT /api/admin/runtime/bots/{id}":                   true,
+	"POST /api/admin/runtime/bots/{id}/run":              true,
+	"PUT /api/admin/runtime/bots/{id}/share":             true,
+	"GET /api/admin/runtime/computers":                   true,
+	"POST /api/admin/runtime/computers/{id}/hibernate":   true,
+	"DELETE /api/admin/runtime/computers/{id}":           true,
 }
 
 const demoSiteMsg = "演示站不开放这个操作。想完整体验，可以自己部署一套：见 deploy/README.md"

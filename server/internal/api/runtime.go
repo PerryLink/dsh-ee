@@ -38,6 +38,7 @@ func runtimeTokenRoute(next http.Handler) http.Handler {
 
 func (s *Server) runtimeAvailable(w http.ResponseWriter) bool {
 	if s.opts.Runtime.Provider == nil || s.opts.DemoSite != nil {
+		// 云任务 / 云电脑在 demo 一律关闭（第二道保险，路由级屏蔽见 demoSiteBlocked）。
 		writeErr(w, http.StatusNotFound, "云任务未启用")
 		return false
 	}
