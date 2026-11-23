@@ -119,6 +119,18 @@ export default async function (t) {
   await refreshBtn().first().click();
   await radio(botEarlier).waitFor();
   assertEq(await radio(botA).getAttribute("aria-checked"), "true", "刷新后应继续选中原来的机器人");
+
+  await radio(botB).click();
+  await page.waitForURL((u) => u.searchParams.get("bot") === String(botB.id));
+  await page.getByRole("radio", { name: botB.name, exact: true, checked: true }).waitFor();
+  await page.goBack();
+  await page.getByRole("radio", { name: botA.name, exact: true, checked: true }).waitFor();
+  await page.goForward();
+  await page.getByRole("radio", { name: botB.name, exact: true, checked: true }).waitFor();
+  await page.goBack();
+  await page.getByRole("radio", { name: botA.name, exact: true, checked: true }).waitFor();
+  step("浏览器前进 / 后退回到原来查看的对话");
+
   bots = [botEarlier, botB];
   await refreshBtn().first().click();
   await page.getByRole("radio", { name: botEarlier.name, exact: true, checked: true }).waitFor();

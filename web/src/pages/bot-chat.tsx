@@ -1110,8 +1110,18 @@ function Workspace({
   const profileCloseRef = useRef<HTMLButtonElement>(null);
   const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
+  const navigateToBot = (botId: ChatId) => {
+    if (sameId(botId, selKey)) return;
+    if (selKey && botParam !== selKey) {
+      // 先把隐式选中的机器人写进当前历史项，让后退能回到这个对话。
+      const current = new URLSearchParams(params);
+      current.set("bot", selKey);
+      setParams(current, { replace: true });
+    }
+    setParams({ bot: String(botId) });
+  };
   const selectBot = (bot: ChatBot) => {
-    if (!sameId(bot.id, selKey)) setParams({ bot: String(bot.id) });
+    navigateToBot(bot.id);
     setListOpen(false);
   };
   /** 委派卡片上的「打开对话」：只跳到当前员工能对话的机器人。 */
@@ -1660,7 +1670,7 @@ function Workspace({
     if (!step || !bots.length) return;
     e.preventDefault();
     const next = bots[(index + step + bots.length) % bots.length];
-    if (!sameId(next.id, selKey)) setParams({ bot: String(next.id) });
+    navigateToBot(next.id);
     radioRefs.current[String(next.id)]?.focus();
   };
 
