@@ -25,6 +25,8 @@ type RuntimeBotComputer struct {
 	BotName      string     `json:"bot_name,omitempty"`
 	OwnerID      int64      `json:"owner_id,omitempty"`
 	SandboxID    string     `json:"-"`
+	CreationKey  string     `json:"-"`
+	GatewayHost  string     `json:"-"`
 	State        string     `json:"state"`
 	Busy         bool       `json:"busy"`
 	DiskBytes    int64      `json:"disk_bytes"`
@@ -34,12 +36,12 @@ type RuntimeBotComputer struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-const runtimeComputerColumns = `c.bot_id, COALESCE(b.name,''), COALESCE(b.owner_id,0), c.sandbox_id, c.state,
+const runtimeComputerColumns = `c.bot_id, COALESCE(b.name,''), COALESCE(b.owner_id,0), c.sandbox_id, c.creation_key, c.gateway_host, c.state,
 	(c.lease_until IS NOT NULL AND c.lease_until>?), c.disk_bytes, c.last_used_at, c.hibernated_at, c.created_at, c.updated_at`
 
 func scanRuntimeComputer(row interface{ Scan(...any) error }) (*RuntimeBotComputer, error) {
 	var c RuntimeBotComputer
-	err := row.Scan(&c.BotID, &c.BotName, &c.OwnerID, &c.SandboxID, &c.State, &c.Busy, &c.DiskBytes, &c.LastUsedAt, &c.HibernatedAt, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.BotID, &c.BotName, &c.OwnerID, &c.SandboxID, &c.CreationKey, &c.GatewayHost, &c.State, &c.Busy, &c.DiskBytes, &c.LastUsedAt, &c.HibernatedAt, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -65,7 +67,7 @@ func (s *Store) IdleRuntimeBotComputers(ctx context.Context, idleBefore, retainB
 	retain := sql.NullTime{Time: retainBefore, Valid: !retainBefore.IsZero()}
 	return s.queryRuntimeComputers(ctx, `SELECT `+runtimeComputerColumns+` FROM runtime_bot_computers c
 		LEFT JOIN runtime_bots b ON b.id=c.bot_id
-		WHERE (c.lease_until IS NULL OR c.lease_until<=?) AND c.sandbox_id<>'' AND
+		WHERE (c.lease_until IS NULL OR c.lease_until<=?) AND (c.sandbox_id<>'' OR c.creation_key<>'') AND
 		 ((c.state IN (?,?,?) AND c.last_used_at<?) OR (c.state=? AND ? IS NOT NULL AND c.hibernated_at<?))
 		ORDER BY c.bot_id LIMIT 100`,
 		t, t, RuntimeComputerRunning, RuntimeComputerWaking, RuntimeComputerHibernating, idleBefore, RuntimeComputerHibernated, retain, retain)
@@ -120,15 +122,16 @@ func (s *Store) UpdateRuntimeBotComputer(ctx context.Context, c *RuntimeBotCompu
 	if c.State != RuntimeComputerHibernated {
 		c.HibernatedAt = nil
 	}
-	if c.SandboxID == "" && (release || c.State != RuntimeComputerWaking) {
+	if c.SandboxID == "" && c.CreationKey == "" && (release || c.State != RuntimeComputerWaking) {
 		c.State, c.DiskBytes = RuntimeComputerNone, 0
+		c.GatewayHost = ""
 	}
-	q := `UPDATE runtime_bot_computers SET sandbox_id=?, state=?, disk_bytes=?, last_used_at=?, hibernated_at=?, updated_at=?`
+	q := `UPDATE runtime_bot_computers SET sandbox_id=?, creation_key=?, gateway_host=?, state=?, disk_bytes=?, last_used_at=?, hibernated_at=?, updated_at=?`
 	if release {
 		q += `, holder='', lease_until=NULL`
 	}
 	err := runtimeAffected(s.db.ExecContext(ctx, q+` WHERE bot_id=? AND holder=? AND lease_until>?`,
-		c.SandboxID, c.State, c.DiskBytes, c.LastUsedAt, c.HibernatedAt, t, c.BotID, holder, t))
+		c.SandboxID, c.CreationKey, c.GatewayHost, c.State, c.DiskBytes, c.LastUsedAt, c.HibernatedAt, t, c.BotID, holder, t))
 	if err == nil {
 		c.UpdatedAt = t
 	}

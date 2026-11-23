@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	openSandboxKey = "OPEN-SANDBOX-API-KEY"
-	maxMetadata    = 1 << 20
-	maxOutput      = 1 << 20
+	openSandboxKey           = "OPEN-SANDBOX-API-KEY"
+	computerCreationMetadata = "dsh-ee-computer-creation"
+	maxMetadata              = 1 << 20
+	maxOutput                = 1 << 20
 )
 
 type OpenSandbox struct {
@@ -56,8 +57,9 @@ func parseGatewayURL(base string) (string, error) {
 }
 
 type sandboxStatus struct {
-	ID     string `json:"id"`
-	Status struct {
+	ID       string            `json:"id"`
+	Metadata map[string]string `json:"metadata"`
+	Status   struct {
 		State string `json:"state"`
 	} `json:"status"`
 }
@@ -105,16 +107,14 @@ func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent b
 	}
 	if !persistent {
 		input["timeout"] = max(60, int64((spec.Timeout-1)/time.Second)+1)
+	} else if spec.CreationKey != "" {
+		input["metadata"] = map[string]string{computerCreationMetadata: spec.CreationKey}
 	}
 	if len(spec.Env) > 0 {
 		input["env"] = spec.Env
 	}
 	if spec.AllowedHosts != nil {
-		rules := make([]map[string]string, 0, len(spec.AllowedHosts))
-		for _, host := range spec.AllowedHosts {
-			rules = append(rules, map[string]string{"action": "allow", "target": host})
-		}
-		input["networkPolicy"] = map[string]any{"defaultAction": "deny", "egress": rules}
+		input["networkPolicy"] = openSandboxNetworkPolicy(spec.AllowedHosts)
 	}
 	err := p.lifecycle(ctx, http.MethodPost, "/sandboxes", input, &status)
 	if err != nil {
@@ -137,6 +137,62 @@ func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent b
 	}
 	ready = true
 	return s, nil
+}
+
+func openSandboxNetworkPolicy(hosts []string) map[string]any {
+	rules := make([]map[string]string, 0, len(hosts))
+	for _, host := range hosts {
+		rules = append(rules, map[string]string{"action": "allow", "target": host})
+	}
+	return map[string]any{"defaultAction": "deny", "egress": rules}
+}
+
+func (p *OpenSandbox) ReplaceAllowedHosts(ctx context.Context, id string, hosts []string) error {
+	if len(hosts) == 0 {
+		return errors.New("OpenSandbox network policy requires allowed hosts")
+	}
+	s, err := p.instance(id)
+	if err != nil {
+		return err
+	}
+	return p.lifecycle(ctx, http.MethodPut, s.path+"/networkpolicy", openSandboxNetworkPolicy(hosts), nil)
+}
+
+func (p *OpenSandbox) FindPersistent(ctx context.Context, creationKey string) (string, error) {
+	if creationKey == "" {
+		return "", ErrSandboxGone
+	}
+	filter := url.Values{computerCreationMetadata: {creationKey}}
+	query := url.Values{"metadata": {filter.Encode()}, "pageSize": {"20"}}
+	var found string
+	for page := 1; ; page++ {
+		query.Set("page", strconv.Itoa(page))
+		var response struct {
+			Items      []sandboxStatus `json:"items"`
+			Pagination struct {
+				HasNextPage bool `json:"hasNextPage"`
+			} `json:"pagination"`
+		}
+		if err := p.lifecycle(ctx, http.MethodGet, "/sandboxes?"+query.Encode(), nil, &response); err != nil {
+			return "", err
+		}
+		for _, item := range response.Items {
+			if item.Metadata[computerCreationMetadata] != creationKey || goneState(item.Status.State) {
+				continue
+			}
+			if found != "" && found != item.ID {
+				return "", errors.New("OpenSandbox returned multiple computers for one creation key")
+			}
+			found = item.ID
+		}
+		if !response.Pagination.HasNextPage {
+			break
+		}
+	}
+	if found == "" {
+		return "", ErrSandboxGone
+	}
+	return found, nil
 }
 
 func (p *OpenSandbox) instance(id string) (*openSandboxInstance, error) {

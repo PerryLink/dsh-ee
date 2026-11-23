@@ -38,12 +38,23 @@ type PersistentSandbox interface {
 	ID() string
 }
 
+// PersistentRecovery finds a sandbox from its creation key, or returns ErrSandboxGone.
+type PersistentRecovery interface {
+	FindPersistent(ctx context.Context, creationKey string) (id string, err error)
+}
+
+// PersistentNetworkPolicy replaces, rather than extends, the sandbox egress allowlist.
+type PersistentNetworkPolicy interface {
+	ReplaceAllowedHosts(ctx context.Context, id string, hosts []string) error
+}
+
 type SandboxSpec struct {
 	Image          string
 	Env            map[string]string
 	Timeout        time.Duration
 	AllowedHosts   []string
 	DiskQuotaBytes int64
+	CreationKey    string
 }
 
 type Sandbox interface {

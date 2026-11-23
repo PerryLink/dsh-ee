@@ -26,25 +26,28 @@ import (
 // fakeComputers 是一个支持休眠 / 唤醒的假 provider：每台电脑有自己的文件系统，休眠中的电脑拒绝执行命令，
 // 所以文件能在下一轮读到，只可能是因为同一台电脑被唤醒了。
 type fakeComputers struct {
-	mu         sync.Mutex
-	boxes      map[string]*fakeBox
-	next       int
-	creates    int
-	ephemeral  int
-	wakes      int
-	hibernates int
-	disk       int64 // du 报告的 KB
-	diskQuota  int64
-	tokens     []string
-	check      func(token string) // 每轮 DSH 运行时检查凭证
+	mu                 sync.Mutex
+	boxes              map[string]*fakeBox
+	next               int
+	creates            int
+	ephemeral          int
+	wakes              int
+	hibernates         int
+	disk               int64 // du 报告的 KB
+	diskQuota          int64
+	tokens             []string
+	check              func(token string) // 每轮 DSH 运行时检查凭证
+	loseCreateResponse bool
+	allowedHost        string
 }
 
 type fakeBox struct {
-	owner  *fakeComputers
-	id     string
-	paused bool
-	files  map[string]string
-	env    map[string]string
+	owner       *fakeComputers
+	id          string
+	paused      bool
+	files       map[string]string
+	env         map[string]string
+	creationKey string
 }
 
 func (f *fakeComputers) newBox(env map[string]string) *fakeBox {
@@ -69,7 +72,34 @@ func (f *fakeComputers) CreatePersistent(_ context.Context, spec runtime.Sandbox
 	defer f.mu.Unlock()
 	f.creates++
 	f.diskQuota = spec.DiskQuotaBytes
-	return f.newBox(spec.Env), nil
+	b := f.newBox(spec.Env)
+	b.creationKey = spec.CreationKey
+	f.allowedHost = spec.AllowedHosts[0]
+	if f.loseCreateResponse {
+		return nil, errors.New("lost create response")
+	}
+	return b, nil
+}
+
+func (f *fakeComputers) FindPersistent(_ context.Context, key string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, b := range f.boxes {
+		if b.creationKey == key {
+			return b.id, nil
+		}
+	}
+	return "", runtime.ErrSandboxGone
+}
+
+func (f *fakeComputers) ReplaceAllowedHosts(_ context.Context, id string, hosts []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.boxes[id]; !ok {
+		return runtime.ErrSandboxGone
+	}
+	f.allowedHost = hosts[0]
+	return nil
 }
 
 func (f *fakeComputers) Wake(_ context.Context, id string) (runtime.PersistentSandbox, error) {
@@ -434,7 +464,7 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	task := &store.RuntimeTask{ID: 123, BotID: &c.bot.ID, OwnerID: c.employee, RunAsID: c.employee, TimeoutSeconds: 300}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	box, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img"})
+	box, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img", AllowedHosts: []string{"gateway.example"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,6 +485,35 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	box.close(false) // Revocation failed: the worker must leave the lease in place.
 	if _, err := c.s.cloudComputerAction(ctx, c.bot.ID, computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
 		t.Fatalf("hibernation must wait for the credential to expire: %v", err)
+	}
+}
+
+func TestBotComputerRecoversLostCreateAndAppliesGatewayChange(t *testing.T) {
+	f := &fakeComputers{loseCreateResponse: true}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond})
+	ctx := context.Background()
+	task := &store.RuntimeTask{ID: 123, BotID: &c.bot.ID, OwnerID: c.employee, RunAsID: c.employee, TimeoutSeconds: 300}
+	if _, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img", AllowedHosts: []string{"gateway.example"}}); err == nil {
+		t.Fatal("expected the lost create response to fail")
+	}
+	pending, err := c.s.store.RuntimeBotComputer(ctx, c.bot.ID)
+	if err != nil || pending.SandboxID != "" || pending.CreationKey == "" || !pending.Busy || f.creates != 1 {
+		t.Fatalf("pending create is not recoverable: %+v, %v", pending, err)
+	}
+	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_bot_computers SET lease_until=?, last_used_at=? WHERE bot_id=?`,
+		time.Now().Add(-time.Second), time.Now().Add(-time.Second), c.bot.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, box := range f.boxes {
+		box.files[runtimeWorkDir+"/note.txt"] = "original computer"
+	}
+	c.s.reapCloudComputers(ctx)
+	if v := c.profile(); v.State != store.RuntimeComputerHibernated || f.hibernates != 1 {
+		t.Fatalf("reaper did not recover and hibernate the computer: %+v", v)
+	}
+	c.s.opts.Runtime.BaseURL = "https://gateway-next.example"
+	if got := c.run("READ the note"); got.Summary != "note: original computer" || f.creates != 1 || f.allowedHost != "gateway-next.example" {
+		t.Fatalf("run after gateway move: %+v, creates=%d, gateway=%q", got, f.creates, f.allowedHost)
 	}
 }
 
@@ -552,6 +611,7 @@ esac`, "sh", "{prompt}"}
 	if v := c.profile(); v.State != store.RuntimeComputerHibernated {
 		t.Fatalf("after idle: %+v", v)
 	}
+	c.s.opts.Runtime.BaseURL = "https://gateway-next.example"
 	if got := c.run("READ the note"); got.Status != store.RuntimeSucceeded || got.Summary != "quarter goal 42" {
 		t.Fatalf("second run: %+v", got)
 	}

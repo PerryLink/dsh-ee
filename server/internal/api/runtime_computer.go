@@ -123,6 +123,9 @@ func (s *Server) acquireComputerWithin(ctx context.Context, botID int64, holder 
 }
 
 func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.PersistentProvider, task *store.RuntimeTask, botID int64, spec runtime.SandboxSpec) (*cloudComputer, error) {
+	if len(spec.AllowedHosts) != 1 || spec.AllowedHosts[0] == "" {
+		return nil, errors.New("persistent cloud computer requires one gateway hostname")
+	}
 	holder := fmt.Sprintf("task:%d:%d", task.ID, task.Attempts)
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -157,6 +160,12 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 		defer stop()
 		return s.store.UpdateRuntimeBotComputer(bc, c, holder, touched, done)
 	}
+	if err := recoverCloudComputer(ctx, pp, c); err != nil {
+		release()
+		s.log.Warn("查找未登记的机器人电脑失败", "bot_id", botID, "err", err)
+		return nil, errors.New("locating the bot's cloud computer failed")
+	}
+	gatewayHost := spec.AllowedHosts[0]
 	var box runtime.PersistentSandbox
 	if c.SandboxID != "" {
 		if c.State != store.RuntimeComputerRunning {
@@ -173,21 +182,41 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 			_ = save(false, true)
 			return nil, errors.New("waking the bot's cloud computer failed")
 		}
+		if box != nil && c.GatewayHost != gatewayHost {
+			c.State = store.RuntimeComputerRunning
+			if p, ok := pp.(runtime.PersistentNetworkPolicy); !ok {
+				_ = save(false, true)
+				return nil, errors.New("cloud sandbox cannot update its gateway allowlist; restore the previous gateway hostname")
+			} else if err := p.ReplaceAllowedHosts(ctx, c.SandboxID, spec.AllowedHosts); err != nil {
+				_ = save(false, true)
+				s.log.Warn("更新机器人电脑网关策略失败", "bot_id", botID, "err", err)
+				return nil, errors.New("updating the cloud sandbox gateway allowlist failed")
+			}
+			c.GatewayHost = gatewayHost
+		}
 	}
 	if box == nil {
 		c.SandboxID, c.State, c.DiskBytes = "", store.RuntimeComputerWaking, 0
-		_ = save(false, false)
-		createSpec := runtime.SandboxSpec{Image: spec.Image, AllowedHosts: spec.AllowedHosts}
+		c.GatewayHost = gatewayHost
+		if _, ok := pp.(runtime.PersistentRecovery); ok {
+			c.CreationKey = secret.Token()
+		}
+		if err := save(true, false); err != nil {
+			release()
+			return nil, errors.New("recording the cloud sandbox creation failed")
+		}
+		createSpec := runtime.SandboxSpec{Image: spec.Image, AllowedHosts: spec.AllowedHosts, CreationKey: c.CreationKey}
 		if policy.NativeDiskQuota {
 			createSpec.DiskQuotaBytes = limit
 		}
 		if box, err = pp.CreatePersistent(ctx, createSpec); err != nil {
-			c.SandboxID = ""
-			_ = save(false, true)
+			if c.CreationKey == "" {
+				_ = save(false, true)
+			}
 			s.log.Warn("创建常驻沙箱失败", "bot_id", botID, "native_disk_quota", policy.NativeDiskQuota, "err", err)
 			return nil, errors.New("creating cloud sandbox failed")
 		}
-		c.SandboxID = box.ID()
+		c.SandboxID, c.CreationKey = box.ID(), ""
 	}
 	c.State = store.RuntimeComputerRunning
 	if err := save(true, false); err != nil {
@@ -213,6 +242,24 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 			s.log.Warn("保存机器人电脑状态失败", "bot_id", botID, "err", err)
 		}
 	}}, nil
+}
+
+// The key was committed before CreatePersistent. Reconcile under the bot's
+// lease so a lost create response or process exit does not strand a sandbox.
+func recoverCloudComputer(ctx context.Context, pp runtime.PersistentProvider, c *store.RuntimeBotComputer) error {
+	if c.SandboxID != "" || c.CreationKey == "" {
+		return nil
+	}
+	p, ok := pp.(runtime.PersistentRecovery)
+	if !ok {
+		return errors.New("runtime cannot look up the pending sandbox")
+	}
+	id, err := p.FindPersistent(ctx, c.CreationKey)
+	if err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
+		return err
+	}
+	c.SandboxID, c.CreationKey = id, ""
+	return nil
 }
 
 // computerDiskUsage 统计工作目录和 DSH 主目录的用量（du -sk，各行相加）。
@@ -345,6 +392,10 @@ func (s *Server) cloudComputerAction(ctx context.Context, botID int64, action, w
 		defer stop()
 		_ = s.store.ReleaseRuntimeBotComputer(bc, botID, holder)
 		return nil, errComputerSkipped
+	}
+	if err := recoverCloudComputer(ctx, pp, c); err != nil {
+		_ = finish(true)
+		return nil, errComputerProvider{err}
 	}
 	if c.SandboxID == "" {
 		return c, finish(false)
