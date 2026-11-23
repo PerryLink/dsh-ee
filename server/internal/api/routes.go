@@ -128,6 +128,8 @@ func (s *Server) routes() []route {
 		// 员工网页对话（runtime_chat.go）：只认网页会话里的员工本人
 		usr("GET /api/runtime/chat/bots", s.handleRuntimeChatBots),
 		usr("GET /api/runtime/chat/bots/{id}/profile", s.handleRuntimeChatBotProfile),
+		// 所有者本人切换机器人的写操作审批模式（runtime_approval.go），需管理员允许
+		usr("PUT /api/runtime/chat/bots/{id}/approval", s.handleRuntimeChatBotApproval),
 		usr("GET /api/runtime/chat/conversations", s.handleRuntimeChatConversations),
 		usr("POST /api/runtime/chat/conversations", s.handleRuntimeChatCreate),
 		usr("GET /api/runtime/chat/conversations/{id}", s.handleRuntimeChatConversation),

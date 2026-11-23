@@ -36,4 +36,4 @@ dsh-ee 保存机器人定义、队列、状态事件和文件；执行在 OpenSa
 
 登录后可用 `POST /api/runtime/tasks` 提交 `{"prompt":"生成今日摘要","idempotency_key":"daily-2026-11-22","timeout_seconds":120}`。`GET /api/runtime/tasks` 列出最近任务；`GET /api/runtime/tasks/{id}` 查状态，`GET /api/runtime/tasks/{id}/events` 查状态变更，`POST /api/runtime/tasks/{id}/cancel` 取消。用 `GET /api/runtime/tasks/{id}/artifacts` 查文件，`GET /api/runtime/tasks/{id}/artifacts/{artifact}` 下载。员工只能查看自己的任务；有系统设置权限的管理员可以查看全部。
 
-任务最长 5 分钟，单次运行的令牌只在该员工权限范围内、只对指定模型的网关请求和只读 MCP 调用生效，并在退出时吊销。只收集直接写入 `/tmp/dsh-ee-output` 的普通文件（最多 8 个、每个不超过 8 MiB）；文件在 `DSH_EE_DATA_DIR/runtime-artifacts`。队列支持多个实例抢占，但部署多个实例必须共享该产物目录；试点未实现对象存储、自动保留期限、Feishu 重试、补跑以及持久 Agent 记忆。不支持写工具、E2B 或在同一沙箱内保留下一次运行的状态。
+任务最长 5 分钟，单次运行的令牌只在该员工权限范围内、只对指定模型的网关请求和 MCP 连接工具生效（写操作按机器人的审批模式放行，默认只读，见 [bot-approval.md](./bot-approval.md)），并在退出时吊销。只收集直接写入 `/tmp/dsh-ee-output` 的普通文件（最多 8 个、每个不超过 8 MiB）；文件在 `DSH_EE_DATA_DIR/runtime-artifacts`。队列支持多个实例抢占，但部署多个实例必须共享该产物目录；试点未实现对象存储、自动保留期限、Feishu 重试、补跑以及持久 Agent 记忆。不支持 E2B 或在同一沙箱内保留下一次运行的状态。

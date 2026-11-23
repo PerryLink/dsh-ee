@@ -25,6 +25,33 @@ export interface ChatBot {
   last_message?: string | null;
   last_task_id?: ChatId | null;
   last_status?: ChatTurnStatus | null;
+  /** 写操作审批模式（管理员设置）；旧后端没有这个字段，按只读处理。 */
+  approval_mode?: ApprovalMode | null;
+  /** 管理员是否允许本人在对话页切换审批模式。 */
+  approval_editable?: boolean | null;
+}
+
+/**
+ * 云端机器人的写操作审批模式：
+ * read_only 只读；manual 逐个审批；auto 按规则自动审批，其余逐个审批；full 完全放行（不再审批，仍有审计）。
+ */
+export type ApprovalMode = "read_only" | "manual" | "auto" | "full";
+export const APPROVAL_MODES: ApprovalMode[] = ["read_only", "manual", "auto", "full"];
+export const approvalModeOf = (b: Pick<ChatBot, "approval_mode"> | null | undefined): ApprovalMode =>
+  b?.approval_mode && APPROVAL_MODES.includes(b.approval_mode) ? b.approval_mode : "read_only";
+
+/** 一张审批卡：机器人在某一轮（runtime_task_id）里要做的写操作，等员工批准或拒绝。复用写操作确认（/api/me/confirmations）。 */
+export interface ChatApproval {
+  id: ChatId;
+  tool: string;
+  /** 规整后的参数 JSON。 */
+  args: string;
+  status: string;
+  /** 企业系统名、工具说明（后端按连接补上）。 */
+  system?: string;
+  description?: string;
+  runtime_task_id?: ChatId | null;
+  expires_at: string;
 }
 
 export interface ChatConversation {
@@ -93,6 +120,17 @@ export const chatApi = {
   send: (id: ChatId, content: string, idempotencyKey: string) =>
     request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, { content, idempotency_key: idempotencyKey }),
   artifacts: (taskId: ChatId) => request<ChatArtifact[] | null>("GET", `${tasksBase}/${enc(taskId)}/artifacts`).then((x) => x ?? []),
+  /** 我待审批的云端机器人写操作（只取带 runtime_task_id 的）。 */
+  approvals: () =>
+    request<{ items: ChatApproval[] | null }>("GET", "/api/me/confirmations").then((x) => (x.items ?? []).filter((a) => a.runtime_task_id != null)),
+  /** 批准或拒绝一张审批卡；机器人那一轮在等这个决定，批准后才执行。 */
+  decide: (id: ChatId, approve: boolean) => request<ChatApproval>("POST", `/api/me/confirmations/${enc(id)}`, { approve }),
+  /** 本人切换审批模式（需管理员允许）；切到完全放行必须带 confirmFullAccess。 */
+  setApprovalMode: (botId: ChatId, mode: ApprovalMode, confirmFullAccess: boolean) =>
+    request<{ approval_mode: ApprovalMode; approval_editable: boolean }>("PUT", `${base}/bots/${enc(botId)}/approval`, {
+      approval_mode: mode,
+      confirm_full_access: confirmFullAccess,
+    }),
   /** 产物下载地址：只在员工点击时访问，页面不会自动下载。 */
   artifactUrl: (taskId: ChatId, artifactId: ChatId) => `${tasksBase}/${enc(taskId)}/artifacts/${enc(artifactId)}`,
 };

@@ -14,13 +14,16 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Monitor, RefreshCw, Users, X } from "lucide-react";
+import { ArrowUp, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Monitor, RefreshCw, ShieldAlert, ShieldCheck, Users, X } from "lucide-react";
 import { Badge, Button, Card, Empty, Notice, Spinner, cx, tabCls, tabListCls } from "../components/ui";
 import { ChatMarkdown } from "../components/chat-markdown";
+import { FullAccessDialog } from "../components/full-access-dialog";
 import { useAuth } from "../lib/auth";
 import { formatBytes, formatDateOnly, formatDateTime, formatNumber, formatTimeOnly, resolveLang } from "../lib/format";
 import {
+  APPROVAL_MODES,
   CHAT_CONTENT_MAX_BYTES,
+  approvalModeOf,
   chatApi,
   getLastRead,
   isPendingTurn,
@@ -30,6 +33,8 @@ import {
   toChatError,
   useChatBots,
   utf8Bytes,
+  type ApprovalMode,
+  type ChatApproval,
   type ChatArtifact,
   type ChatBot,
   type ChatBotProfile,
@@ -269,7 +274,96 @@ function TurnFiles({ taskId }: { taskId: ChatId }) {
   );
 }
 
-function Turn({ turn, bot, onReuse }: { turn: ChatTurn; bot: ChatBot; onReuse?: (content: string) => void }) {
+/** 参数 JSON 排版成多行，读不懂就原样显示。 */
+function prettyArgs(args: string): string {
+  try {
+    return JSON.stringify(JSON.parse(args), null, 2);
+  } catch {
+    return args;
+  }
+}
+
+/**
+ * 审批卡：机器人在这一轮里要做的一个写操作，停在服务端等员工决定。批准后机器人才执行并接着回复；
+ * 拒绝或过期都不执行。卡片说明要改哪个系统、做什么操作、影响的数据（参数原样给出）。
+ */
+function ApprovalCard({ approval, bot, onDecided }: { approval: ChatApproval; bot: ChatBot; onDecided: (id: ChatId) => void }) {
+  const { t, i18n } = useTranslation();
+  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [error, setError] = useState("");
+  const decide = async (approve: boolean) => {
+    setBusy(approve ? "approve" : "reject");
+    setError("");
+    try {
+      await chatApi.decide(approval.id, approve);
+      onDecided(approval.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(null);
+    }
+  };
+  const titleId = `approval-${String(approval.id)}-title`;
+  return (
+    <section
+      aria-labelledby={titleId}
+      data-approval-card={String(approval.id)}
+      className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-sm dark:border-amber-400/25 dark:bg-amber-500/10"
+    >
+      <h3 id={titleId} className="flex items-center gap-1.5 font-semibold text-amber-900 dark:text-amber-200">
+        <ShieldCheck size={16} aria-hidden />
+        {t("approval.card.title")}
+      </h3>
+      <p className="mt-1 leading-6 text-neutral-700 dark:text-neutral-300">
+        {approval.system ? t("approval.card.desc", { bot: bot.name, system: approval.system }) : t("approval.card.descNoSystem", { bot: bot.name })}
+      </p>
+      <dl className="mt-2 space-y-1.5">
+        <div>
+          <dt className="text-xs font-medium text-neutral-500">{t("approval.card.tool")}</dt>
+          <dd className="break-words">
+            <code className="rounded bg-white/70 px-1 py-0.5 text-[13px] dark:bg-white/10">{approval.tool}</code>
+            {approval.description && <span className="ml-1.5 text-neutral-700 dark:text-neutral-300">{approval.description}</span>}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-neutral-500">{t("approval.card.args")}</dt>
+          <dd>
+            <pre className="mt-0.5 max-h-56 overflow-auto rounded-md bg-white/80 p-2 text-[12px] leading-5 break-words whitespace-pre-wrap dark:bg-black/20">{prettyArgs(approval.args)}</pre>
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-xs text-neutral-500">{t("approval.card.expires", { time: formatTimeOnly(approval.expires_at, i18n.language) })}</p>
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+          {t("approval.card.failed", { reason: error })}
+        </p>
+      )}
+      <div className="mt-2.5 flex gap-2">
+        <Button type="button" size="sm" disabled={busy !== null} onClick={() => void decide(true)} data-approval-approve="">
+          {busy === "approve" && <Spinner size={13} />}
+          {busy === "approve" ? t("approval.card.deciding") : t("approval.card.approve")}
+        </Button>
+        <Button type="button" size="sm" variant="secondary" disabled={busy !== null} onClick={() => void decide(false)} data-approval-reject="">
+          {busy === "reject" && <Spinner size={13} />}
+          {busy === "reject" ? t("approval.card.deciding") : t("approval.card.reject")}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function Turn({
+  turn,
+  bot,
+  onReuse,
+  approvals = [],
+  onDecided,
+}: {
+  turn: ChatTurn;
+  bot: ChatBot;
+  onReuse?: (content: string) => void;
+  approvals?: ChatApproval[];
+  onDecided?: (id: ChatId) => void;
+}) {
   const { t, i18n } = useTranslation();
   const pending = isPendingTurn(turn);
   const stopped = turn.status === "failed" || turn.status === "canceled";
@@ -294,6 +388,8 @@ function Turn({ turn, bot, onReuse }: { turn: ChatTurn; bot: ChatBot; onReuse?: 
               <span>{t(turn.status === "queued" ? "botChat.reply.queued" : "botChat.reply.running")}</span>
             </div>
           )}
+          {pending &&
+            approvals.map((a) => <ApprovalCard key={String(a.id)} approval={a} bot={bot} onDecided={(id) => onDecided?.(id)} />)}
           {turn.status === "succeeded" &&
             (turn.summary.trim() ? <ChatMarkdown markdown={turn.summary} /> : <p className="text-sm text-neutral-500">{t("botChat.reply.noText")}</p>)}
           {turn.status === "succeeded" && <TurnFiles taskId={turn.id} />}
@@ -746,6 +842,59 @@ function Workspace({
     };
   }, [pendingKeys, loadThread]);
 
+  // 审批卡：有回复在进行时一起轮询我待审批的写操作（带 runtime_task_id 的确认），按任务挂到对应那一轮上。
+  const [approvals, setApprovals] = useState<ChatApproval[]>([]);
+  useEffect(() => {
+    if (!pendingKeys) {
+      setApprovals((a) => (a.length ? [] : a));
+      return;
+    }
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (stopped) return;
+      if (!document.hidden) {
+        try {
+          const next = await chatApi.approvals();
+          if (!stopped) setApprovals(next);
+        } catch {
+          // 读不到就保留上一次的卡片，下一轮再试
+        }
+      }
+      if (!stopped) timer = setTimeout(() => void tick(), POLL_MS);
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [pendingKeys]);
+  const onApprovalDecided = useCallback((id: ChatId) => setApprovals((a) => a.filter((x) => !sameId(x.id, id))), []);
+
+  // ---------- 审批模式（管理员设置，允许时本人可切换） ----------
+  const [fullConfirm, setFullConfirm] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeError, setModeError] = useState("");
+  const selectedMode = approvalModeOf(selected);
+  const changeMode = async (mode: ApprovalMode, confirmFullAccess: boolean) => {
+    if (!selected) return;
+    setModeBusy(true);
+    setModeError("");
+    try {
+      await chatApi.setApprovalMode(selected.id, mode, confirmFullAccess);
+      reloadBots();
+    } catch (err) {
+      setModeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setModeBusy(false);
+    }
+  };
+  const pickMode = (mode: ApprovalMode) => {
+    if (mode === selectedMode) return;
+    if (mode === "full") setFullConfirm(true);
+    else void changeMode(mode, false);
+  };
+
   const thread = selKey ? threads[selKey] : undefined;
   const messages = thread?.messages ?? [];
   const ready = thread?.status === "ready";
@@ -1181,6 +1330,40 @@ function Workspace({
               <h2 className="min-w-0 truncate px-1 text-base font-bold text-neutral-900">{t("botChat.title")}</h2>
             )}
             {botDisabled && <Badge tone="amber">{t("botChat.header.disabled")}</Badge>}
+            {selected && selectedMode === "full" && (
+              <span title={t("approval.fullBadgeTitle")} data-full-access-badge="" className="inline-flex">
+                <Badge tone="red">
+                  <ShieldAlert size={12} aria-hidden />
+                  {t("approval.fullBadge")}
+                </Badge>
+              </span>
+            )}
+            {selected &&
+              (selected.approval_editable ? (
+                <select
+                  aria-label={t("approval.changeLabel")}
+                  title={t(`approval.modeHints.${selectedMode}`)}
+                  value={selectedMode}
+                  disabled={modeBusy}
+                  onChange={(e) => pickMode(e.target.value as ApprovalMode)}
+                  data-approval-mode=""
+                  className="min-w-0 shrink rounded-md border border-neutral-200 bg-card px-1.5 py-1 text-xs text-neutral-700 dark:border-white/10"
+                >
+                  {APPROVAL_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {t("approval.label")}: {t(`approval.modes.${mode}`)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                selectedMode !== "full" && (
+                  <span title={`${t(`approval.modeHints.${selectedMode}`)} ${t("approval.locked")}`} className="hidden sm:inline-flex" data-approval-mode="">
+                    <Badge tone={selectedMode === "read_only" ? "slate" : "brand"}>
+                      {t("approval.label")}: {t(`approval.modes.${selectedMode}`)}
+                    </Badge>
+                  </span>
+                )
+              ))}
             {replying && (
               <span className="hidden sm:inline-flex">
                 <Badge tone="brand">{t("botChat.header.replying")}</Badge>
@@ -1271,7 +1454,16 @@ function Workspace({
                     );
                   }
                   if (day) prevDay = day;
-                  items.push(<Turn key={String(m.id)} turn={m} bot={selected} onReuse={botDisabled ? undefined : reuseContent} />);
+                  items.push(
+                    <Turn
+                      key={String(m.id)}
+                      turn={m}
+                      bot={selected}
+                      onReuse={botDisabled ? undefined : reuseContent}
+                      approvals={approvals.filter((a) => sameId(a.runtime_task_id, m.id))}
+                      onDecided={onApprovalDecided}
+                    />,
+                  );
                   return items;
                 })}
               </ol>
@@ -1294,6 +1486,16 @@ function Workspace({
               {botDisabled && (
                 <Notice tone="warn" role="status" className="mb-2">
                   {t("botChat.composer.disabledBot")}
+                </Notice>
+              )}
+              {selectedMode === "full" && (
+                <Notice tone="danger" className="mb-2" data-full-access-notice="">
+                  {t("approval.fullNotice", { bot: botName })}
+                </Notice>
+              )}
+              {modeError && (
+                <Notice tone="danger" role="alert" className="mb-2">
+                  {t("approval.changeFailed", { reason: modeError })}
                 </Notice>
               )}
               {activeSendError && activeSendError.key !== "botDisabled" && (
@@ -1370,6 +1572,14 @@ function Workspace({
           onRetry={() => void loadProfile(selected)}
         />
       )}
+      <FullAccessDialog
+        open={fullConfirm}
+        botName={botName}
+        onResult={(confirmed) => {
+          setFullConfirm(false);
+          if (confirmed) void changeMode("full", true);
+        }}
+      />
     </div>
   );
 }

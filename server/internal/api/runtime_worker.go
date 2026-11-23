@@ -159,6 +159,11 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 			s.log.Warn("吊销云任务短期令牌失败", "task_id", task.ID, "err", err)
 		}
 	}
+	// 记下这一轮的凭证：/mcp 按它找回任务和机器人的审批模式（runtime_approval.go）
+	if err := s.store.SetRuntimeTaskCredential(ctx, task.ID, t.ID); err != nil {
+		revoke()
+		return "", nil, errors.New("recording cloud task credential failed")
+	}
 	return raw, revoke, nil
 }
 
@@ -224,7 +229,13 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		return "", nil, err
 	}
 	defer revoke()
-	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
+	writes := "The enterprise task is read-only. "
+	if task.BotID != nil {
+		if bot, err := s.store.RuntimeBot(ctx, *task.BotID); err == nil && bot.ApprovalMode != store.RuntimeApprovalReadOnly {
+			writes = runtimeWriteGuidance(bot.ApprovalMode)
+		}
+	}
+	prompt := "Enterprise task:\n" + task.Prompt + "\n\n" + writes + "Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
 	if task.ChatConversationID != nil {
 		// 网页对话的提示词在入队时已拼好（runtimeChatPlan）：要的是直接回答员工，而不是任务摘要；
 		// 当前消息必须留在最后，这里不再追加任何内容。

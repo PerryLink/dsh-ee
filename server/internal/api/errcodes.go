@@ -74,6 +74,14 @@ const (
 	codeRuntimeChatIdempotencyConflict = "runtime_chat.idempotency_conflict"
 	// codeRuntimeChatQueueFull：员工排队或运行中的云任务已达上限，429。params 无。
 	codeRuntimeChatQueueFull = "runtime_chat.queue_full"
+	// codeRuntimeApprovalInvalidMode：云端机器人的审批模式不是 read_only / manual / auto / full，400。params 无。
+	codeRuntimeApprovalInvalidMode = "runtime_approval.invalid_mode"
+	// codeRuntimeApprovalInvalidRules：自动审批规则不合法（空模式、单独的 *、含空白或斜杠、超长或超过条数上限），400。params：max（最多条数）。
+	codeRuntimeApprovalInvalidRules = "runtime_approval.invalid_rules"
+	// codeRuntimeApprovalRiskUnconfirmed：切到完全放行时没有确认风险（confirm_full_access），400。params 无。
+	codeRuntimeApprovalRiskUnconfirmed = "runtime_approval.risk_unconfirmed"
+	// codeRuntimeApprovalLocked：管理员没有允许所有者本人修改这个机器人的审批模式，403。params 无。
+	codeRuntimeApprovalLocked = "runtime_approval.locked"
 
 	// ---- 登录与认证：server/internal/api/auth.go ----
 

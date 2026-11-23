@@ -221,4 +221,10 @@ export default {
     idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
     queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
   },
+  runtime_approval: {
+    invalid_mode: "The approval mode must be read-only, approve each, auto-approve or full access.",
+    invalid_rules: "Invalid auto-approval rules: no bare *, no spaces or slashes, and at most {{max}} rules.",
+    risk_unconfirmed: "Confirm the risks before turning on full access.",
+    locked: "Your administrator hasn't allowed you to change this bot's approval mode.",
+  },
 } satisfies Messages<typeof zh>;
