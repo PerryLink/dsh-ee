@@ -860,11 +860,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		runtimeWrites := pr.Runtime && s.runtimeWritesListed(r.Context(), pr)
 		for _, cn := range c.conns {
 			for _, t := range cn.tools {
-				if pr.Runtime && !t.ReadOnly && !runtimeWrites {
+				name := mcpToolName(cn.asset.Slug, t.Name)
+				if pr.Runtime && (runtimeBotToolName(name) || !t.ReadOnly && !runtimeWrites) {
 					continue
 				}
 				tools = append(tools, map[string]any{
-					"name":        mcpToolName(cn.asset.Slug, t.Name),
+					"name":        name,
 					"description": "【" + cn.spec.Title + "】" + t.Description,
 					"inputSchema": t.InputSchema,
 					"annotations": map[string]any{"readOnlyHint": t.ReadOnly},
@@ -875,6 +876,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(c.kbases) > 0 {
 			tools = append(tools, kbToolDefs()...)
+		}
+		// 云端机器人的协作工具：只在属于个人机器人的一轮里（按这一轮的短期令牌认）出现。
+		if pr.Runtime {
+			if _, err := s.runtimeBotCaller(r.Context(), pr); err == nil {
+				tools = append(tools, botsToolDefs(runtimeWrites)...)
+			}
 		}
 		if !pr.Runtime {
 			if targets := s.appToolTargets(r.Context(), v, c); len(targets) > 0 {
@@ -918,6 +925,10 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.HasPrefix(p.Name, "ee_") {
 			writeRPC(w, msg.ID, s.agentCall(r, pr, p.Name, p.Arguments), nil)
+			return
+		}
+		if pr.Runtime && runtimeBotToolName(p.Name) {
+			writeRPC(w, msg.ID, s.botsCall(r, pr, p.Name, p.Arguments), nil)
 			return
 		}
 		if strings.HasPrefix(p.Name, dataConn+"__") {

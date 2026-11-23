@@ -36,6 +36,7 @@ type fakeComputers struct {
 	disk               int64 // du 报告的 KB
 	diskQuota          int64
 	tokens             []string
+	dirs               []string           // 每轮 DSH 的当前目录和 DSH_HOME（"dir|home"）
 	check              func(token string) // 每轮 DSH 运行时检查凭证
 	loseCreateResponse bool
 	hideCreatedBox     bool
@@ -43,6 +44,8 @@ type fakeComputers struct {
 	awaitCreateTimeout bool
 	awaitLookupTimeout bool
 	allowedHost        string
+	// onRun 在模拟 DSH 运行时调用（凭证有效、任务在运行）；handled 为真时用它的输出代替默认行为。
+	onRun func(token, dir, prompt string) (stdout string, handled bool)
 }
 
 type fakeBox struct {
@@ -193,7 +196,29 @@ func (b *fakeBox) Exec(_ context.Context, c runtime.Command) (runtime.Result, er
 	}
 	prompt := c.Args[len(c.Args)-1]
 	note := path.Join(c.Dir, "note.txt")
+	shared := path.Join(runtimeSharedDir, "note.txt")
+	b.owner.mu.Lock()
+	b.owner.dirs = append(b.owner.dirs, c.Dir+"|"+c.Env["DSH_HOME"])
+	onRun := b.owner.onRun
+	b.owner.mu.Unlock()
+	if onRun != nil {
+		if out, ok := onRun(token, c.Dir, prompt); ok {
+			return runtime.Result{Stdout: out}, nil
+		}
+	}
+	if _, message, ok := strings.Cut(prompt, "\n"+runtimeChatEmployeeHeader); ok {
+		prompt = message
+	}
 	switch {
+	case strings.Contains(prompt, "SHARE:"):
+		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "SHARE:")+6:], "\n")
+		b.files[shared] = strings.TrimSpace(text)
+		return runtime.Result{Stdout: "shared"}, nil
+	case strings.Contains(prompt, "READ_SHARED"):
+		if v, ok := b.files[shared]; ok {
+			return runtime.Result{Stdout: "shared note: " + v}, nil
+		}
+		return runtime.Result{Stdout: "no shared note"}, nil
 	case strings.Contains(prompt, "WRITE:"):
 		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "WRITE:")+6:], "\n")
 		b.files[note] = strings.TrimSpace(text)
@@ -305,6 +330,15 @@ func (c *computerTest) profile() runtimeComputerView {
 	return out.Computer
 }
 
+// computerID 是员工电脑的 ID（还没有记录时为 0）。
+func (c *computerTest) computerID() int64 {
+	got, err := c.s.store.RuntimeComputerOf(context.Background(), store.UserComputerOwner(c.employee))
+	if err != nil {
+		return 0
+	}
+	return got.ID
+}
+
 func (c *computerTest) tokenValid(token string) bool {
 	_, err := c.s.resolveBearer(context.WithValue(context.Background(), runtimeTokenRouteKey{}, true), token, "")
 	return err == nil
@@ -358,7 +392,7 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 		if len(b.env) != 0 {
 			t.Fatal("persistent computer created with environment variables")
 		}
-		if _, ok := b.files[runtimePersistentOutputDir+"/reports/summary.txt"]; ok {
+		if _, ok := b.files[runtimeBotOutputDir(c.bot.ID)+"/reports/summary.txt"]; ok {
 			t.Fatal("collected deliverables should not count against persistent disk usage")
 		}
 	}
@@ -433,7 +467,8 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 	c.run("WRITE:hello")
 
 	// 电脑被别的任务占着：手动操作返回 busy，新任务等不到就重试。
-	if _, err := c.s.store.AcquireRuntimeBotComputer(ctx, c.bot.ID, "task:other", time.Now().Add(time.Minute)); err != nil {
+	held, err := c.s.store.AcquireRuntimeComputer(ctx, store.UserComputerOwner(c.employee), "task:other", 0, time.Now().Add(time.Minute))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if rec := c.owner("POST", "/api/runtime/chat/bots/"+strconv.FormatInt(c.bot.ID, 10)+"/computer/hibernate", ""); rec.Code != http.StatusConflict ||
@@ -446,7 +481,7 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 	if got := c.run("READ"); got.Status != store.RuntimeQueued || f.ephemeral != 0 {
 		t.Fatalf("busy computer should requeue the task without a temporary computer: %+v ephemeral=%d", got, f.ephemeral)
 	}
-	if err := c.s.store.ReleaseRuntimeBotComputer(ctx, c.bot.ID, "task:other"); err != nil {
+	if err := c.s.store.ReleaseRuntimeComputer(ctx, held.ID, "task:other"); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
@@ -465,13 +500,15 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 		Computers  []runtimeAdminComputer `json:"computers"`
 	}
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || !list.Persistent || len(list.Computers) != 1 ||
-		list.Computers[0].BotID != c.bot.ID || list.Computers[0].BotName != "Notes" || list.Computers[0].State != store.RuntimeComputerRunning {
+		list.Computers[0].ID != held.ID || list.Computers[0].OwnerKind != store.RuntimeComputerOwnerUser || list.Computers[0].OwnerID != c.employee ||
+		list.Computers[0].OwnerName != "computer-owner" || list.Computers[0].BotID != c.bot.ID || list.Computers[0].BotName != "Notes" ||
+		list.Computers[0].State != store.RuntimeComputerRunning {
 		t.Fatalf("admin list: HTTP %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := c.owner("GET", "/api/admin/runtime/computers", ""); rec.Code != http.StatusForbidden {
 		t.Fatalf("employee reading admin list: HTTP %d", rec.Code)
 	}
-	path := "/api/admin/runtime/computers/" + strconv.FormatInt(c.bot.ID, 10)
+	path := "/api/admin/runtime/computers/" + strconv.FormatInt(held.ID, 10)
 	if rec := c.admin("POST", path+"/hibernate", ""); rec.Code != http.StatusOK || f.hibernates != 1 {
 		t.Fatalf("admin hibernate: HTTP %d %s", rec.Code, rec.Body.String())
 	}
@@ -508,7 +545,7 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	}
 
 	box.close(false) // Revocation failed: the worker must leave the lease in place.
-	if _, err := c.s.cloudComputerAction(ctx, c.bot.ID, computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
+	if _, err := c.s.cloudComputerAction(ctx, c.computerID(), computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
 		t.Fatalf("hibernation must wait for the credential to expire: %v", err)
 	}
 }
@@ -582,7 +619,7 @@ func TestBotComputerDefersAmbiguousCreateRetryUntilLeaseExpires(t *testing.T) {
 		t.Fatalf("initial attempt: %+v, %v", task, err)
 	}
 	c.s.runCloudClaim(ctx, task)
-	pending, err := c.s.store.RuntimeBotComputer(ctx, c.bot.ID)
+	pending, err := c.s.store.RuntimeComputerOf(ctx, store.UserComputerOwner(c.employee))
 	if err != nil || pending.SandboxID != "" || pending.CreationKey == "" || !pending.Busy || f.creates != 1 {
 		t.Fatalf("pending create is not recoverable: %+v, %v", pending, err)
 	}
@@ -590,8 +627,8 @@ func TestBotComputerDefersAmbiguousCreateRetryUntilLeaseExpires(t *testing.T) {
 		t.Fatalf("ambiguous create should not block the worker on an immediate retry: %v", err)
 	}
 	f.hideCreatedBox = false
-	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_bot_computers SET lease_until=?, last_used_at=? WHERE bot_id=?`,
-		time.Now().Add(-time.Second), time.Now().Add(-time.Second), c.bot.ID); err != nil {
+	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_computers SET lease_until=?, last_used_at=? WHERE id=?`,
+		time.Now().Add(-time.Second), time.Now().Add(-time.Second), c.computerID()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_tasks SET lease_until=? WHERE id=?`,
@@ -599,7 +636,7 @@ func TestBotComputerDefersAmbiguousCreateRetryUntilLeaseExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, box := range f.boxes {
-		box.files[runtimeWorkDir+"/note.txt"] = "original computer"
+		box.files[runtimeBotWorkDir(c.bot.ID)+"/note.txt"] = "original computer"
 	}
 	c.s.reapCloudComputers(ctx)
 	if v := c.profile(); v.State != store.RuntimeComputerHibernated || f.hibernates != 1 {
@@ -654,7 +691,7 @@ func TestBotComputerReplacesMissingOverLimitSandbox(t *testing.T) {
 		t.Fatalf("first run: %+v", got)
 	}
 	ctx := context.Background()
-	if _, err := c.s.cloudComputerAction(ctx, c.bot.ID, computerHibernate, "test", nil); err != nil {
+	if _, err := c.s.cloudComputerAction(ctx, c.computerID(), computerHibernate, "test", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := c.run("READ"); got.Status != store.RuntimeFailed || !strings.Contains(got.Error, "disk limit") || f.wakes != 0 {
@@ -673,8 +710,8 @@ func TestBotComputerAdminInventoryPages(t *testing.T) {
 	c := newComputerTest(t, &fakeComputers{}, runtime.ComputerPolicy{Persistent: true})
 	ctx := context.Background()
 	for id := int64(1); id <= 101; id++ {
-		if _, err := c.s.store.DB().ExecContext(ctx, `INSERT INTO runtime_bot_computers (bot_id, sandbox_id, state, last_used_at, created_at, updated_at)
-			VALUES (?, ?, ?, NOW(3), NOW(3), NOW(3))`, id, strconv.FormatInt(id, 10), store.RuntimeComputerHibernated); err != nil {
+		if _, err := c.s.store.DB().ExecContext(ctx, `INSERT INTO runtime_computers (id, owner_kind, owner_department, sandbox_id, state, last_used_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, NOW(3), NOW(3), NOW(3))`, id, store.RuntimeComputerOwnerTeam, "team-"+strconv.FormatInt(id, 10), strconv.FormatInt(id, 10), store.RuntimeComputerHibernated); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -684,11 +721,11 @@ func TestBotComputerAdminInventoryPages(t *testing.T) {
 	}
 	const endpoint = "/api/admin/runtime/computers"
 	first := decodeRuntimeChat[page](t, "inventory first page", c.admin("GET", endpoint, ""), http.StatusOK)
-	if len(first.Computers) != 100 || first.Computers[0].BotID != 101 || first.Next != "2" {
+	if len(first.Computers) != 100 || first.Computers[0].ID != 101 || first.Next != "2" {
 		t.Fatalf("first page: %d computers, next=%q", len(first.Computers), first.Next)
 	}
 	second := decodeRuntimeChat[page](t, "inventory second page", c.admin("GET", endpoint+"?before="+first.Next, ""), http.StatusOK)
-	if len(second.Computers) != 1 || second.Computers[0].BotID != 1 || second.Next != "" {
+	if len(second.Computers) != 1 || second.Computers[0].ID != 1 || second.Next != "" {
 		t.Fatalf("second page: %+v", second)
 	}
 }
@@ -703,7 +740,7 @@ func TestBotComputerUnsupportedProviderFallsBack(t *testing.T) {
 	if v := c.profile(); v.Persistent || v.State != store.RuntimeComputerNone {
 		t.Fatalf("profile for unsupported provider = %+v", v)
 	}
-	if _, err := c.s.store.RuntimeBotComputer(context.Background(), c.bot.ID); !notFound(err) {
+	if _, err := c.s.store.RuntimeComputerOf(context.Background(), store.UserComputerOwner(c.employee)); !notFound(err) {
 		t.Fatalf("fallback must not record a computer: %v", err)
 	}
 	if rec := c.owner("POST", "/api/runtime/chat/bots/"+strconv.FormatInt(c.bot.ID, 10)+"/computer/hibernate", ""); rec.Code != http.StatusConflict ||
@@ -742,7 +779,7 @@ case "$1" in
      cat note.txt ;;
 esac`, "sh", "{prompt}"}
 	t.Cleanup(func() {
-		_, _ = c.s.cloudComputerAction(context.Background(), c.bot.ID, computerReset, "test", nil)
+		_, _ = c.s.cloudComputerAction(context.Background(), c.computerID(), computerReset, "test", nil)
 	})
 	first := c.run("WRITE a note")
 	if first.Status != store.RuntimeSucceeded || first.Summary != "saved" {

@@ -31,7 +31,11 @@ export const runtime = {
   canceled: "已取消",
   privateResult: "仅所有者可查看本次运行结果。",
   computers: {
-    title: "机器人云电脑",
+    title: "云电脑",
+    hint: "每位员工一台「我的电脑」，他的所有个人机器人共用；团队对话用团队（部门）的「团队电脑」。",
+    userOwner: "员工电脑 · {{name}}",
+    teamOwner: "团队电脑 · {{department}}",
+    lastBot: "最近使用：{{bot}}",
     policy: "空闲 {{idle}} 分钟后自动休眠；每台磁盘上限 {{disk}}；{{retention}}。",
     retentionDays: "休眠超过 {{days}} 天自动回收",
     retentionHours: "休眠超过 {{hours}} 小时自动回收",
@@ -41,7 +45,7 @@ export const runtime = {
     busy: "占用中",
     hibernate: "休眠",
     reclaim: "回收",
-    reclaimConfirm: "回收会删除机器人「{{bot}}」的云电脑和其中的所有文件，下一轮会使用一台全新的电脑。",
+    reclaimConfirm: "回收会删除「{{owner}}」和其中的所有文件（所有共用它的机器人的目录），下一轮会使用一台全新的电脑。",
     state: {
       none: "未开机",
       waking: "唤醒中",

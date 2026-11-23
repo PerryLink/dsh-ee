@@ -31,7 +31,11 @@ export const runtime = {
   canceled: "Canceled",
   privateResult: "Only the owner can view this run’s results.",
   computers: {
-    title: "Bot cloud computers",
+    title: "Cloud computers",
+    hint: "Each employee has one “My computer” shared by all of their personal bots; team chats use the team's (department's) “Team computer”.",
+    userOwner: "Employee computer · {{name}}",
+    teamOwner: "Team computer · {{department}}",
+    lastBot: "Last used by: {{bot}}",
     policy: "Sleep after {{idle}} min idle; disk limit {{disk}} each; {{retention}}.",
     retentionDays: "reclaimed after {{days}} days asleep",
     retentionHours: "reclaimed after {{hours}} hours asleep",
@@ -41,7 +45,7 @@ export const runtime = {
     busy: "in use",
     hibernate: "Sleep",
     reclaim: "Reclaim",
-    reclaimConfirm: "Reclaiming deletes the cloud computer of bot \"{{bot}}\" and every file on it. The next run starts on a brand-new one.",
+    reclaimConfirm: "Reclaiming deletes \"{{owner}}\" and every file on it (the folders of every bot sharing it). The next run starts on a brand-new one.",
     state: {
       none: "off",
       waking: "waking up",

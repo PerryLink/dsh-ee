@@ -173,7 +173,17 @@ func (s *Server) handleRuntimeChatConversation(w http.ResponseWriter, r *http.Re
 		s.internalErr(w, r, err)
 		return
 	}
-	out := map[string]any{"conversation": conversation, "messages": turns}
+	// 委派卡片：这一页的轮次派出的、执行的（别的机器人派来的）、结果追加的委派。
+	ids := make([]int64, len(turns))
+	for i, turn := range turns {
+		ids[i] = turn.ID
+	}
+	delegations, err := s.store.RuntimeDelegationsForTasks(r.Context(), owner, ids)
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	out := map[string]any{"conversation": conversation, "messages": turns, "delegations": delegations}
 	if next > 0 {
 		out["next_before"] = next
 	}
@@ -197,7 +207,15 @@ func (s *Server) handleRuntimeChatBotProfile(w http.ResponseWriter, r *http.Requ
 			s.runtimeChatError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, profile)
+		computer, err := s.ownerComputerView(r.Context(), store.TeamComputerOwner(profile.Department))
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, struct {
+			*store.RuntimeChatBotProfile
+			Computer runtimeComputerView `json:"computer"`
+		}{profile, computer})
 		return
 	}
 	profile, err := s.store.RuntimeChatBotProfile(r.Context(), currentUser(r).ID, runtimeID(r, "id"), employee)
@@ -209,7 +227,8 @@ func (s *Server) handleRuntimeChatBotProfile(w http.ResponseWriter, r *http.Requ
 		s.internalErr(w, r, err)
 		return
 	}
-	computer, err := s.botComputerView(r.Context(), runtimeID(r, "id"))
+	// 个人机器人都用员工自己的电脑（「我的电脑」）。
+	computer, err := s.ownerComputerView(r.Context(), store.UserComputerOwner(currentUser(r).ID))
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -270,7 +289,7 @@ func (s *Server) handleRuntimeChatMessage(w http.ResponseWriter, r *http.Request
 		IdempotencyKey: "chat:" + strconv.FormatInt(requested, 10) + ":" + in.IdempotencyKey,
 		TimeoutSeconds: int(runtimeTimeout.Seconds()),
 	}, store.RuntimeChatPlanner{Fold: runtimeChatFold, Prompt: func(bot *store.RuntimeBot, memory string, recent []store.RuntimeChatTurn) (string, string, int) {
-		return runtimeChatPlanAs(bot.Prompt, bot.ApprovalMode, memory, recent, in.Content, sender)
+		return runtimeChatPlanAs(bot.Prompt, bot.ApprovalMode, memory, recent, in.Content, sender, runtimeChatEmployeeHeader)
 	}})
 	if err != nil {
 		s.runtimeChatError(w, r, err)
@@ -387,17 +406,19 @@ func runtimeChatFold(memory string, turn store.RuntimeChatTurn) string {
 // runtimeChatPlan 决定一轮对话的上下文并拼出提示词：recent 里放得进历史预算的后缀原样引用（kept 轮），
 // 放不下的前缀按顺序并入滚动记忆。返回提示词、更新后的记忆和 kept（见 store.RuntimeChatPlanner）。
 func runtimeChatPlan(botPrompt, mode, memory string, recent []store.RuntimeChatTurn, content string) (prompt, updated string, kept int) {
-	return runtimeChatPlanAs(botPrompt, mode, memory, recent, content, "")
+	return runtimeChatPlanAs(botPrompt, mode, memory, recent, content, "", runtimeChatEmployeeHeader)
 }
 
 // runtimeChatPlanAs 同 runtimeChatPlan；sender 非空表示团队线程，当前消息由 sender 发出（历史轮次的发送人随轮次带着）。
-func runtimeChatPlanAs(botPrompt, mode, memory string, recent []store.RuntimeChatTurn, content, sender string) (prompt, updated string, kept int) {
+func runtimeChatPlanAs(botPrompt, mode, memory string, recent []store.RuntimeChatTurn, content, sender, header string) (prompt, updated string, kept int) {
 	encoded := runtimeChatHistory(recent)
 	for _, turn := range recent[:len(recent)-len(encoded)] {
 		memory = runtimeChatFold(memory, turn)
 	}
-	return runtimeChatRender(botPrompt, mode, memory, encoded, content, sender), memory, len(encoded)
+	return runtimeChatRender(botPrompt, mode, memory, encoded, content, sender, header), memory, len(encoded)
 }
+
+const runtimeChatEmployeeHeader = "Current employee message (everything after this line):\n"
 
 // runtimeChatHistory 把最近的成功轮次编码成 JSON 行，返回放得进 runtimeChatHistoryBudget 的最长后缀（从旧到新）。
 // 历史从最近往前取，超出字节预算的更早轮次不放。
@@ -453,7 +474,7 @@ func runtimeChatHistory(history []store.RuntimeChatTurn) []string {
 // 记忆和历史都是 JSON 字符串里的数据，并明确标成不可信的历史记录；当前消息放在最后，不参与截断。
 // sender 非空时是团队线程：说明这是部门同事共用的对话，历史里每一轮的 "sender" 是发送人，当前消息由 sender 发出，
 // 并且这一轮只用 sender 自己的权限查数据。sender 是 JSON 字符串里的数据，不当作指令。
-func runtimeChatRender(botPrompt, mode, memory string, encoded []string, content, sender string) string {
+func runtimeChatRender(botPrompt, mode, memory string, encoded []string, content, sender, header string) string {
 	var b strings.Builder
 	b.WriteString("Bot instructions:\n")
 	b.WriteString(botPrompt)
@@ -483,7 +504,8 @@ func runtimeChatRender(botPrompt, mode, memory string, encoded []string, content
 	}
 	b.WriteString("Earlier exchanges in this conversation (JSON array, oldest first):\n[")
 	b.WriteString(strings.Join(encoded, ","))
-	b.WriteString("]\n\nCurrent employee message (everything after this line):\n")
+	b.WriteString("]\n\n")
+	b.WriteString(header)
 	b.WriteString(content)
 	return b.String()
 }

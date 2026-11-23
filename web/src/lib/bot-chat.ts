@@ -85,9 +85,38 @@ export interface ChatTurn {
   sender_name?: string | null;
 }
 
+/**
+ * 机器人之间的一次委派（派任务 / 发消息）。status：pending（发起的那一轮还没结束）、failed（没派出去）、canceled，
+ * 派出去之后就是目标那一轮的状态（queued / running / succeeded / failed / canceled）。
+ * 一轮里：parent_task_id 是它就是这一轮派出的；child_task_id 是它就是别的机器人派来的；followup_task_id 是它就是结果回来的那一轮。
+ */
+export interface ChatDelegation {
+  id: ChatId;
+  parent_task_id: ChatId;
+  parent_bot_id: ChatId;
+  parent_bot_name: string;
+  target_bot_id: ChatId;
+  target_bot_name: string;
+  kind: "task" | "message";
+  content: string;
+  status: "pending" | "failed" | "canceled" | ChatTurnStatus;
+  error?: string | null;
+  child_task_id?: ChatId | null;
+  child_conversation_id?: ChatId | null;
+  followup_task_id?: ChatId | null;
+  result?: string | null;
+  depth: number;
+  created_at: string;
+}
+
+export const isOpenDelegation = (d: ChatDelegation) =>
+  d.status === "pending" || d.status === "queued" || d.status === "running" || (d.kind === "task" && d.status === "succeeded" && d.followup_task_id == null);
+
 export interface ChatConversationDetail {
   conversation: ChatConversation;
   messages: ChatTurn[];
+  /** 这一页的轮次相关的委派（旧后端没有）。 */
+  delegations?: ChatDelegation[] | null;
   /** 还有更早的消息时给出：作为 before 传回去读上一页。 */
   next_before?: ChatId | null;
 }
@@ -107,7 +136,7 @@ export interface ChatBotArtifact extends ChatArtifact {
 }
 
 /**
- * 机器人自己的常驻云电脑。none：还没有（下一轮新建）；waking：正在新建或从休眠恢复；running：开着；
+ * 常驻云电脑（我的电脑 / 团队电脑）。none：还没有（下一轮新建）；waking：正在新建或从休眠恢复；running：开着；
  * hibernating：正在休眠；hibernated：已休眠（文件保留，下一轮自动唤醒）。
  */
 export type ChatComputerState = "none" | "waking" | "running" | "hibernating" | "hibernated";
@@ -115,6 +144,11 @@ export type ChatComputerState = "none" | "waking" | "running" | "hibernating" | 
 export interface ChatComputer {
   /** 为假：这个运行时每轮都用一台新电脑，没有休眠 / 唤醒。 */
   persistent: boolean;
+  /** user：我的电脑（员工的所有个人机器人共用）；team：团队电脑。旧后端没有，按 user 显示。 */
+  owner_kind?: "user" | "team";
+  department?: string | null;
+  /** 共用这台电脑的个人机器人数。 */
+  shared_bots?: number | null;
   state: ChatComputerState;
   /** 正被一个任务或操作占用。 */
   busy: boolean;
@@ -172,6 +206,7 @@ export const chatApi = {
     request<ChatConversationDetail>("GET", `${base}/conversations/${enc(id)}${before != null ? `?before=${enc(before)}` : ""}`).then((d) => ({
       ...d,
       messages: d.messages ?? [],
+      delegations: d.delegations ?? [],
     })),
   send: (id: ChatId, content: string, idempotencyKey: string) =>
     request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, { content, idempotency_key: idempotencyKey }),

@@ -100,9 +100,12 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 		return
 	}
 	if status == store.RuntimeQueued {
+		s.cancelPendingDelegations(finish, task)
 		return
 	}
 	s.auditSystem(finish, "runtime.task."+status, strconv.FormatInt(task.ID, 10), map[string]any{"run_as": task.RunAsID, "attempt": task.Attempts})
+	// 这一轮记下的委派在电脑释放之后才派出去；这一轮是委派出来的，就看看结果能不能交回发起方。
+	s.settleDelegations(finish, task, status)
 	// 网页对话轮次的 BotID 为空（机器人记在对话上），结果只在网页里看，不投递飞书。
 	if task.BotID != nil && task.ChatConversationID == nil {
 		s.deliverCloudTask(finish, task, status, summary)
@@ -227,17 +230,22 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	releaseComputer := true
 	defer func() { computer.close(releaseComputer) }()
 	sandbox := computer.sandbox
-	workDir, outputDir := runtimeOutputDir, runtimeOutputDir
+	workDir, outputDir := computer.workDir, computer.outputDir
 	if computer.persistent {
 		task.PrivateResult = true
+		// 产物目录每轮清空（上一轮的产物已经收走）；工作目录和 DSH 主目录在常驻电脑上跨轮保留。
+		// 常驻电脑上每个机器人有自己的工作目录（产物目录在它下面）和 DSH 主目录，另有一个共享目录。
 		// bwrap only binds the workspace back through its private /tmp mount.
-		workDir, outputDir = runtimeWorkDir, runtimePersistentOutputDir
 		setup, err := sandbox.Exec(ctx, runtime.Command{Args: []string{"rm", "-rf", outputDir}, Timeout: 10 * time.Second})
 		if err != nil || setup.ExitCode != 0 {
 			return "", nil, errors.New("preparing cloud sandbox failed")
 		}
 	}
-	setup, err := sandbox.Exec(ctx, runtime.Command{Args: []string{"mkdir", "-p", outputDir, runtimeHomeDir}, Timeout: 10 * time.Second})
+	dirs := []string{"mkdir", "-p", workDir, outputDir, computer.homeDir}
+	if computer.persistent {
+		dirs = append(dirs, runtimeSharedDir)
+	}
+	setup, err := sandbox.Exec(ctx, runtime.Command{Args: dirs, Timeout: 10 * time.Second})
 	if err != nil || setup.ExitCode != 0 {
 		return "", nil, errors.New("preparing cloud sandbox failed")
 	}
@@ -263,9 +271,13 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	}
 	if computer.persistent {
 		// 只往前加：网页对话的当前消息必须留在提示词最后。
-		prompt = runtimeComputerNote + prompt
+		prompt = runtimeComputerNote(computer.ownerKind, computer.botID) + prompt
 	} else {
 		prompt = runtimeEphemeralNote + prompt
+	}
+	if computer.persistent && computer.ownerKind == store.RuntimeComputerOwnerUser {
+		// 机器人协作工具（bots__*）的用法：同一台电脑上的机器人才谈得上互相派任务、共享文件。只往前加。
+		prompt = runtimeDelegationNote + prompt
 	}
 	args := make([]string, len(opts.Command))
 	for i, arg := range opts.Command {
@@ -282,7 +294,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	deadline, _ := ctx.Deadline()
 	var final runtime.DSHFinalOutput
 	cmd := runtime.Command{Args: args, Dir: workDir, Timeout: time.Until(deadline), Env: map[string]string{
-		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": runtimeHomeDir, "DSH_EE_OUTPUT_DIR": outputDir,
+		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": computer.homeDir, "DSH_EE_OUTPUT_DIR": outputDir,
 	}}
 	if slices.Contains(opts.Command, "--json") {
 		cmd.OnStdout = final.Add

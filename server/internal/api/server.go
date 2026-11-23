@@ -168,7 +168,10 @@ type Server struct {
 	dingTalkClientMu   sync.Mutex
 	dingTalkAPIClient  *dingtalk.Client
 
-	initAdmin       initAdminState
+	initAdmin initAdminState
+	// teamComputer 判断一轮云任务是不是团队对话的轮次、该用哪个团队（部门）的电脑（见 runtime_computer.go 的
+	// cloudTaskComputer）。为 nil 时没有团队电脑：团队共享（#320）合进来后由它接上。测试里直接赋值。
+	teamComputer    func(ctx context.Context, task *store.RuntimeTask) (department string, botID int64, err error)
 	store           *store.Store
 	box             *secret.Box
 	opts            Options
@@ -292,6 +295,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 		}
 	}
 	s := &Server{store: st, box: box, opts: opts, log: log, leases: opts.BackgroundLeases, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s.teamComputer = s.runtimeTeamComputer
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}

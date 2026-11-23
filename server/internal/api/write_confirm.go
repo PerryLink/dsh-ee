@@ -104,11 +104,19 @@ func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *stor
 	if t.ReadOnly || mode == confirmOff || (mode == confirmNonDSH && v.isDSHToken()) {
 		return nil
 	}
+	return s.askConfirmation(r, v, a.ID, 0, t.Name, "这个操作会修改「"+a.Title+"」里的数据，要先由你本人在网页上确认，现在还没有执行。", args)
+}
+
+// askConfirmation 是服务端确认的核心（不看全局方式）：有本人同意过、还没用过的同参数确认就用掉它并返回 nil（可以执行），
+// 否则返回请员工确认的结果。assetID 为 0 表示不属于企业连接的操作（例如机器人新建机器人，见 runtime_delegation.go），
+// what 是确认文本的第一句。
+func (s *Server) askConfirmation(r *http.Request, v viewer, assetID, runtimeTaskID int64, tool, what string, args json.RawMessage) json.RawMessage {
+	ctx := r.Context()
 	text, hash := canonicalArgs(args)
 	if len(text) > confirmMaxArgs {
 		return mcp.TextResult("这次写操作的参数太大（超过 256 KB），没法交给员工确认；请拆成几次。", true)
 	}
-	if ok, err := s.store.FindWriteConfirmation(ctx, v.user.ID, a.ID, t.Name, hash, store.ConfirmApproved); err == nil {
+	if ok, err := s.store.FindWriteConfirmation(ctx, v.user.ID, assetID, tool, hash, store.ConfirmApproved); err == nil {
 		used, err := s.store.UseWriteConfirmation(ctx, ok.ID)
 		if err != nil {
 			s.log.Warn("用掉写操作确认失败", "err", err)
@@ -126,7 +134,7 @@ func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *stor
 	// ask 的文本保持原样（旧客户端按文本展示），同时把确认信息放进结果级 _meta：
 	// 第三方 Harness 不用解析中文文本就能拿到确认页，旧客户端忽略 _meta 不受影响。
 	ask := func(id int64, expiresAt time.Time) json.RawMessage {
-		text := "这个操作会修改「" + a.Title + "」里的数据，要先由你本人在网页上确认，现在还没有执行。\n" +
+		text := what + "\n" +
 			"请打开 " + link(id) + " 核对参数并点「同意」，然后让我用完全相同的参数再调用一次。\n" +
 			"同意后 10 分钟内有效，只能执行一次；参数变了要重新确认。不要改用别的工具绕过。"
 		return mcp.TextResultWithMeta(text, true, map[string]any{
@@ -137,14 +145,14 @@ func (s *Server) confirmWrite(r *http.Request, v viewer, a *store.Asset, t *stor
 			},
 		})
 	}
-	if rejected, err := s.store.FindWriteConfirmation(ctx, v.user.ID, a.ID, t.Name, hash, store.ConfirmRejected); err == nil && rejected != nil {
+	if rejected, err := s.store.FindWriteConfirmation(ctx, v.user.ID, assetID, tool, hash, store.ConfirmRejected); err == nil && rejected != nil {
 		return mcp.TextResult("你刚才在网页上拒绝了这个操作，所以没有执行。如果还是要做，请先告诉我，我会重新发起确认；不要自动重试。", true)
 	}
-	if pending, err := s.store.FindWriteConfirmation(ctx, v.user.ID, a.ID, t.Name, hash, store.ConfirmPending); err == nil {
+	if pending, err := s.store.FindWriteConfirmation(ctx, v.user.ID, assetID, tool, hash, store.ConfirmPending); err == nil {
 		return ask(pending.ID, pending.ExpiresAt)
 	}
-	c := &store.WriteConfirmation{UserID: v.user.ID, AssetID: a.ID, Tool: t.Name, ArgsHash: hash, Args: text, TokenID: v.tokenID,
-		Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
+	c := &store.WriteConfirmation{UserID: v.user.ID, AssetID: assetID, Tool: tool, ArgsHash: hash, Args: text, TokenID: v.tokenID,
+		RuntimeTaskID: runtimeTaskID, Client: cutUTF8(r.Header.Get("User-Agent"), 120)}
 	if err := s.store.CreateWriteConfirmation(ctx, c, secret.Hash(secret.Token()), confirmPendingTTL); err != nil {
 		s.log.Warn("创建写操作确认失败", "err", err)
 		return mcp.TextResult("没能发起确认，请稍后再试。", true)
@@ -162,7 +170,10 @@ type confirmView struct {
 
 func (s *Server) confirmView(ctx context.Context, c *store.WriteConfirmation) *confirmView {
 	out := &confirmView{WriteConfirmation: c, Expired: !time.Now().Before(c.ExpiresAt)}
-	if a, err := s.store.GetAsset(ctx, c.AssetID); err == nil {
+	if c.AssetID == 0 && c.Tool == mcpToolName(botsConn, "create") {
+		// 机器人新建机器人：不属于任何企业连接。
+		out.System, out.Slug, out.Description = "云端机器人", botsConn, "新建一个属于你的云端机器人（只读、以你的身份运行、和你的其他机器人共用一台云电脑）"
+	} else if a, err := s.store.GetAsset(ctx, c.AssetID); err == nil {
 		out.System, out.Slug = a.Title, a.Slug
 		if tools, err := s.store.ConnectionTools(ctx, a.ID); err == nil {
 			for _, t := range tools {
