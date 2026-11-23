@@ -122,6 +122,8 @@ type RuntimeTask struct {
 	ChatContent        string `json:"-"`
 	// 与常驻工作目录接触过的任务结果只对所有者开放。
 	PrivateResult bool `json:"-"`
+	// A queued retry isn't claimable while its previous computer lease is active.
+	RetryAfter *time.Time `json:"-"`
 }
 
 const runtimeTaskColumns = `id, owner_id, run_as_id, bot_id, prompt, status, attempts, COALESCE(idempotency_key,''), timeout_seconds,
@@ -261,14 +263,15 @@ func (s *Store) ClaimRuntimeTask(ctx context.Context, attemptLimit int, grace ti
 	}
 	for {
 		task, err := scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-			WHERE status=? OR (status=? AND lease_until<=? AND attempts<?) ORDER BY id LIMIT 1`, RuntimeQueued, RuntimeRunning, t, attemptLimit))
+			WHERE (status=? AND (lease_until IS NULL OR lease_until<=?)) OR (status=? AND lease_until<=? AND attempts<?)
+			ORDER BY id LIMIT 1`, RuntimeQueued, t, RuntimeRunning, t, attemptLimit))
 		if err != nil {
 			return nil, err
 		}
 		lease := t.Add(time.Duration(task.TimeoutSeconds)*time.Second + grace)
 		err = s.recordRuntimeTransition(ctx, task.ID, RuntimeRunning, t, `UPDATE runtime_tasks SET status=?, attempts=attempts+1, started_at=?, updated_at=?, lease_until=?
-			WHERE id=? AND attempts=? AND (status=? OR (status=? AND lease_until<=?))`,
-			RuntimeRunning, t, t, lease, task.ID, task.Attempts, RuntimeQueued, RuntimeRunning, t)
+			WHERE id=? AND attempts=? AND ((status=? AND (lease_until IS NULL OR lease_until<=?)) OR (status=? AND lease_until<=?))`,
+			RuntimeRunning, t, t, lease, task.ID, task.Attempts, RuntimeQueued, t, RuntimeRunning, t)
 		switch {
 		case errors.Is(err, ErrConflict):
 			continue
@@ -379,12 +382,14 @@ func (s *Store) FinishRuntimeTask(ctx context.Context, task *RuntimeTask, status
 	}
 	defer tx.Rollback()
 	t := now()
-	var finished *time.Time
-	if status != RuntimeQueued {
+	var finished, retryAfter *time.Time
+	if status == RuntimeQueued {
+		retryAfter = task.RetryAfter
+	} else {
 		finished = &t
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=NULL, private_result=private_result OR ?
-		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, task.PrivateResult, task.ID, RuntimeRunning, task.Attempts, t)
+	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=?, private_result=private_result OR ?
+		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, retryAfter, task.PrivateResult, task.ID, RuntimeRunning, task.Attempts, t)
 	if err := runtimeAffected(res, err); err != nil {
 		return err
 	}

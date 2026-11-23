@@ -131,7 +131,8 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 	if !ok {
 		deadline = time.Now().Add(time.Duration(task.TimeoutSeconds) * time.Second)
 	}
-	c, err := s.acquireComputerWithin(ctx, botID, holder, deadline.Add(30*time.Second), runtimeComputerWait)
+	leaseUntil := deadline.Add(30 * time.Second)
+	c, err := s.acquireComputerWithin(ctx, botID, holder, leaseUntil, runtimeComputerWait)
 	if err != nil {
 		if errors.Is(err, store.ErrRuntimeComputerBusy) || ctx.Err() != nil {
 			return nil, err
@@ -220,8 +221,24 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 			createSpec.DiskQuotaBytes = limit
 		}
 		if box, err = pp.CreatePersistent(ctx, createSpec); err != nil {
-			if c.CreationKey == "" {
+			switch {
+			case c.CreationKey == "", errors.Is(err, runtime.ErrSandboxCreateRejected):
+				c.CreationKey = ""
 				_ = save(false, true)
+			default:
+				p := pp.(runtime.PersistentRecovery)
+				lookup, stop := bg()
+				id, lookupErr := p.FindPersistent(lookup, c.CreationKey)
+				stop()
+				if lookupErr == nil && id != "" {
+					c.SandboxID, c.CreationKey = id, ""
+					if err := save(false, true); err == nil {
+						break
+					}
+				}
+				// A lost response may arrive before the provider has listed the sandbox.
+				// Leave the correlation key intact until the lease expires.
+				task.RetryAfter = &leaseUntil
 			}
 			s.log.Warn("创建常驻沙箱失败", "bot_id", botID, "native_disk_quota", policy.NativeDiskQuota, "err", err)
 			return nil, errors.New("creating cloud sandbox failed")
@@ -231,6 +248,7 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 	c.State = store.RuntimeComputerRunning
 	if err := save(true, false); err != nil {
 		// 租约丢了（例如被管理员回收）：不再碰这台电脑。
+		task.RetryAfter = &leaseUntil
 		return nil, errors.New("the bot's cloud computer was taken over")
 	}
 	return &cloudComputer{sandbox: box, persistent: true, close: func(release bool) {

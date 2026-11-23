@@ -17,6 +17,9 @@ type Provider interface {
 // 并把这当作“电脑被重置”：原来的文件已经没有了。
 var ErrSandboxGone = errors.New("sandbox no longer exists")
 
+// ErrSandboxCreateRejected means provisioning did not start.
+var ErrSandboxCreateRejected = errors.New("sandbox creation was rejected")
+
 // PersistentProvider 是能让沙箱跨任务保留的 provider：空闲时休眠（暂停，文件系统保留），
 // 下一轮唤醒后接着用。没有实现它的 provider 按“每轮新建、跑完销毁”运行。
 //

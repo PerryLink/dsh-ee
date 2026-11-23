@@ -93,7 +93,7 @@ func (p *OpenSandbox) CreatePersistent(ctx context.Context, spec SandboxSpec) (P
 
 func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent bool) (*openSandboxInstance, error) {
 	if spec.Image == "" {
-		return nil, errors.New("sandbox image and timeout are required")
+		return nil, fmt.Errorf("%w: sandbox image is required", ErrSandboxCreateRejected)
 	}
 	var status sandboxStatus
 	limits := map[string]string{"cpu": "1", "memory": "1Gi"}
@@ -118,6 +118,13 @@ func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent b
 	}
 	err := p.lifecycle(ctx, http.MethodPost, "/sandboxes", input, &status)
 	if err != nil {
+		var response *httpStatusError
+		if errors.As(err, &response) {
+			switch response.status {
+			case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusTooManyRequests:
+				return nil, fmt.Errorf("%w: %v", ErrSandboxCreateRejected, err)
+			}
+		}
 		return nil, err
 	}
 	s, err := p.instance(status.ID)

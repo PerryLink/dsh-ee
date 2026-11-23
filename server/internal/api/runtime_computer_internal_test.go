@@ -38,6 +38,7 @@ type fakeComputers struct {
 	tokens             []string
 	check              func(token string) // 每轮 DSH 运行时检查凭证
 	loseCreateResponse bool
+	hideCreatedBox     bool
 	allowedHost        string
 }
 
@@ -84,6 +85,9 @@ func (f *fakeComputers) CreatePersistent(_ context.Context, spec runtime.Sandbox
 func (f *fakeComputers) FindPersistent(_ context.Context, key string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.hideCreatedBox {
+		return "", runtime.ErrSandboxGone
+	}
 	for _, b := range f.boxes {
 		if b.creationKey == key {
 			return b.id, nil
@@ -497,20 +501,58 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	}
 }
 
-func TestBotComputerRecoversLostCreateAndAppliesGatewayChange(t *testing.T) {
+func TestBotComputerWorkerRetriesLostCreateResponse(t *testing.T) {
 	f := &fakeComputers{loseCreateResponse: true}
 	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond})
 	ctx := context.Background()
-	task := &store.RuntimeTask{ID: 123, BotID: &c.bot.ID, OwnerID: c.employee, RunAsID: c.employee, TimeoutSeconds: 300}
-	if _, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img", AllowedHosts: []string{"gateway.example"}}); err == nil {
-		t.Fatal("expected the lost create response to fail")
+	b := *c.bot
+	b.Prompt = "WRITE:original computer"
+	task, err := c.s.enqueueCloudBot(ctx, &b, "")
+	if err != nil {
+		t.Fatal(err)
 	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		claim, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+		if err != nil || claim.ID != task.ID || claim.Attempts != attempt {
+			t.Fatalf("attempt %d: %+v, %v", attempt, claim, err)
+		}
+		c.s.runCloudClaim(ctx, claim)
+	}
+	got, err := c.s.store.RuntimeTask(ctx, task.ID, c.employee)
+	if err != nil || got.Status != store.RuntimeSucceeded || got.Attempts != 2 || f.creates != 1 {
+		t.Fatalf("lost response didn't recover in the same task: %+v, %v, creates=%d", got, err, f.creates)
+	}
+}
+
+func TestBotComputerDefersAmbiguousCreateRetryUntilLeaseExpires(t *testing.T) {
+	f := &fakeComputers{loseCreateResponse: true, hideCreatedBox: true}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond})
+	ctx := context.Background()
+	b := *c.bot
+	b.Prompt = "READ the note"
+	original, err := c.s.enqueueCloudBot(ctx, &b, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil || task.ID != original.ID {
+		t.Fatalf("initial attempt: %+v, %v", task, err)
+	}
+	c.s.runCloudClaim(ctx, task)
 	pending, err := c.s.store.RuntimeBotComputer(ctx, c.bot.ID)
 	if err != nil || pending.SandboxID != "" || pending.CreationKey == "" || !pending.Busy || f.creates != 1 {
 		t.Fatalf("pending create is not recoverable: %+v, %v", pending, err)
 	}
+	if _, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ambiguous create should not block the worker on an immediate retry: %v", err)
+	}
+	f.hideCreatedBox = false
 	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_bot_computers SET lease_until=?, last_used_at=? WHERE bot_id=?`,
 		time.Now().Add(-time.Second), time.Now().Add(-time.Second), c.bot.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.s.store.DB().ExecContext(ctx, `UPDATE runtime_tasks SET lease_until=? WHERE id=?`,
+		time.Now().Add(-time.Second), task.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, box := range f.boxes {
@@ -521,8 +563,14 @@ func TestBotComputerRecoversLostCreateAndAppliesGatewayChange(t *testing.T) {
 		t.Fatalf("reaper did not recover and hibernate the computer: %+v", v)
 	}
 	c.s.opts.Runtime.BaseURL = "https://gateway-next.example"
-	if got := c.run("READ the note"); got.Summary != "note: original computer" || f.creates != 1 || f.allowedHost != "gateway-next.example" {
-		t.Fatalf("run after gateway move: %+v, creates=%d, gateway=%q", got, f.creates, f.allowedHost)
+	retry, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil || retry.ID != original.ID || retry.Attempts != 2 {
+		t.Fatalf("retry after lease expired: %+v, %v", retry, err)
+	}
+	c.s.runCloudClaim(ctx, retry)
+	if got, err := c.s.store.RuntimeTask(ctx, retry.ID, c.employee); err != nil || got.Summary != "note: original computer" ||
+		f.creates != 1 || f.allowedHost != "gateway-next.example" {
+		t.Fatalf("retry after gateway move: %+v, %v, creates=%d, gateway=%q", got, err, f.creates, f.allowedHost)
 	}
 }
 
