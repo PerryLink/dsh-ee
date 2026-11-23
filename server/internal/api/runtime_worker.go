@@ -173,6 +173,11 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 		}
 		return true
 	}
+	// 记下这一轮的凭证：/mcp 按它找回任务和机器人的审批模式（runtime_approval.go）
+	if err := s.store.SetRuntimeTaskCredential(ctx, task.ID, t.ID); err != nil {
+		revoke()
+		return "", nil, errors.New("recording cloud task credential failed")
+	}
 	return raw, revoke, nil
 }
 
@@ -245,7 +250,13 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	}
 	// 吊销失败时保留租约：令牌在本轮截止时失效，早于租约到期，避免休眠电脑留下有效令牌。
 	defer func() { releaseComputer = revoke() }()
-	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. " + runtimeFileRule + " Return a short final summary of the result without a step-by-step account."
+	writes := "The enterprise task is read-only. "
+	if task.BotID != nil {
+		if bot, err := s.store.RuntimeBot(ctx, *task.BotID); err == nil && bot.ApprovalMode != store.RuntimeApprovalReadOnly {
+			writes = runtimeWriteGuidance(bot.ApprovalMode)
+		}
+	}
+	prompt := "Enterprise task:\n" + task.Prompt + "\n\n" + writes + runtimeFileRule + " Return a short final summary of the result without a step-by-step account."
 	if task.ChatConversationID != nil {
 		// 网页对话要的是直接回答员工，而不是任务摘要。当前消息必须留在最后。
 		prompt = task.Prompt

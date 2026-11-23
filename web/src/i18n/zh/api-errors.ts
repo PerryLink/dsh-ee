@@ -228,6 +228,12 @@ export default {
     idempotency_conflict: "这条消息与之前的发送请求冲突，请重新发送",
     queue_full: "你排队中的云任务已达上限，请稍后再试",
   },
+  runtime_approval: {
+    invalid_mode: "审批模式只能是只读、逐个审批、自动审批或完全放行",
+    invalid_rules: "自动审批规则不合法：不能为空或只写 *，不能含空白或斜杠，最多 {{max}} 条",
+    risk_unconfirmed: "开启完全放行前必须确认风险",
+    locked: "管理员没有允许你修改这个机器人的审批模式",
+  },
   runtime_computer: {
     busy: "云电脑正在工作或正在被操作，请稍后再试",
     unsupported: "当前运行时不支持常驻云电脑，每轮任务都会使用一台新电脑",

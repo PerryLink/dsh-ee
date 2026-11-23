@@ -221,6 +221,12 @@ export default {
     idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
     queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
   },
+  runtime_approval: {
+    invalid_mode: "O modo de aprovação deve ser somente leitura, aprovar cada uma, aprovação automática ou acesso total.",
+    invalid_rules: "Regras de aprovação automática inválidas: sem * isolado, sem espaços ou barras e no máximo {{max}} regras.",
+    risk_unconfirmed: "Confirme os riscos antes de ativar o acesso total.",
+    locked: "Seu administrador não permite que você altere o modo de aprovação deste bot.",
+  },
   runtime_computer: {
     busy: "The cloud computer is working or being changed right now. Try again shortly.",
     unsupported: "This runtime doesn't keep cloud computers; every task uses a fresh one.",

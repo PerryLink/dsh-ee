@@ -1,6 +1,6 @@
 export const runtime = {
   title: "Cloud resident bots",
-  desc: "Run daily read-only tasks on a UTC schedule and notify the task owner in Feishu.",
+  desc: "Run daily tasks on a UTC schedule and notify the task owner in Feishu. Writes follow each bot's approval mode (read-only by default).",
   unavailable: "Cloud tasks are not enabled.",
   employee: "Employee ID",
   name: "Name",

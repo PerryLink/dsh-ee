@@ -32,8 +32,9 @@ const (
 )
 
 // runtimeChatBotEligible 是机器人可用于网页对话的条件（参数是当前员工 ID）：
-// 所有者本人、以所有者身份运行、只读、且管理员打开了网页对话。
-const runtimeChatBotEligible = `owner_id=? AND run_as_id=owner_id AND read_only=1 AND web_chat_enabled=1`
+// 所有者本人、以所有者身份运行、且管理员打开了网页对话。写操作是否放行由机器人的审批模式决定
+// （只读模式与旧行为一致），不再要求机器人只读。
+const runtimeChatBotEligible = `owner_id=? AND run_as_id=owner_id AND web_chat_enabled=1`
 
 // RuntimeChatBot 是员工可对话的机器人。线程和最近一轮的字段只在存在时给出：
 // 还没打开过线程的机器人只有 id / name。
@@ -46,6 +47,9 @@ type RuntimeChatBot struct {
 	LastMessage string `json:"last_message,omitempty"`
 	LastTaskID  int64  `json:"last_task_id,omitempty"`
 	LastStatus  string `json:"last_status,omitempty"`
+	// ApprovalMode 是机器人的写操作审批模式；ApprovalEditable 表示管理员允许本人在对话页切换。
+	ApprovalMode     string `json:"approval_mode"`
+	ApprovalEditable bool   `json:"approval_editable"`
 }
 
 // RuntimeChatArtifact 是机器人资料页里的一个产物；下载走任务产物接口
@@ -143,14 +147,14 @@ func scanRuntimeChatTurns(rows *sql.Rows) ([]RuntimeChatTurn, error) {
 
 // RuntimeChatBots 列出员工本人现在可以对话的机器人，带上已有线程的 ID 和最近一轮的预览。
 func (s *Store) RuntimeChatBots(ctx context.Context, ownerID int64) ([]RuntimeChatBot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM runtime_bots WHERE `+runtimeChatBotEligible+` ORDER BY id`, ownerID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, approval_mode, approval_employee_editable FROM runtime_bots WHERE `+runtimeChatBotEligible+` ORDER BY id`, ownerID)
 	if err != nil {
 		return nil, err
 	}
 	out := []RuntimeChatBot{}
 	for rows.Next() {
 		var b RuntimeChatBot
-		if err := rows.Scan(&b.ID, &b.Name); err != nil {
+		if err := rows.Scan(&b.ID, &b.Name, &b.ApprovalMode, &b.ApprovalEditable); err != nil {
 			rows.Close()
 			return nil, err
 		}

@@ -242,12 +242,36 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 	// PUT 由存储层在 UPDATE 里原子地保留现值（见 SaveRuntimeBot），这里不先读后写。
 	var in struct {
 		store.RuntimeBot
-		WebChatEnabled *bool `json:"web_chat_enabled"`
+		WebChatEnabled    *bool `json:"web_chat_enabled"`
+		ConfirmFullAccess bool  `json:"confirm_full_access"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
 	bot := in.RuntimeBot
+	// 审批模式：没带时按只读（旧管理端只发 read_only: true）。规则只在自动审批下有意义，但照存，切回 auto 时还在。
+	if bot.ApprovalMode == "" {
+		bot.ApprovalMode = store.RuntimeApprovalReadOnly
+	}
+	rules, validRules := normalizeRuntimeApprovalRules(bot.ApprovalRules)
+	if !validRules {
+		writeErrCode(w, http.StatusBadRequest, codeRuntimeApprovalInvalidRules, map[string]any{"max": runtimeApprovalMaxRules}, "自动审批规则不合法")
+		return
+	}
+	bot.ApprovalRules = rules
+	previous := ""
+	if id != 0 {
+		if old, err := s.store.RuntimeBot(r.Context(), id); err == nil {
+			previous = old.ApprovalMode
+		} else if !notFound(err) {
+			s.runtimeError(w, r, err)
+			return
+		}
+	}
+	if !checkRuntimeApprovalChange(w, runtimeApprovalInput{Mode: bot.ApprovalMode, ConfirmFullAccess: in.ConfirmFullAccess}, previous) {
+		return
+	}
+	bot.ReadOnly = bot.ApprovalMode == store.RuntimeApprovalReadOnly
 	if bot.DeliveryTarget == "" {
 		bot.DeliveryTarget = runtimeFeishuOwner
 	}
@@ -255,8 +279,8 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 	bot.Name, bot.Prompt, bot.Schedule = strings.TrimSpace(bot.Name), strings.TrimSpace(bot.Prompt), strings.TrimSpace(bot.Schedule)
 	_, _, validSchedule := runtimeDailySchedule(bot.Schedule)
 	if bot.Name == "" || utf8.RuneCountInString(bot.Name) > 128 || bot.Prompt == "" || len(bot.Prompt) > 8000 || strings.ContainsRune(bot.Prompt, 0) ||
-		!validSchedule || !bot.ReadOnly || bot.OwnerID != bot.RunAsID || bot.RunAsID <= 0 || bot.DeliveryTarget != runtimeFeishuOwner {
-		writeErr(w, http.StatusBadRequest, "机器人必须以所有者身份运行，只读，且使用 UTC 每日 cron（分钟 小时 * * *）")
+		!validSchedule || bot.OwnerID != bot.RunAsID || bot.RunAsID <= 0 || bot.DeliveryTarget != runtimeFeishuOwner {
+		writeErr(w, http.StatusBadRequest, "机器人必须以所有者身份运行，且使用 UTC 每日 cron（分钟 小时 * * *）")
 		return
 	}
 	// 显式打开网页对话与打开定时一样，要求运行身份此刻是合格员工；省略字段的保留不算。
@@ -270,7 +294,14 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 		s.runtimeError(w, r, err)
 		return
 	}
-	s.audit(r, "runtime.bot.save", strconv.FormatInt(bot.ID, 10), nil)
+	s.audit(r, "runtime.bot.save", strconv.FormatInt(bot.ID, 10), map[string]any{
+		"approval_mode": bot.ApprovalMode, "approval_rules": bot.ApprovalRules, "approval_employee_editable": bot.ApprovalEmployeeEditable,
+	})
+	if previous != bot.ApprovalMode {
+		s.audit(r, auditRuntimeBotApproval, strconv.FormatInt(bot.ID, 10), map[string]any{
+			"from": previous, "to": bot.ApprovalMode, "by": "admin", "risk_confirmed": bot.ApprovalMode == store.RuntimeApprovalFull,
+		})
+	}
 	stored, err := s.store.RuntimeBot(r.Context(), bot.ID)
 	if err != nil {
 		s.runtimeError(w, r, err)
@@ -312,7 +343,7 @@ func runtimeDailySchedule(schedule string) (hour, minute int, ok bool) {
 }
 
 func (s *Server) enqueueCloudBot(ctx context.Context, b *store.RuntimeBot, slot string) (*store.RuntimeTask, error) {
-	if !b.ReadOnly || b.OwnerID != b.RunAsID {
+	if b.OwnerID != b.RunAsID {
 		return nil, store.ErrConflict
 	}
 	if _, err := s.runtimeEmployee(ctx, b.RunAsID); err != nil {

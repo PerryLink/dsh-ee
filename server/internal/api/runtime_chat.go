@@ -232,7 +232,7 @@ func (s *Server) handleRuntimeChatMessage(w http.ResponseWriter, r *http.Request
 		IdempotencyKey: "chat:" + strconv.FormatInt(requested, 10) + ":" + in.IdempotencyKey,
 		TimeoutSeconds: int(runtimeTimeout.Seconds()),
 	}, store.RuntimeChatPlanner{Fold: runtimeChatFold, Prompt: func(bot *store.RuntimeBot, memory string, recent []store.RuntimeChatTurn) (string, string, int) {
-		return runtimeChatPlan(bot.Prompt, memory, recent, in.Content)
+		return runtimeChatPlan(bot.Prompt, bot.ApprovalMode, memory, recent, in.Content)
 	}})
 	if err != nil {
 		s.runtimeChatError(w, r, err)
@@ -340,12 +340,13 @@ func runtimeChatFold(memory string, turn store.RuntimeChatTurn) string {
 
 // runtimeChatPlan 决定一轮对话的上下文并拼出提示词：recent 里放得进历史预算的后缀原样引用（kept 轮），
 // 放不下的前缀按顺序并入滚动记忆。返回提示词、更新后的记忆和 kept（见 store.RuntimeChatPlanner）。
-func runtimeChatPlan(botPrompt, memory string, recent []store.RuntimeChatTurn, content string) (prompt, updated string, kept int) {
+// mode 是机器人此刻的审批模式，决定提示词里怎么交代写操作（runtimeWriteGuidance）。
+func runtimeChatPlan(botPrompt, mode, memory string, recent []store.RuntimeChatTurn, content string) (prompt, updated string, kept int) {
 	encoded := runtimeChatHistory(recent)
 	for _, turn := range recent[:len(recent)-len(encoded)] {
 		memory = runtimeChatFold(memory, turn)
 	}
-	return runtimeChatRender(botPrompt, memory, encoded, content), memory, len(encoded)
+	return runtimeChatRender(botPrompt, mode, memory, encoded, content), memory, len(encoded)
 }
 
 // runtimeChatHistory 把最近的成功轮次编码成 JSON 行，返回放得进 runtimeChatHistoryBudget 的最长后缀（从旧到新）。
@@ -397,11 +398,11 @@ func runtimeChatHistory(history []store.RuntimeChatTurn) []string {
 // runtimeChatRender 拼出一轮对话的任务提示词（执行时在开头加电脑工作目录说明，见 executeCloudTask）：
 // 机器人设定、对话规则、滚动记忆（有才写）、JSON 编码的最近成功轮次、最后是原样的当前消息。
 // 记忆和历史都是 JSON 字符串里的数据，并明确标成不可信的历史记录；当前消息放在最后，不参与截断。
-func runtimeChatRender(botPrompt, memory string, encoded []string, content string) string {
+func runtimeChatRender(botPrompt, mode, memory string, encoded []string, content string) string {
 	var b strings.Builder
 	b.WriteString("Bot instructions:\n")
 	b.WriteString(botPrompt)
-	b.WriteString("\n\nYou are this bot, talking with the employee who owns it in a web chat. Enterprise data access in this turn is read-only. " +
+	b.WriteString("\n\nYou are this bot, talking with the employee who owns it in a web chat. " + runtimeWriteGuidance(mode) +
 		runtimeFileRule + " When you create a file, mention its name in your reply. " +
 		"Reply directly and conversationally to the employee's current message, in the language of that message; " +
 		"your final reply is shown to the employee as the chat answer, so do not write an administrative task summary or a step-by-step account. " +

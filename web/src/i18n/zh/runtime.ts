@@ -1,6 +1,6 @@
 export const runtime = {
   title: "云端常驻机器人",
-  desc: "按 UTC 每日运行只读任务，并通过飞书私聊通知任务所有者。",
+  desc: "按 UTC 每日运行任务，并通过飞书私聊通知任务所有者；写操作按每个机器人的审批模式放行，默认只读。",
   unavailable: "云任务未启用。",
   employee: "员工 ID",
   name: "名称",

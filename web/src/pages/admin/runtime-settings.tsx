@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Field, inputCls } from "../../components/ui";
+import { Badge, Button, Field, inputCls } from "../../components/ui";
+import { FullAccessDialog } from "../../components/full-access-dialog";
 import { ApiError, formatTime, request } from "../../lib/api";
+import { APPROVAL_MODES, type ApprovalMode } from "../../lib/bot-chat";
 import { useConfirm } from "../../lib/confirm";
 
 type Bot = {
@@ -14,6 +16,12 @@ type Bot = {
   enabled: boolean;
   /** 是否开放网页对话（只对运行身份那位员工）；与定时运行互不影响。旧后端没有这个字段。 */
   web_chat_enabled?: boolean;
+  /** 写操作审批模式；旧后端没有这个字段，按只读处理。 */
+  approval_mode?: ApprovalMode;
+  /** 自动审批规则（工具全名的通配模式），只在 auto 下生效。 */
+  approval_rules?: string[];
+  /** 是否允许员工在对话页自己切换审批模式。 */
+  approval_employee_editable?: boolean;
 };
 
 type Run = {
@@ -55,7 +63,11 @@ const tasksPath = "/api/runtime/tasks";
 const computersPath = "/api/admin/runtime/computers";
 const computerPagePath = (before?: string) => before ? `${computersPath}?before=${encodeURIComponent(before)}` : computersPath;
 const mb = (n: number) => `${String(Math.round(n / 1048576))} MB`;
-const blank: Bot = { id: 0, owner_id: 0, run_as_id: 0, name: "", prompt: "", schedule: "0 9 * * *", enabled: true, web_chat_enabled: false };
+const blank: Bot = {
+  id: 0, owner_id: 0, run_as_id: 0, name: "", prompt: "", schedule: "0 9 * * *", enabled: true, web_chat_enabled: false,
+  approval_mode: "read_only", approval_rules: [], approval_employee_editable: false,
+};
+const modeOf = (bot: Bot): ApprovalMode => bot.approval_mode ?? "read_only";
 
 export default function RuntimeSettings() {
   const { t } = useTranslation();
@@ -66,6 +78,10 @@ export default function RuntimeSettings() {
   const [error, setError] = useState("");
   const [disabled, setDisabled] = useState(false);
   const [busy, setBusy] = useState(true);
+  /** 自动审批规则的编辑框文字（每行一条）；保存时拆成数组。 */
+  const [rulesText, setRulesText] = useState("");
+  /** 正在等风险确认的保存：确认后带 confirm_full_access 继续。 */
+  const [fullPending, setFullPending] = useState(false);
   const [computers, setComputers] = useState<Computers | null>(null);
   const [computerPages, setComputerPages] = useState([""]);
   const confirm = useConfirm();
@@ -111,15 +127,42 @@ export default function RuntimeSettings() {
 
   useEffect(() => { void refresh(); }, []);
 
-  const save = (event: FormEvent) => {
-    event.preventDefault();
+  const edit = (bot: Bot) => {
+    setDraft(bot);
+    setRulesText((bot.approval_rules ?? []).join("\n"));
+  };
+  const reset = () => {
+    setDraft(blank);
+    setRulesText("");
+  };
+
+  const submit = (confirmFullAccess: boolean) => {
     void perform(async () => {
+      const mode = modeOf(draft);
       await request<Bot>(draft.id ? "PUT" : "POST", draft.id ? `${botsPath}/${draft.id}` : botsPath, {
-        ...draft, web_chat_enabled: Boolean(draft.web_chat_enabled), read_only: true, delivery_target: "feishu_owner",
+        ...draft,
+        web_chat_enabled: Boolean(draft.web_chat_enabled),
+        approval_mode: mode,
+        approval_rules: rulesText.split("\n").map((r) => r.trim()).filter(Boolean),
+        approval_employee_editable: Boolean(draft.approval_employee_editable),
+        confirm_full_access: confirmFullAccess,
+        read_only: mode === "read_only",
+        delivery_target: "feishu_owner",
       });
-      setDraft(blank);
+      reset();
       await load();
     });
+  };
+
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    // 从别的模式切到完全放行：先弹风险确认
+    const previous = bots.find((bot) => bot.id === draft.id);
+    if (modeOf(draft) === "full" && (!previous || modeOf(previous) !== "full")) {
+      setFullPending(true);
+      return;
+    }
+    submit(false);
   };
 
   if (disabled) return <p className="text-sm text-neutral-500">{t("runtime.unavailable")}</p>;
@@ -130,7 +173,12 @@ export default function RuntimeSettings() {
         {bots.map((bot) => (
           <div key={bot.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 p-2">
             <strong className="mr-auto break-all text-sm">{bot.name} <span className="font-normal text-neutral-500">· {bot.schedule}{bot.web_chat_enabled ? ` · ${t("runtime.webChatBadge")}` : ""}</span></strong>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={() => setDraft(bot)}>{t("runtime.edit")}</Button>
+            {modeOf(bot) === "full" ? (
+              <span title={t("approval.fullBadgeTitle")}><Badge tone="red">{t("approval.fullBadge")}</Badge></span>
+            ) : (
+              <Badge tone={modeOf(bot) === "read_only" ? "slate" : "brand"}>{t(`approval.modes.${modeOf(bot)}`)}</Badge>
+            )}
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => edit(bot)}>{t("runtime.edit")}</Button>
             <Button variant="secondary" size="sm" disabled={busy} onClick={() => void perform(async () => {
               await request("POST", `${botsPath}/${bot.id}/run`);
               await load();
@@ -169,11 +217,56 @@ export default function RuntimeSettings() {
           </label>
           <p id="runtime-web-chat-hint" className="mt-1 pl-6 text-xs leading-5 text-neutral-500">{t("runtime.webChatHint")}</p>
         </div>
+        <fieldset className="space-y-2 rounded-lg border border-neutral-200 p-3 dark:border-white/10">
+          <legend className="px-1 text-sm font-medium">{t("approval.admin.mode")}</legend>
+          <select
+            className={inputCls}
+            aria-describedby="runtime-approval-hint"
+            value={modeOf(draft)}
+            onChange={(e) => setDraft({ ...draft, approval_mode: e.target.value as ApprovalMode })}
+          >
+            {APPROVAL_MODES.map((mode) => <option key={mode} value={mode}>{t(`approval.modes.${mode}`)}</option>)}
+          </select>
+          <p id="runtime-approval-hint" className={modeOf(draft) === "full" ? "text-xs leading-5 text-red-600 dark:text-red-400" : "text-xs leading-5 text-neutral-500"}>
+            {t(`approval.modeHints.${modeOf(draft)}`)}
+          </p>
+          {modeOf(draft) === "auto" && (
+            <Field label={t("approval.admin.rules")}>
+              <textarea
+                className={inputCls}
+                rows={3}
+                aria-describedby="runtime-approval-rules-hint"
+                placeholder={"wiki__create_page\n*__comment"}
+                value={rulesText}
+                onChange={(e) => setRulesText(e.target.value)}
+              />
+              <p id="runtime-approval-rules-hint" className="mt-1 text-xs leading-5 text-neutral-500">{t("approval.admin.rulesHint")}</p>
+            </Field>
+          )}
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.approval_employee_editable)}
+              aria-describedby="runtime-approval-editable-hint"
+              onChange={(e) => setDraft({ ...draft, approval_employee_editable: e.target.checked })}
+            />
+            {t("approval.admin.employeeEditable")}
+          </label>
+          <p id="runtime-approval-editable-hint" className="pl-6 text-xs leading-5 text-neutral-500">{t("approval.admin.employeeEditableHint")}</p>
+        </fieldset>
         <div className="flex gap-2">
           <Button type="submit" disabled={busy}>{t("runtime.save")}</Button>
-          {draft.id > 0 && <Button type="button" variant="secondary" onClick={() => setDraft(blank)}>{t("runtime.new")}</Button>}
+          {draft.id > 0 && <Button type="button" variant="secondary" onClick={reset}>{t("runtime.new")}</Button>}
         </div>
       </form>
+      <FullAccessDialog
+        open={fullPending}
+        botName={draft.name}
+        onResult={(confirmed) => {
+          setFullPending(false);
+          if (confirmed) submit(true);
+        }}
+      />
       {computers && (
         <div className="space-y-2" data-runtime-computers="">
           <h3 className="text-sm font-semibold">{t("runtime.computers.title")}</h3>
