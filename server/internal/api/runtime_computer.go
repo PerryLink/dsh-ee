@@ -22,8 +22,7 @@ import (
 // 凭证：电脑创建时不带任何环境变量；每轮的短期令牌只通过 Exec 的环境变量传入，这一轮结束（释放电脑之前）
 // 就吊销，所以休眠中的电脑里不会有有效凭证。
 //
-// 不支持休眠 / 唤醒的 provider、不属于任何机器人的临时任务，以及等了 runtimeComputerWait 仍被占用的电脑，
-// 都退回“每轮新建、跑完销毁”。
+// 不支持休眠 / 唤醒的 provider 和不属于任何机器人的临时任务退回“每轮新建、跑完销毁”。
 
 const (
 	runtimeWorkDir = "/tmp/dsh-ee-work"
@@ -38,7 +37,7 @@ const runtimeComputerNote = "You have your own persistent cloud computer. Your w
 	" keeps its files between turns and scheduled runs, so you can save notes and work files there and read them later. " +
 	"Files under " + runtimeOutputDir + " are delivered to the employee and cleared at the start of every turn.\n\n"
 
-// runtimeComputerWait：同一台电脑被另一个任务占用时，新任务最多等这么久，之后退回临时电脑。测试里会调短。
+// runtimeComputerWait：同一台电脑被另一个任务占用时，新任务最多等这么久。测试里会调短。
 var runtimeComputerWait = 90 * time.Second
 
 var errCloudDisk = errors.New("the bot's cloud computer is over its disk limit")
@@ -50,8 +49,8 @@ func (s *Server) cloudComputers() (runtime.PersistentProvider, bool) {
 }
 
 // cloudTaskBot 找出任务所属的机器人：定时 / 手动任务直接带 BotID，网页对话轮次的机器人记在对话上。
-// 只有机器人以任务的运行身份运行时才算（电脑是这位员工的机器人的）。找不到返回 0。
-func (s *Server) cloudTaskBot(ctx context.Context, task *store.RuntimeTask) int64 {
+// 只有机器人以任务的运行身份运行时才能使用常驻电脑。不属于机器人的任务返回 0。
+func (s *Server) cloudTaskBot(ctx context.Context, task *store.RuntimeTask) (int64, error) {
 	var botID int64
 	switch {
 	case task.BotID != nil:
@@ -59,45 +58,46 @@ func (s *Server) cloudTaskBot(ctx context.Context, task *store.RuntimeTask) int6
 	case task.ChatConversationID != nil:
 		c, err := s.store.RuntimeChatConversation(ctx, *task.ChatConversationID, task.OwnerID)
 		if err != nil {
-			return 0
+			return 0, errors.New("checking the cloud task conversation failed")
 		}
 		botID = c.BotID
 	default:
-		return 0
+		return 0, nil
 	}
 	b, err := s.store.RuntimeBot(ctx, botID)
-	if err != nil || b.RunAsID != task.RunAsID || b.OwnerID != task.OwnerID {
-		return 0
+	if err != nil {
+		return 0, errors.New("checking the cloud task bot failed")
 	}
-	return botID
+	if b.RunAsID != task.RunAsID || b.OwnerID != task.OwnerID {
+		return 0, errCloudEmployee
+	}
+	return botID, nil
 }
 
 // cloudComputer 是一轮任务拿到的电脑。persistent 为假时是一台临时电脑，close 会销毁它。
 type cloudComputer struct {
 	sandbox    runtime.Sandbox
 	persistent bool
-	close      func()
+	close      func(release bool)
 }
 
 // openCloudComputer 为任务准备电脑：机器人有常驻电脑就唤醒它（没有就新建一台），否则新建临时电脑。
 func (s *Server) openCloudComputer(ctx context.Context, task *store.RuntimeTask, spec runtime.SandboxSpec) (*cloudComputer, error) {
 	pp, ok := s.cloudComputers()
-	botID := int64(0)
 	if ok {
-		botID = s.cloudTaskBot(ctx, task)
-	}
-	if botID != 0 {
-		c, err := s.openPersistentComputer(ctx, pp, task, botID, spec)
-		if err == nil || !errors.Is(err, store.ErrRuntimeComputerBusy) {
-			return c, err
+		botID, err := s.cloudTaskBot(ctx, task)
+		if err != nil {
+			return nil, err
 		}
-		s.log.Warn("机器人电脑被占用，这一轮改用临时电脑", "task_id", task.ID, "bot_id", botID)
+		if botID != 0 {
+			return s.openPersistentComputer(ctx, pp, task, botID, spec)
+		}
 	}
 	sandbox, err := s.opts.Runtime.Provider.Create(ctx, spec)
 	if err != nil {
 		return nil, errors.New("creating cloud sandbox failed")
 	}
-	return &cloudComputer{sandbox: sandbox, close: func() {
+	return &cloudComputer{sandbox: sandbox, close: func(_ bool) {
 		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer stop()
 		if err := sandbox.Destroy(c); err != nil {
@@ -173,7 +173,7 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 		}
 	}
 	if box == nil {
-		c.SandboxID, c.State = "", store.RuntimeComputerWaking
+		c.SandboxID, c.State, c.DiskBytes = "", store.RuntimeComputerWaking, 0
 		_ = save(false, false)
 		if box, err = pp.CreatePersistent(ctx, runtime.SandboxSpec{Image: spec.Image, AllowedHosts: spec.AllowedHosts}); err != nil {
 			c.SandboxID = ""
@@ -187,7 +187,7 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 		// 租约丢了（例如被管理员回收）：不再碰这台电脑。
 		return nil, errors.New("the bot's cloud computer was taken over")
 	}
-	return &cloudComputer{sandbox: box, persistent: true, close: func() {
+	return &cloudComputer{sandbox: box, persistent: true, close: func(release bool) {
 		bc, stop := bg()
 		defer stop()
 		if disk, err := computerDiskUsage(bc, box); err == nil {
@@ -196,7 +196,7 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 			s.log.Warn("统计机器人电脑磁盘用量失败", "bot_id", botID, "err", err)
 		}
 		c.State = store.RuntimeComputerRunning
-		if err := s.store.UpdateRuntimeBotComputer(bc, c, holder, true, true); err != nil {
+		if err := s.store.UpdateRuntimeBotComputer(bc, c, holder, true, release); err != nil {
 			s.log.Warn("保存机器人电脑状态失败", "bot_id", botID, "err", err)
 		}
 	}}, nil

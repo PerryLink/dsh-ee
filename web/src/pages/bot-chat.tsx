@@ -363,7 +363,7 @@ function ComputerCard({
     [label, desc, dot, pulse] = [t(`${k}.waking`), t(`${k}.wakingDesc`), "bg-amber-500", true];
   } else if (computer.state === "hibernating") {
     [label, desc, dot, pulse] = [t(`${k}.hibernating`), t(`${k}.hibernatingDesc`), "bg-amber-500", true];
-  } else if (running || (computer.busy && computer.state === "running")) {
+  } else if (computer.busy && computer.state === "running") {
     [label, desc, dot, pulse] = [t(`${k}.working`), t(`${k}.workingDesc`), "bg-emerald-500", true];
   } else if (computer.state === "running") {
     label = t(`${k}.running`);
@@ -455,8 +455,6 @@ function ComputerCard({
     </section>
   );
 }
-
-
 type ProfileTab = "activity" | "library";
 const PROFILE_TABS: ProfileTab[] = ["activity", "library"];
 
@@ -598,7 +596,7 @@ function ProfilePane({
                     {t("botChat.profile.activity.readonly")}
                   </p>
                 </section>
-<ComputerCard botId={bot.id} running={data.running} computer={data.computer ?? null} onChanged={onRetry} />
+                <ComputerCard key={String(bot.id)} botId={bot.id} running={data.running} computer={data.computer ?? null} onChanged={onRetry} />
               </div>
             )}
             {tab === "library" &&

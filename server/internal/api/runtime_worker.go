@@ -135,7 +135,7 @@ func (s *Server) cloudQuotaPreflight(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (string, func(), error) {
+func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (string, func() bool, error) {
 	if _, err := s.runtimeEmployee(ctx, task.RunAsID); err != nil {
 		if notFound(err) {
 			return "", nil, errCloudEmployee
@@ -144,6 +144,9 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 	}
 	raw := runtimeTokenPrefix + secret.Token()
 	expires := time.Now().UTC().Add(time.Duration(task.TimeoutSeconds) * time.Second)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(expires) {
+		expires = deadline.UTC()
+	}
 	t := &store.AccessToken{
 		UserID: task.RunAsID, Name: "cloud runtime", Prefix: raw[:12], Source: "runtime", ClientKind: store.ClientKindThirdParty,
 		Scopes: []string{rbac.ScopeModels, rbac.ScopeConnections}, AllowedModels: []string{s.opts.Runtime.Model}, ExpiresAt: &expires,
@@ -152,12 +155,14 @@ func (s *Server) cloudCredential(ctx context.Context, task *store.RuntimeTask) (
 	if err := s.store.CreateAccessToken(ctx, t, secret.Hash(raw)); err != nil {
 		return "", nil, errors.New("creating cloud task credential failed")
 	}
-	revoke := func() {
+	revoke := func() bool {
 		c, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
-		if err := s.store.RevokeToken(c, t.ID); err != nil {
+		if err := s.store.RevokeToken(c, t.ID); err != nil && !notFound(err) {
 			s.log.Warn("吊销云任务短期令牌失败", "task_id", task.ID, "err", err)
+			return false
 		}
+		return true
 	}
 	return raw, revoke, nil
 }
@@ -205,7 +210,8 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil {
 		return "", nil, err
 	}
-	defer computer.close()
+	releaseComputer := true
+	defer func() { computer.close(releaseComputer) }()
 	sandbox := computer.sandbox
 	// 产物目录每轮清空（上一轮的产物已经收走）；工作目录和 DSH 主目录在常驻电脑上跨轮保留。
 	for _, args := range [][]string{{"rm", "-rf", runtimeOutputDir}, {"mkdir", "-p", runtimeOutputDir, runtimeWorkDir, runtimeHomeDir}} {
@@ -221,7 +227,8 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil {
 		return "", nil, err
 	}
-	defer revoke()
+	// 吊销失败时保留租约：令牌在本轮截止时失效，早于租约到期，避免休眠电脑留下有效令牌。
+	defer func() { releaseComputer = revoke() }()
 	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
 	if task.ChatConversationID != nil {
 		// 网页对话的提示词在入队时已拼好（runtimeChatPlan）：要的是直接回答员工，而不是任务摘要；

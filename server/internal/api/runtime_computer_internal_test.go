@@ -18,6 +18,7 @@ import (
 
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/runtime"
+	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
@@ -326,7 +327,7 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 	ctx := context.Background()
 	c.run("WRITE:hello")
 
-	// 电脑被别的任务占着：手动操作返回 busy，新任务等不到就退回临时电脑。
+	// 电脑被别的任务占着：手动操作返回 busy，新任务等不到就重试。
 	if _, err := c.s.store.AcquireRuntimeBotComputer(ctx, c.bot.ID, "task:other", time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -337,11 +338,19 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 	wait := runtimeComputerWait
 	runtimeComputerWait = 0
 	defer func() { runtimeComputerWait = wait }()
-	if got := c.run("READ"); got.Status != store.RuntimeSucceeded || got.Summary != "no note" || f.ephemeral != 1 {
-		t.Fatalf("busy fallback: %+v ephemeral=%d", got, f.ephemeral)
+	if got := c.run("READ"); got.Status != store.RuntimeQueued || f.ephemeral != 0 {
+		t.Fatalf("busy computer should requeue the task without a temporary computer: %+v ephemeral=%d", got, f.ephemeral)
 	}
 	if err := c.s.store.ReleaseRuntimeBotComputer(ctx, c.bot.ID, "task:other"); err != nil {
 		t.Fatal(err)
+	}
+	retry, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.s.runCloudClaim(ctx, retry)
+	if got, err := c.s.store.RuntimeTask(ctx, retry.ID, c.employee); err != nil || got.Status != store.RuntimeSucceeded || got.Summary != "note: hello" || f.creates != 1 {
+		t.Fatalf("retry should read from the original computer: %+v, %v, creates=%d", got, err, f.creates)
 	}
 
 	// 管理员能看到并回收。
@@ -366,6 +375,33 @@ func TestBotComputerBusyAndAdmin(t *testing.T) {
 	}
 	if rec := c.admin("DELETE", "/api/admin/runtime/computers/999999", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("reclaim missing: HTTP %d", rec.Code)
+	}
+}
+
+func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
+	f := &fakeComputers{}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Hour})
+	task := &store.RuntimeTask{ID: 123, BotID: &c.bot.ID, OwnerID: c.employee, RunAsID: c.employee, TimeoutSeconds: 300}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	box, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, revoke, err := c.s.cloudCredential(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer revoke()
+	token, err := c.s.store.AccessTokenByHash(ctx, secret.Hash(raw))
+	deadline, _ := ctx.Deadline()
+	if err != nil || token.ExpiresAt == nil || token.ExpiresAt.After(deadline.Add(time.Millisecond)) {
+		t.Fatal("credential should expire no later than the run's deadline")
+	}
+
+	box.close(false) // Revocation failed: the worker must leave the lease in place.
+	if _, err := c.s.cloudComputerAction(ctx, c.bot.ID, computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
+		t.Fatalf("hibernation must wait for the credential to expire: %v", err)
 	}
 }
 
