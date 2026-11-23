@@ -128,6 +128,8 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	name := runtimeChatUploadFileName(header.Filename)
+	// 先清过期的，免得一天前扔下的附件一直占着额度
+	s.pruneRuntimeChatUploads(r.Context())
 	pending, err := s.store.RuntimeChatPendingUploadBytes(r.Context(), owner)
 	if err != nil {
 		s.internalErr(w, r, err)
@@ -180,7 +182,6 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		s.internalErr(w, r, err)
 		return
 	}
-	s.pruneRuntimeChatUploads(r.Context())
 	writeJSON(w, http.StatusCreated, u)
 }
 

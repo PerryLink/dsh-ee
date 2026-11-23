@@ -138,6 +138,11 @@ func TestRuntimeChatUploadsReachSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectRuntimeChatCode(t, "pending quota", upload(threadPath+"/uploads", "one-more.txt", []byte("x")), http.StatusTooManyRequests, codeRuntimeChatUploadQuota)
+	// 扔下超过一天的附件会被清掉，不再占额度。
+	if _, err := c.s.store.DB().ExecContext(context.Background(), `UPDATE runtime_chat_uploads SET created_at=? WHERE storage_key='hoard'`, time.Now().UTC().Add(-runtimeChatUploadTTL-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	decodeRuntimeChat[store.RuntimeChatUpload](t, "upload after expiry", upload(threadPath+"/uploads", "one-more.txt", []byte("x")), http.StatusCreated)
 }
 
 func TestRuntimeChatUploadPrune(t *testing.T) {
