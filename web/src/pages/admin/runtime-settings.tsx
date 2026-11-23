@@ -23,6 +23,7 @@ type Run = {
   summary: string;
   error: string;
   created_at: string;
+  private_result?: boolean;
 };
 
 type Artifact = { id: number; name: string };
@@ -229,12 +230,13 @@ export default function RuntimeSettings() {
             <p>#{run.id} · {bots.find((bot) => bot.id === run.bot_id)?.name ?? ""} · {t(`runtime.${run.status}`)} · {formatTime(run.created_at)}</p>
             {run.summary && <p className="whitespace-pre-wrap break-words">{run.summary}</p>}
             {run.error && <p className="break-words text-neutral-500">{run.error}</p>}
-            {run.status === "succeeded" && !files[run.id] && <Button size="sm" variant="secondary" disabled={busy} onClick={() => void perform(async () => {
+            {run.private_result && <p className="text-neutral-500">{t("runtime.privateResult")}</p>}
+            {run.status === "succeeded" && !run.private_result && !files[run.id] && <Button size="sm" variant="secondary" disabled={busy} onClick={() => void perform(async () => {
               const next = await request<Artifact[]>("GET", `${tasksPath}/${run.id}/artifacts`);
               setFiles((current) => ({ ...current, [run.id]: next }));
             })}>{t("runtime.files")}</Button>}
-            {files[run.id]?.length === 0 && <p className="text-neutral-500">{t("runtime.noFiles")}</p>}
-            {files[run.id]?.map((file) => (
+            {!run.private_result && files[run.id]?.length === 0 && <p className="text-neutral-500">{t("runtime.noFiles")}</p>}
+            {!run.private_result && files[run.id]?.map((file) => (
               <a key={file.id} className="block break-all text-brand-600 underline" href={`${tasksPath}/${run.id}/artifacts/${file.id}`}>{file.name}</a>
             ))}
           </article>

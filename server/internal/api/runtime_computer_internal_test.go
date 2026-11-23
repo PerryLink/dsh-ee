@@ -330,8 +330,10 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 			t.Errorf("owner cannot access persistent result %s: HTTP %d", endpoint, rec.Code)
 		}
 	}
-	if rec := c.admin("GET", "/api/runtime/tasks", ""); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
-		t.Fatalf("admin task list includes persistent result: HTTP %d %s", rec.Code, rec.Body.String())
+	runs := decodeRuntimeChat[[]store.RuntimeTask](t, "admin status list", c.admin("GET", "/api/runtime/tasks", ""), http.StatusOK)
+	if len(runs) != 1 || runs[0].ID != first.ID || runs[0].Status != store.RuntimeSucceeded ||
+		!runs[0].PrivateResult || runs[0].Summary != "" || runs[0].Error != "" {
+		t.Fatalf("admin task list must show status without private results: %+v", runs)
 	}
 	if f.creates != 1 || f.ephemeral != 0 || len(f.boxes) != 1 {
 		t.Fatalf("first run should create one persistent computer: creates=%d ephemeral=%d", f.creates, f.ephemeral)

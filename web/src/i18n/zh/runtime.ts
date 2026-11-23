@@ -24,6 +24,7 @@ export const runtime = {
   succeeded: "成功",
   failed: "失败",
   canceled: "已取消",
+  privateResult: "仅所有者可查看本次运行结果。",
   computers: {
     title: "机器人云电脑",
     policy: "空闲 {{idle}} 分钟后自动休眠；每台磁盘上限 {{disk}}；{{retention}}。",

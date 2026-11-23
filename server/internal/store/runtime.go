@@ -121,7 +121,7 @@ type RuntimeTask struct {
 	ChatConversationID *int64 `json:"-"`
 	ChatContent        string `json:"-"`
 	// 与常驻工作目录接触过的任务结果只对所有者开放。
-	PrivateResult bool `json:"-"`
+	PrivateResult bool `json:"private_result,omitempty"`
 	// A queued retry isn't claimable while its previous computer lease is active.
 	RetryAfter *time.Time `json:"-"`
 }
@@ -240,7 +240,7 @@ func (s *Store) RuntimeTask(ctx context.Context, id, ownerID int64) (*RuntimeTas
 
 func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-		WHERE `+runtimeTaskOwned("")+` AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
+		WHERE (owner_id=? OR ?=0) AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +250,9 @@ func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask,
 		t, err := scanRuntimeTask(rows)
 		if err != nil {
 			return nil, err
+		}
+		if ownerID == 0 && t.PrivateResult {
+			t.Summary, t.Error = "", ""
 		}
 		out = append(out, *t)
 	}

@@ -24,6 +24,7 @@ export const runtime = {
   succeeded: "Succeeded",
   failed: "Failed",
   canceled: "Canceled",
+  privateResult: "Only the owner can view this run’s results.",
   computers: {
     title: "Bot cloud computers",
     policy: "Sleep after {{idle}} min idle; disk limit {{disk}} each; {{retention}}.",
