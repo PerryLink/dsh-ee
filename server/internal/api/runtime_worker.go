@@ -262,7 +262,14 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if cmd.OnStdout != nil {
 		reply = final.Reply()
 	}
+	if task.ChatConversationID != nil {
+		return runtimeChatReply(reply, token), artifacts, nil
+	}
 	return runtimeSummary(reply, token), artifacts, nil
+}
+
+func runtimeChatReply(reply, token string) string {
+	return cleanRuntimeOutput(reply, token, runtimeChatReplyRunes-1)
 }
 
 func runtimeSummary(reply, token string) string {

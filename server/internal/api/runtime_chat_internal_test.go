@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/runtime"
@@ -291,6 +292,21 @@ func TestRuntimeWebChat(t *testing.T) {
 	if strings.Contains(bounded, "dropped") || !strings.Contains(bounded, `[{"employee":"recent","bot":"kept"}]`) || !strings.HasSuffix(bounded, strings.Repeat("问", 2000)) {
 		t.Fatal("history budget must drop the oldest exchanges and never the current message")
 	}
+	// 最近一轮的回复自己就超预算：员工原文完整保留，回复截成带 "…" 的前缀，历史不清空也不超预算；更早的轮次照旧丢弃。
+	history = []store.RuntimeChatTurn{{Content: "older", Summary: "dropped"}, {Content: "recent", Summary: strings.Repeat("😀", runtimeChatReplyRunes)}}
+	bounded = runtimeChatPrompt("Persona", history, "next")
+	_, afterHeader, _ := strings.Cut(bounded, "oldest first):\n")
+	encodedHistory, _, _ := strings.Cut(afterHeader, "\n\nCurrent employee message")
+	var kept []struct{ Employee, Bot string }
+	if err := json.Unmarshal([]byte(encodedHistory), &kept); err != nil || len(kept) != 1 || kept[0].Employee != "recent" ||
+		len(encodedHistory) > runtimeChatHistoryBudget+1 || len(encodedHistory) < runtimeChatHistoryBudget-4 ||
+		kept[0].Bot != strings.Repeat("😀", utf8.RuneCountInString(kept[0].Bot)-1)+"…" || !strings.HasSuffix(bounded, "\nnext") {
+		t.Fatalf("oversized latest reply must keep a bounded prefix: %d exchanges, %d history bytes, err %v", len(kept), len(encodedHistory), err)
+	}
+	history = []store.RuntimeChatTurn{{Content: strings.Repeat("问", runtimeChatHistoryBudget), Summary: "dropped"}}
+	if bounded = runtimeChatPrompt("Persona", history, "next"); !strings.Contains(bounded, "oldest first):\n[]\n") {
+		t.Fatal("an employee message that cannot fit the history budget must still be dropped")
+	}
 
 	// 列表按最近活动倒序，标题取第一条消息。
 	list := decodeRuntimeChat[[]store.RuntimeChatConversation](t, "list", owner("GET", chat+"/conversations", ""), http.StatusOK)
@@ -309,6 +325,41 @@ func TestRuntimeWebChat(t *testing.T) {
 	if _, prompt := c.runNext(); !strings.HasPrefix(prompt, "Enterprise task:\nPersona of Analyst\n") || !strings.Contains(prompt, "short final summary") {
 		t.Fatalf("scheduled prompt changed: %q", prompt)
 	}
+
+	// 对话回复不按任务摘要的 2400 字截断：脱敏后完整存库、完整返回，也完整进入下一轮提示词；
+	// 超过对话上限时截到 runtimeChatReplyRunes 个码点（含标记），4 字节字符也不超过 64k 字节。
+	defaultRun := c.m.run
+	reply := ""
+	c.m.run = func(cmd runtime.Command) error {
+		c.m.final = strings.ReplaceAll(reply, "{token}", cmd.Env["DSH_EE_RUNTIME_TOKEN"])
+		return defaultRun(cmd)
+	}
+	lastSummary := func(what string, id int64) string {
+		detail := decodeRuntimeChat[runtimeChatDetail](t, what, owner("GET", twoPath, ""), http.StatusOK)
+		last := detail.Messages[len(detail.Messages)-1]
+		if last.ID != id || last.Status != store.RuntimeSucceeded {
+			t.Fatalf("%s: last turn %+v, want succeeded task %d", what, last, id)
+		}
+		return last.Summary
+	}
+	longBody := strings.Repeat("长", 3000)
+	reply = "  credential {token} " + longBody + "\n"
+	wantLong := "credential [redacted] " + longBody
+	long := decodeRuntimeChat[store.RuntimeChatTurn](t, "long reply turn", owner("POST", twoPath+"/messages", message("Write a long note", "long1")), http.StatusAccepted)
+	c.runNext()
+	if got := lastSummary("long reply", long.ID); got != wantLong || utf8.RuneCountInString(got) <= 2400 {
+		t.Fatalf("long chat reply was not stored intact: %d code points, want %d", utf8.RuneCountInString(got), utf8.RuneCountInString(wantLong))
+	}
+	reply = strings.Repeat("😀", runtimeChatReplyRunes+1)
+	huge := decodeRuntimeChat[store.RuntimeChatTurn](t, "oversized reply turn", owner("POST", twoPath+"/messages", message("And a longer one", "long2")), http.StatusAccepted)
+	if _, prompt := c.runNext(); !strings.Contains(prompt, `{"employee":"Write a long note","bot":"`+wantLong+`"}]`) || !strings.HasSuffix(prompt, "\nAnd a longer one") {
+		t.Fatalf("long reply missing from the next prompt (%d bytes)", len(prompt))
+	}
+	if got := lastSummary("oversized reply", huge.ID); got != strings.Repeat("😀", runtimeChatReplyRunes-1)+"…" ||
+		utf8.RuneCountInString(got) != runtimeChatReplyRunes || len(got) > 64000 {
+		t.Fatalf("oversized chat reply: %d code points, %d bytes", utf8.RuneCountInString(got), len(got))
+	}
+	c.m.run, c.m.final = defaultRun, ""
 
 	// 关闭网页对话：不能再选、再发，历史仍可读；另一个机器人不受影响。
 	if got := decodeRuntimeChat[store.RuntimeBot](t, "disable web chat", admin("PUT", firstPath, runtimeChatBotBody(t, ownerID, "Analyst", true, &off)), http.StatusOK); got.WebChatEnabled {

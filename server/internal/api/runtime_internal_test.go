@@ -23,6 +23,7 @@ import (
 type memoryRuntime struct {
 	files     map[string]string
 	run       func(runtime.Command) error
+	final     string // 非空时替换 JSON 模式下默认的最终回复 "pilot summary"
 	destroyed bool
 }
 
@@ -39,6 +40,11 @@ func (m *memoryRuntime) Exec(_ context.Context, c runtime.Command) (runtime.Resu
 		return runtime.Result{}, err
 	}
 	m.files[runtimeOutputDir+"/summary.txt"] = "pilot summary"
+	if c.OnStdout != nil && m.final != "" {
+		text, _ := json.Marshal(m.final)
+		c.OnStdout(`{"type":"final","sessionId":"test","reason":{"kind":"completed"},"text":` + string(text) + "}\n")
+		return runtime.Result{}, nil
+	}
 	if c.OnStdout != nil {
 		c.OnStdout(`{"type":"session","sessionId":"test"}
 {"type":"thinking","text":"Checking the request"}

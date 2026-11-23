@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -22,6 +23,8 @@ const (
 	runtimeChatTitleRunes = 60
 	// 拼进提示词的历史（JSON 编码后）字节上限；当前消息不占这份预算，永远完整保留。
 	runtimeChatHistoryBudget = 20000
+	// 存库的对话回复上限（码点数，含截断标记 "…"）：全是 4 字节字符时也只有 64,000 字节，放得进 TEXT 列。
+	runtimeChatReplyRunes = 16000
 )
 
 // runtimeChatError 写出对话接口的失败响应，没有返回值，调用方写完直接 return：
@@ -203,23 +206,49 @@ func runtimeChatTitle(content string) string {
 // runtimeChatPrompt 拼出一轮对话的完整任务提示词（执行时原样交给 DSH，见 executeCloudTask）：
 // 机器人设定、对话规则、JSON 编码的最近成功轮次、最后是原样的当前消息。
 // 历史从最近往前取，超出字节预算的更早轮次直接丢弃；当前消息放在最后，不参与截断。
+// 只有最近一轮自己就超预算时例外：员工原文完整保留，回复截成预算内最长的前缀（带 "…"），不让上下文整段清空。
 func runtimeChatPrompt(botPrompt string, history []store.RuntimeChatTurn, content string) string {
 	type exchange struct {
 		Employee string `json:"employee"`
 		Bot      string `json:"bot"`
 	}
-	var encoded []string
-	size := 0
-	for i := len(history) - 1; i >= 0; i-- {
+	encode := func(employee, bot string) (string, bool) {
 		var item strings.Builder
 		enc := json.NewEncoder(&item)
 		enc.SetEscapeHTML(false)
-		if enc.Encode(exchange{Employee: history[i].Content, Bot: history[i].Summary}) != nil {
+		if enc.Encode(exchange{Employee: employee, Bot: bot}) != nil {
+			return "", false
+		}
+		return strings.TrimSpace(item.String()), true
+	}
+	var encoded []string
+	size := 0
+	for i := len(history) - 1; i >= 0; i-- {
+		line, ok := encode(history[i].Content, history[i].Summary)
+		if !ok {
 			break
 		}
-		line := strings.TrimSpace(item.String())
 		if size+len(line)+1 > runtimeChatHistoryBudget {
-			break
+			if i != len(history)-1 {
+				break
+			}
+			bot := []rune(history[i].Summary)
+			clipped := func(n int) (string, bool) {
+				if n == 0 {
+					return encode(history[i].Content, "")
+				}
+				return encode(history[i].Content, string(bot[:n])+"…")
+			}
+			fits := func(n int) bool {
+				l, ok := clipped(n)
+				return ok && len(l)+1 <= runtimeChatHistoryBudget
+			}
+			// 编码长度随前缀单调增长：二分出放得下的最长前缀；连空回复都放不下（员工原文本身超预算）就照旧丢弃。
+			n := sort.Search(len(bot), func(n int) bool { return !fits(n + 1) })
+			if !fits(n) {
+				break
+			}
+			line, _ = clipped(n)
 		}
 		size += len(line) + 1
 		encoded = append([]string{line}, encoded...)
