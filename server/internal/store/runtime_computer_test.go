@@ -76,7 +76,7 @@ func TestMigrationMergesBotComputersPerOwner(t *testing.T) {
 	if got, err := s.RuntimeComputerOf(ctx, UserComputerOwner(bob)); err != nil || got.SandboxID != "sb-b1" {
 		t.Fatalf("bob: %+v %v", got, err)
 	}
-	orphans, err := s.RuntimeComputerOrphans(ctx, 10)
+	orphans, err := s.RuntimeComputerOrphans(ctx, 0, 10)
 	if err != nil || len(orphans) != 3 {
 		t.Fatalf("orphans: %v %v", orphans, err)
 	}

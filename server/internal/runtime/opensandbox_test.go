@@ -229,3 +229,80 @@ func TestLiveOpenSandbox(t *testing.T) {
 		t.Fatalf("unexpected smoke command: %+v %v", got, err)
 	}
 }
+
+// provider 控制面 TCP 连上却不回响应头时，请求必须在 ResponseHeaderTimeout 内失败：
+// 修前用 http.DefaultTransport（没有 ResponseHeaderTimeout）会一直阻塞，调用它的回收器跟着停摆。
+// 测试自己再包一层 ctx 超时，修前也只会等这么久而不是永久挂住。
+func TestOpenSandboxResponseHeaderTimeout(t *testing.T) {
+	old := openSandboxResponseHeaderTimeout
+	openSandboxResponseHeaderTimeout = 100 * time.Millisecond
+	defer func() { openSandboxResponseHeaderTimeout = old }()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		<-r.Context().Done() // 不写响应头，一直挂着，直到客户端放弃
+	}))
+	defer server.Close()
+
+	p, err := NewOpenSandbox(server.URL, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := p.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client transport = %T, want *http.Transport", p.client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != openSandboxResponseHeaderTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, openSandboxResponseHeaderTimeout)
+	}
+	if transport.DialContext == nil || transport.Proxy == nil ||
+		transport.TLSHandshakeTimeout != 10*time.Second || transport.IdleConnTimeout != 90*time.Second {
+		t.Fatalf("transport timeouts are incomplete: %+v", transport)
+	}
+	if p.client.Timeout != 0 {
+		t.Fatalf("Client.Timeout = %v; it would cut Exec's SSE stream short", p.client.Timeout)
+	}
+	if p.client.CheckRedirect == nil {
+		t.Fatal("CheckRedirect must be kept")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := p.FindPersistent(ctx, "creation-key"); err == nil {
+		t.Fatal("a provider that never sends response headers must not look successful")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("request blocked for %v; ResponseHeaderTimeout was not applied", elapsed)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1", got)
+	}
+}
+
+// 分页接口一直回 hasNextPage 时 FindPersistent 必须有页数上限，不能无限翻下去。
+func TestOpenSandboxFindPersistentPageLimit(t *testing.T) {
+	old := openSandboxMaxPages
+	openSandboxMaxPages = 3
+	defer func() { openSandboxMaxPages = old }()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.WriteString(w, `{"items":[],"pagination":{"hasNextPage":true}}`)
+	}))
+	defer server.Close()
+	p, err := NewOpenSandbox(server.URL, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := p.FindPersistent(ctx, "creation-key"); err == nil {
+		t.Fatal("an endless sandbox list must fail instead of paging forever")
+	}
+	if got := requests.Load(); got != int32(openSandboxMaxPages) {
+		t.Fatalf("pages requested = %d, want %d", got, openSandboxMaxPages)
+	}
+}

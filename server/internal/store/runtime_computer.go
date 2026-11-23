@@ -239,9 +239,9 @@ type RuntimeComputerOrphan struct {
 	CreationKey string
 }
 
-// RuntimeComputerOrphans 返回迁移留下、还没删除的旧沙箱。
-func (s *Store) RuntimeComputerOrphans(ctx context.Context, limit int) ([]RuntimeComputerOrphan, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, sandbox_id, creation_key FROM runtime_computer_orphans ORDER BY created_at, id LIMIT ?`, limit)
+// RuntimeComputerOrphans 返回迁移留下、还没删除且 ID 大于 afterID 的旧沙箱。
+func (s *Store) RuntimeComputerOrphans(ctx context.Context, afterID int64, limit int) ([]RuntimeComputerOrphan, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, sandbox_id, creation_key FROM runtime_computer_orphans WHERE id>? ORDER BY id LIMIT ?`, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
