@@ -237,10 +237,16 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var bot store.RuntimeBot
-	if !readJSON(w, r, &bot) {
+	// web_chat_enabled 单独用指针接：老的管理端请求不带这个字段，此时新建按关闭写入，
+	// PUT 由存储层在 UPDATE 里原子地保留现值（见 SaveRuntimeBot），这里不先读后写。
+	var in struct {
+		store.RuntimeBot
+		WebChatEnabled *bool `json:"web_chat_enabled"`
+	}
+	if !readJSON(w, r, &in) {
 		return
 	}
+	bot := in.RuntimeBot
 	if bot.DeliveryTarget == "" {
 		bot.DeliveryTarget = runtimeFeishuOwner
 	}
@@ -252,13 +258,14 @@ func (s *Server) handleRuntimeSaveBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "机器人必须以所有者身份运行，只读，且使用 UTC 每日 cron（分钟 小时 * * *）")
 		return
 	}
-	if id == 0 || bot.Enabled {
+	// 显式打开网页对话与打开定时一样，要求运行身份此刻是合格员工；省略字段的保留不算。
+	if id == 0 || bot.Enabled || in.WebChatEnabled != nil && *in.WebChatEnabled {
 		if _, err := s.runtimeEmployee(r.Context(), bot.RunAsID); err != nil {
 			s.runtimeError(w, r, err)
 			return
 		}
 	}
-	if err := s.store.SaveRuntimeBot(r.Context(), &bot); err != nil {
+	if err := s.store.SaveRuntimeBot(r.Context(), &bot, in.WebChatEnabled); err != nil {
 		s.runtimeError(w, r, err)
 		return
 	}

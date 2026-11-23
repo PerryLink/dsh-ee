@@ -125,6 +125,12 @@ func (s *Server) routes() []route {
 		usr("POST /api/runtime/tasks/{id}/cancel", s.handleRuntimeCancel),
 		usr("GET /api/runtime/tasks/{id}/artifacts", s.handleRuntimeArtifacts),
 		usr("GET /api/runtime/tasks/{id}/artifacts/{artifact}", s.handleRuntimeArtifacts),
+		// 员工网页对话（runtime_chat.go）：只认网页会话里的员工本人
+		usr("GET /api/runtime/chat/bots", s.handleRuntimeChatBots),
+		usr("GET /api/runtime/chat/conversations", s.handleRuntimeChatConversations),
+		usr("POST /api/runtime/chat/conversations", s.handleRuntimeChatCreate),
+		usr("GET /api/runtime/chat/conversations/{id}", s.handleRuntimeChatConversation),
+		usr("POST /api/runtime/chat/conversations/{id}/messages", s.handleRuntimeChatMessage),
 		prm("GET /api/admin/runtime/bots", s.handleRuntimeBots, rbac.SettingsManage),
 		prm("POST /api/admin/runtime/bots", s.handleRuntimeSaveBot, rbac.SettingsManage),
 		prm("PUT /api/admin/runtime/bots/{id}", s.handleRuntimeSaveBot, rbac.SettingsManage),

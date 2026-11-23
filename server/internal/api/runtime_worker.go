@@ -60,7 +60,8 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 			case <-run.Done():
 				return
 			case <-tick.C:
-				t, err := s.store.RuntimeTask(run, task.ID, 0)
+				// 按所有者读：管理员通配（owner=0）看不到网页对话的轮次。
+				t, err := s.store.RuntimeTask(run, task.ID, task.OwnerID)
 				if err != nil || t.Attempts != task.Attempts || t.Status != store.RuntimeRunning {
 					cancel()
 					return
@@ -95,7 +96,8 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 		return
 	}
 	s.auditSystem(finish, "runtime.task."+status, strconv.FormatInt(task.ID, 10), map[string]any{"run_as": task.RunAsID, "attempt": task.Attempts})
-	if task.BotID != nil {
+	// 网页对话轮次的 BotID 为空（机器人记在对话上），结果只在网页里看，不投递飞书。
+	if task.BotID != nil && task.ChatConversationID == nil {
 		s.deliverCloudTask(finish, task, status, summary)
 	}
 }
@@ -223,6 +225,11 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	}
 	defer revoke()
 	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
+	if task.ChatConversationID != nil {
+		// 网页对话的提示词在入队时已拼好（runtimeChatPrompt）：要的是直接回答员工，而不是任务摘要；
+		// 当前消息必须留在最后，这里不再追加任何内容。
+		prompt = task.Prompt
+	}
 	args := make([]string, len(opts.Command))
 	for i, arg := range opts.Command {
 		switch arg {

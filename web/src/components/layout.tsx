@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink, Outlet, Link, useLocation, useNavigate } from "react-router";
-import { ChevronRight, ExternalLink, LogOut, Menu as MenuGlyph, Rocket, Search, X } from "lucide-react";
+import { Bot, ChevronRight, ExternalLink, LogOut, Menu as MenuGlyph, Rocket, Search, X } from "lucide-react";
 import { WhaleMark } from "./whale-mark";
 import { useStore } from "../lib/store";
 import { useAuth } from "../lib/auth";
@@ -17,6 +17,7 @@ import { Tip } from "@/components/tip";
 import { CommandPalette, useHashFocus, useSearchShortcut } from "./command-palette";
 import { entryOf, rememberSpace, rememberedSpace, spaceOfPath, splitSpaces, type NavSpace } from "../lib/nav-space";
 import { DemoBar } from "./demo-site";
+import { useChatBots } from "../lib/bot-chat";
 
 
 /** 个别页面在侧边栏上的附加状态（计数、已关闭、按设置隐藏），按 page_key 挂接。 */
@@ -145,6 +146,34 @@ function GetStartedEntry({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
+/**
+ * 「机器人对话」入口：不在后端菜单里，按探测结果显示——云端机器人已启用、且当前账号是
+ * 可以网页对话的员工时才出现。探测结果与页面共用（lib/bot-chat.ts），不会重复请求。
+ */
+function BotChatEntry({ onNavigate }: { onNavigate: () => void }) {
+  const { status } = useChatBots();
+  const { t } = useTranslation();
+  if (status !== "ready") return null;
+  return (
+    <nav className="flex flex-col">
+      <NavLink
+        to="/bot-chat"
+        onClick={onNavigate}
+        data-bot-chat-entry=""
+        className={({ isActive }) =>
+          cx(
+            "group flex h-[34px] items-center gap-2.5 rounded-md px-3 text-sm font-medium transition-colors lg:h-8",
+            isActive ? "active bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-200" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900",
+          )
+        }
+      >
+        <Bot size={16} className="shrink-0 text-neutral-400 transition-colors group-hover:text-neutral-600 group-[.active]:text-brand-500 dark:group-[.active]:text-brand-300" />
+        <span className="truncate">{t("botChat.nav")}</span>
+      </NavLink>
+    </nav>
+  );
+}
+
 function SearchButton({ onOpen }: { onOpen: () => void }) {
   const { t } = useTranslation();
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -183,6 +212,7 @@ function Sidebar({ onNavigate, onSearch }: { onNavigate: () => void; onSearch: (
       <SpaceSwitch onNavigate={onNavigate} />
       {space === "work" && <GetStartedEntry onNavigate={onNavigate} />}
       <div className="flex flex-col gap-5 pb-6">
+        {space === "work" && <BotChatEntry onNavigate={onNavigate} />}
         {loading && <div className="px-3 text-sm text-neutral-500">{t("shell.loadingMenus")}</div>}
         {error && (
           <button type="button" onClick={() => void reload()} className="px-3 text-left text-sm text-red-700 hover:underline">

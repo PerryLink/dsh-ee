@@ -34,6 +34,7 @@ import devdocs from "./devdocs";
 import embed from "./embed";
 import expertCenter from "./expert-center";
 import { runtime } from "./runtime";
+import { botChat } from "./bot-chat";
 
 export default {
   ...common,
@@ -70,4 +71,5 @@ export default {
   ...embed,
   ...expertCenter,
   runtime,
+  botChat,
 } satisfies Messages<typeof zh>;
