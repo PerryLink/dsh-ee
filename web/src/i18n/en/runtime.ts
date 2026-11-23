@@ -28,6 +28,7 @@ export const runtime = {
     title: "Bot cloud computers",
     policy: "Sleep after {{idle}} min idle; disk limit {{disk}} each; {{retention}}.",
     retentionDays: "reclaimed after {{days}} days asleep",
+    retentionHours: "reclaimed after {{hours}} hours asleep",
     retentionOff: "never reclaimed automatically",
     ephemeral: "This runtime doesn't keep cloud computers; every task uses a new one. Computers left from before are listed below and can be reclaimed.",
     empty: "No cloud computers yet.",

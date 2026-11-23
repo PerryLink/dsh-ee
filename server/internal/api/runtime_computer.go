@@ -151,9 +151,19 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 	policy := s.opts.Runtime.Computer
 	limit := policy.DiskLimitBytes
 	if c.SandboxID != "" && limit > 0 && c.DiskBytes > limit {
-		release()
-		return nil, fmt.Errorf("%w (%d MB used of %d MB); reset the computer from the bot panel or ask an administrator to reclaim it",
-			errCloudDisk, c.DiskBytes>>20, limit>>20)
+		err := pp.CheckPersistent(ctx, c.SandboxID)
+		switch {
+		case errors.Is(err, runtime.ErrSandboxGone):
+			c.SandboxID = ""
+		case err != nil:
+			release()
+			s.log.Warn("检查机器人电脑失败", "bot_id", botID, "err", err)
+			return nil, errors.New("checking whether the cloud sandbox still exists failed")
+		default:
+			release()
+			return nil, fmt.Errorf("%w (%d MB used of %d MB); reset the computer from the bot panel or ask an administrator to reclaim it",
+				errCloudDisk, c.DiskBytes>>20, limit>>20)
+		}
 	}
 	save := func(touched, done bool) error {
 		bc, stop := bg()
@@ -547,7 +557,8 @@ func (s *Server) handleRuntimeComputers(w http.ResponseWriter, r *http.Request) 
 	if !s.runtimeAvailable(w) {
 		return
 	}
-	list, err := s.store.RuntimeBotComputers(r.Context())
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	list, next, err := s.store.RuntimeBotComputers(r.Context(), before)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
@@ -559,11 +570,15 @@ func (s *Server) handleRuntimeComputers(w http.ResponseWriter, r *http.Request) 
 	}
 	_, persistent := s.cloudComputers()
 	policy := s.opts.Runtime.Computer
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"persistent": persistent, "idle_timeout_seconds": int64(policy.IdleTimeout / time.Second),
 		"disk_limit_bytes": policy.DiskLimitBytes, "retention_seconds": int64(policy.Retention / time.Second),
 		"computers": out,
-	})
+	}
+	if next > 0 {
+		response["next_before"] = strconv.FormatInt(next, 10)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // handleRuntimeComputerAdmin 是管理员对任一机器人电脑的操作：POST .../hibernate 休眠，DELETE 回收（删除整台电脑）。

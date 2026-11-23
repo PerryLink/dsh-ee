@@ -28,6 +28,7 @@ export const runtime = {
     title: "机器人云电脑",
     policy: "空闲 {{idle}} 分钟后自动休眠；每台磁盘上限 {{disk}}；{{retention}}。",
     retentionDays: "休眠超过 {{days}} 天自动回收",
+    retentionHours: "休眠超过 {{hours}} 小时自动回收",
     retentionOff: "不自动回收",
     ephemeral: "当前运行时不支持常驻云电脑，每轮任务都使用一台新电脑。下面列出的是以前留下的电脑，可以回收。",
     empty: "暂无云电脑。",

@@ -202,6 +202,15 @@ func (p *OpenSandbox) instance(id string) (*openSandboxInstance, error) {
 	return &openSandboxInstance{provider: p, id: id, path: "/sandboxes/" + url.PathEscape(id)}, nil
 }
 
+func (p *OpenSandbox) CheckPersistent(ctx context.Context, id string) error {
+	s, err := p.instance(id)
+	if err != nil {
+		return err
+	}
+	_, err = s.state(ctx)
+	return err
+}
+
 // Wake 按沙箱当前状态把它带回运行：Paused 先 resume；Pausing 等到 Paused 再 resume；
 // Pending / Resuming 等它跑起来；已经删除或进入终态返回 ErrSandboxGone。
 func (p *OpenSandbox) Wake(ctx context.Context, id string) (PersistentSandbox, error) {

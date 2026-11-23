@@ -54,10 +54,18 @@ func (s *Store) RuntimeBotComputer(ctx context.Context, botID int64) (*RuntimeBo
 		LEFT JOIN runtime_bots b ON b.id=c.bot_id WHERE c.bot_id=?`, now(), botID))
 }
 
-// RuntimeBotComputers 列出所有有记录的电脑（管理员查看与回收用），最近使用的在前。
-func (s *Store) RuntimeBotComputers(ctx context.Context) ([]RuntimeBotComputer, error) {
-	return s.queryRuntimeComputers(ctx, `SELECT `+runtimeComputerColumns+` FROM runtime_bot_computers c
-		LEFT JOIN runtime_bots b ON b.id=c.bot_id WHERE c.state<>? ORDER BY c.last_used_at DESC, c.bot_id LIMIT 500`, now(), RuntimeComputerNone)
+const runtimeComputerPageSize = 100
+
+// RuntimeBotComputers pages through inventory by bot ID, which is stable across runs.
+func (s *Store) RuntimeBotComputers(ctx context.Context, before int64) ([]RuntimeBotComputer, int64, error) {
+	list, err := s.queryRuntimeComputers(ctx, `SELECT `+runtimeComputerColumns+` FROM runtime_bot_computers c
+		LEFT JOIN runtime_bots b ON b.id=c.bot_id WHERE c.state<>? AND (?<=0 OR c.bot_id<?)
+		ORDER BY c.bot_id DESC LIMIT ?`, now(), RuntimeComputerNone, before, before, runtimeComputerPageSize+1)
+	if len(list) > runtimeComputerPageSize {
+		list = list[:runtimeComputerPageSize]
+		return list, list[len(list)-1].BotID, err
+	}
+	return list, 0, err
 }
 
 // IdleRuntimeBotComputers 返回该休眠或该回收的电脑：没有租约、开着且最后使用早于 idleBefore 的，

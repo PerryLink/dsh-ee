@@ -26,6 +26,8 @@ type PersistentProvider interface {
 	CreatePersistent(context.Context, SandboxSpec) (PersistentSandbox, error)
 	// Wake 连接到一台已有的沙箱：休眠中的先恢复，运行中的直接连上。不存在时返回 ErrSandboxGone。
 	Wake(ctx context.Context, id string) (PersistentSandbox, error)
+	// CheckPersistent reports ErrSandboxGone for a missing sandbox without waking it.
+	CheckPersistent(ctx context.Context, id string) error
 	// Hibernate 让沙箱休眠，等到确实进入休眠才返回。不存在时返回 ErrSandboxGone。
 	Hibernate(ctx context.Context, id string) error
 	// Remove 删除沙箱；已经不存在不算错误。

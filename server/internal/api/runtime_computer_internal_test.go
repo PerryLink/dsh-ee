@@ -102,6 +102,15 @@ func (f *fakeComputers) ReplaceAllowedHosts(_ context.Context, id string, hosts 
 	return nil
 }
 
+func (f *fakeComputers) CheckPersistent(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.boxes[id]; !ok {
+		return runtime.ErrSandboxGone
+	}
+	return nil
+}
+
 func (f *fakeComputers) Wake(_ context.Context, id string) (runtime.PersistentSandbox, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -544,6 +553,52 @@ func TestBotComputerDiskLimitAndRetention(t *testing.T) {
 	f.disk = 4
 	if got := c.run("READ"); got.Status != store.RuntimeSucceeded || f.creates != 2 {
 		t.Fatalf("run after reclaim: %+v", got)
+	}
+}
+
+func TestBotComputerReplacesMissingOverLimitSandbox(t *testing.T) {
+	f := &fakeComputers{disk: 4096}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, DiskLimitBytes: 1 << 20})
+	if got := c.run("WRITE:big"); got.Status != store.RuntimeSucceeded {
+		t.Fatalf("first run: %+v", got)
+	}
+	ctx := context.Background()
+	if _, err := c.s.cloudComputerAction(ctx, c.bot.ID, computerHibernate, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.run("READ"); got.Status != store.RuntimeFailed || !strings.Contains(got.Error, "disk limit") || f.wakes != 0 {
+		t.Fatalf("existing over-limit sandbox should be blocked without waking: %+v", got)
+	}
+	for id := range f.boxes {
+		_ = f.Remove(ctx, id)
+	}
+	f.disk = 4
+	if got := c.run("READ"); got.Status != store.RuntimeSucceeded || got.Summary != "no note" || f.creates != 2 {
+		t.Fatalf("next run did not replace the missing sandbox: %+v", got)
+	}
+}
+
+func TestBotComputerAdminInventoryPages(t *testing.T) {
+	c := newComputerTest(t, &fakeComputers{}, runtime.ComputerPolicy{Persistent: true})
+	ctx := context.Background()
+	for id := int64(1); id <= 101; id++ {
+		if _, err := c.s.store.DB().ExecContext(ctx, `INSERT INTO runtime_bot_computers (bot_id, sandbox_id, state, last_used_at, created_at, updated_at)
+			VALUES (?, ?, ?, NOW(3), NOW(3), NOW(3))`, id, strconv.FormatInt(id, 10), store.RuntimeComputerHibernated); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type page struct {
+		Computers []runtimeAdminComputer `json:"computers"`
+		Next      string                 `json:"next_before"`
+	}
+	const endpoint = "/api/admin/runtime/computers"
+	first := decodeRuntimeChat[page](t, "inventory first page", c.admin("GET", endpoint, ""), http.StatusOK)
+	if len(first.Computers) != 100 || first.Computers[0].BotID != 101 || first.Next != "2" {
+		t.Fatalf("first page: %d computers, next=%q", len(first.Computers), first.Next)
+	}
+	second := decodeRuntimeChat[page](t, "inventory second page", c.admin("GET", endpoint+"?before="+first.Next, ""), http.StatusOK)
+	if len(second.Computers) != 1 || second.Computers[0].BotID != 1 || second.Next != "" {
+		t.Fatalf("second page: %+v", second)
 	}
 }
 

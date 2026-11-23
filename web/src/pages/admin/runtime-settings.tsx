@@ -46,11 +46,13 @@ type Computers = {
   disk_limit_bytes: number;
   retention_seconds: number;
   computers: Computer[] | null;
+  next_before?: string;
 };
 
 const botsPath = "/api/admin/runtime/bots";
 const tasksPath = "/api/runtime/tasks";
 const computersPath = "/api/admin/runtime/computers";
+const computerPagePath = (before?: string) => before ? `${computersPath}?before=${encodeURIComponent(before)}` : computersPath;
 const mb = (n: number) => `${String(Math.round(n / 1048576))} MB`;
 const blank: Bot = { id: 0, owner_id: 0, run_as_id: 0, name: "", prompt: "", schedule: "0 9 * * *", enabled: true, web_chat_enabled: false };
 
@@ -64,6 +66,7 @@ export default function RuntimeSettings() {
   const [disabled, setDisabled] = useState(false);
   const [busy, setBusy] = useState(true);
   const [computers, setComputers] = useState<Computers | null>(null);
+  const [computerPages, setComputerPages] = useState([""]);
   const confirm = useConfirm();
 
   const load = async () => {
@@ -71,7 +74,7 @@ export default function RuntimeSettings() {
       request<Bot[]>("GET", botsPath),
       request<Run[]>("GET", tasksPath),
       // 旧后端没有这个接口：不影响其余部分
-      request<Computers>("GET", computersPath).catch(() => null),
+      request<Computers>("GET", computerPagePath(computerPages.at(-1))).catch(() => null),
     ]);
     setBots(nextBots);
     setRuns(nextRuns);
@@ -98,6 +101,11 @@ export default function RuntimeSettings() {
       if (err instanceof ApiError && err.status === 404) setDisabled(true);
       else throw err;
     }
+  });
+
+  const navigateComputers = (pages: string[]) => perform(async () => {
+    setComputers(await request<Computers>("GET", computerPagePath(pages.at(-1))));
+    setComputerPages(pages);
   });
 
   useEffect(() => { void refresh(); }, []);
@@ -173,7 +181,11 @@ export default function RuntimeSettings() {
               ? t("runtime.computers.policy", {
                 idle: Math.round(computers.idle_timeout_seconds / 60),
                 disk: mb(computers.disk_limit_bytes),
-                retention: computers.retention_seconds ? t("runtime.computers.retentionDays", { days: Math.round(computers.retention_seconds / 86400) }) : t("runtime.computers.retentionOff"),
+                retention: !computers.retention_seconds
+                  ? t("runtime.computers.retentionOff")
+                  : computers.retention_seconds % 86400 === 0
+                    ? t("runtime.computers.retentionDays", { days: computers.retention_seconds / 86400 })
+                    : t("runtime.computers.retentionHours", { hours: Math.round(computers.retention_seconds / 36) / 100 }),
               })
               : t("runtime.computers.ephemeral")}
           </p>
@@ -195,6 +207,15 @@ export default function RuntimeSettings() {
               })}>{t("runtime.computers.reclaim")}</Button>
             </div>
           ))}
+          {(computerPages.length > 1 || computers.next_before) && (
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" disabled={busy || computerPages.length <= 1}
+                onClick={() => void navigateComputers(computerPages.slice(0, -1))}>{t("table.prev")}</Button>
+              <Button variant="secondary" size="sm" disabled={busy || !computers.next_before} onClick={() => {
+                if (computers.next_before) void navigateComputers([...computerPages, computers.next_before]);
+              }}>{t("table.next")}</Button>
+            </div>
+          )}
         </div>
       )}
       <div className="space-y-2">
