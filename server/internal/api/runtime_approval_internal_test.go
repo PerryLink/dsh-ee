@@ -140,7 +140,7 @@ func TestRuntimeApprovalModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(revoke)
+	t.Cleanup(func() { revoke() })
 	routeCtx := context.WithValue(ctx, runtimeTokenRouteKey{}, true)
 	pr, err := s.resolveBearer(routeCtx, token, "")
 	if err != nil || !pr.Runtime {
