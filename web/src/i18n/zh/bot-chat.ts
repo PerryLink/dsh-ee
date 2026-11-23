@@ -25,6 +25,9 @@ export const botChat = {
     loading: "正在加载会话…",
     failed: "会话列表加载失败。",
     createFailed: "新建会话失败：{{reason}}",
+    refreshBots: "刷新机器人列表",
+    refreshingBots: "正在刷新机器人列表…",
+    refreshBotsFailed: "机器人列表刷新失败：{{reason}}",
   },
   welcome: {
     title: "今天想让哪位机器人帮忙？",

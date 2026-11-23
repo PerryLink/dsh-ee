@@ -25,6 +25,9 @@ export const botChat = {
     loading: "Loading conversations…",
     failed: "Couldn't load conversations.",
     createFailed: "Couldn't create the conversation: {{reason}}",
+    refreshBots: "Refresh bots",
+    refreshingBots: "Refreshing bots…",
+    refreshBotsFailed: "Couldn't refresh the bot list: {{reason}}",
   },
   welcome: {
     title: "Which bot can help you today?",

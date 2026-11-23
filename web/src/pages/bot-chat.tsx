@@ -200,7 +200,17 @@ function Turn({ turn, botName, onReuse }: { turn: ChatTurn; botName: string; onR
   );
 }
 
-function Workspace({ bots, reloadBots }: { bots: ChatBot[]; reloadBots: () => void }) {
+function Workspace({
+  bots,
+  reloadBots,
+  botsRefreshing,
+  botsError,
+}: {
+  bots: ChatBot[];
+  reloadBots: () => void;
+  botsRefreshing: boolean;
+  botsError: ChatError | null;
+}) {
   const { t, i18n } = useTranslation();
   const alive = useAlive();
   const composerId = useId();
@@ -506,6 +516,19 @@ function Workspace({ bots, reloadBots }: { bots: ChatBot[]; reloadBots: () => vo
     </select>
   );
 
+  // 机器人列表的手动刷新：会话栏和「暂无机器人」的欢迎区各放一个，没有机器人时也看得到
+  const botsRefresh = (className?: string) => (
+    <Button type="button" variant="ghost" size="sm" className={className} disabled={botsRefreshing} onClick={reloadBots} data-bot-refresh="">
+      <RefreshCw size={14} aria-hidden className={cx(botsRefreshing && "animate-spin motion-reduce:animate-none")} />
+      {botsRefreshing ? t("botChat.list.refreshingBots") : t("botChat.list.refreshBots")}
+    </Button>
+  );
+  const botsRefreshError = botsError && !botsRefreshing && (
+    <p role="alert" className="text-[13px] leading-5 text-red-600 dark:text-red-400">
+      {t("botChat.list.refreshBotsFailed", { reason: errText(botsError) })}
+    </p>
+  );
+
   return (
     <div className="relative flex h-[calc(100dvh-8rem)] min-h-[30rem] overflow-hidden rounded-xl border border-neutral-200 bg-card shadow-card lg:h-[calc(100dvh-6.5rem)] dark:border-white/10">
       {/* 会话栏：宽屏常驻左侧，窄屏盖在对话区上 */}
@@ -539,6 +562,8 @@ function Workspace({ bots, reloadBots }: { bots: ChatBot[]; reloadBots: () => vo
           ) : (
             <p className="text-[13px] leading-5 text-neutral-500">{t("botChat.list.noBots")}</p>
           )}
+          {botsRefresh("w-full")}
+          {botsRefreshError}
           {createError && (
             <p role="alert" className="text-[13px] leading-5 text-red-600 dark:text-red-400">
               {t("botChat.list.createFailed", { reason: errText(createError) })}
@@ -688,6 +713,8 @@ function Workspace({ bots, reloadBots }: { bots: ChatBot[]; reloadBots: () => vo
                 <>
                   <h2 className="mt-5 text-lg font-bold text-neutral-900">{t("botChat.welcome.noBotsTitle")}</h2>
                   <p className="mt-2 text-sm leading-6 text-neutral-600">{t("botChat.welcome.noBots")}</p>
+                  {botsRefresh("mt-4")}
+                  {botsRefreshError && <div className="mt-2">{botsRefreshError}</div>}
                 </>
               )}
             </div>
@@ -823,7 +850,13 @@ function Workspace({ bots, reloadBots }: { bots: ChatBot[]; reloadBots: () => vo
 
 export default function BotChatPage() {
   const { t } = useTranslation();
-  const { status, bots, error, reload } = useChatBots();
+  const { status, bots, error, refreshing, reload } = useChatBots();
+
+  // 共享的机器人列表不会自己过期：每次打开本页重新拉一次（reload 引用稳定，只在挂载和换账号时触发；
+  // 与侧栏的首次探测撞上时共用同一个在途请求）。
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   if (status === "idle" || status === "loading") {
     return (
@@ -868,5 +901,5 @@ export default function BotChatPage() {
       </Card>
     );
   }
-  return <Workspace bots={bots} reloadBots={reload} />;
+  return <Workspace bots={bots} reloadBots={reload} botsRefreshing={refreshing} botsError={error} />;
 }

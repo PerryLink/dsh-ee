@@ -2,11 +2,12 @@
  * 机器人对话（/bot-chat）的接口层与共享状态。
  *
  * - 接口固定在 /api/runtime/chat 下，统一走 request()；
- * - 可用机器人列表做成模块级共享状态：侧栏入口与页面共用一次探测，不重复请求；
+ * - 可用机器人列表做成模块级共享状态：侧栏入口与页面共用同一份结果和同一个在途请求；
+ *   对话页每次打开会重新拉一次，页面上也能手动刷新；
  * - 错误不直接显示服务端原文（那是中文默认文案，也可能带运行细节），
  *   按 runtime_chat_* 错误码或 HTTP 状态码映射到 botChat.errors.* 的本地化文案。
  */
-import { useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { ApiError, request, type Me } from "./api";
 import { useAuth } from "./auth";
 
@@ -152,10 +153,12 @@ export interface ChatBotsState {
   status: ChatBotsStatus;
   bots: ChatBot[];
   error: ChatError | null;
+  /** 已有结果、后台正在重新拉取：界面保持原样，只让刷新按钮转起来。 */
+  refreshing: boolean;
 }
 
-const INELIGIBLE: ChatBotsState = { status: "forbidden", bots: [], error: null };
-const IDLE: ChatBotsState = { status: "idle", bots: [], error: null };
+const INELIGIBLE: ChatBotsState = { status: "forbidden", bots: [], error: null, refreshing: false };
+const IDLE: ChatBotsState = { status: "idle", bots: [], error: null, refreshing: false };
 
 let state: ChatBotsState = IDLE;
 let owner: number | null = null;
@@ -182,17 +185,24 @@ function loadBots(userId: number, force: boolean): Promise<void> {
   }
   if (inflight) return inflight;
   if (!force && state.status !== "idle") return Promise.resolve();
-  setState({ ...state, status: state.status === "ready" ? "ready" : "loading", error: null });
+  // 已有确定结果（可用 / 未启用 / 无权限）时原地刷新，不退回 loading：页面和侧栏入口都不闪。
+  // 还没结果、或上次失败后重试，才显示加载中。
+  const prev = state;
+  const settled = prev.status === "ready" || prev.status === "unavailable" || prev.status === "forbidden";
+  setState(settled ? { ...prev, error: null, refreshing: true } : { status: "loading", bots: [], error: null, refreshing: false });
   const p: Promise<void> = chatApi
     .bots()
     .then((bots) => {
-      if (owner === userId && inflight === p) setState({ status: "ready", bots, error: null });
+      if (owner === userId && inflight === p) setState({ status: "ready", bots, error: null, refreshing: false });
     })
     .catch((err: unknown) => {
       if (owner !== userId || inflight !== p) return;
       const error = toChatError(err, "runtime");
-      const status: ChatBotsStatus = error.key === "unavailable" ? "unavailable" : error.key === "forbidden" ? "forbidden" : "error";
-      setState({ status, bots: [], error });
+      if (error.key === "unavailable") setState({ status: "unavailable", bots: [], error, refreshing: false });
+      else if (error.key === "forbidden") setState({ status: "forbidden", bots: [], error, refreshing: false });
+      // 刷新时的临时故障（断网、5xx）：留着上一次的结果并带上错误，不把正在用的页面换成报错页
+      else if (settled) setState({ ...prev, error, refreshing: false });
+      else setState({ status: "error", bots: [], error, refreshing: false });
     })
     .finally(() => {
       if (inflight === p) inflight = null;
@@ -211,7 +221,14 @@ export function chatEligible(user: Me | null): user is Me {
   return user.permissions.includes("portal.view") && user.permissions.includes("llm.use");
 }
 
-/** 可用机器人与功能可用性；不符合条件的账号不发请求，直接是 forbidden。 */
+const noop = () => {};
+
+/**
+ * 可用机器人与功能可用性；不符合条件的账号不发请求，直接是 forbidden。
+ *
+ * 结果是模块级共享的，本身不会过期：reload 强制重新拉取（引用稳定，可以放进 effect 依赖），
+ * 对话页每次打开时调一次，页面上另有手动刷新；侧栏入口只做首次探测。
+ */
 export function useChatBots(): ChatBotsState & { reload: () => void } {
   const { user } = useAuth();
   const eligible = chatEligible(user);
@@ -220,8 +237,11 @@ export function useChatBots(): ChatBotsState & { reload: () => void } {
   useEffect(() => {
     if (userId !== null) void loadBots(userId, false);
   }, [userId]);
-  if (userId === null) return { ...INELIGIBLE, reload: () => {} };
+  const reload = useCallback(() => {
+    if (userId !== null) void loadBots(userId, true);
+  }, [userId]);
+  if (userId === null) return { ...INELIGIBLE, reload: noop };
   // 换了登录用户、探测还没发出去的那一帧：不要把上一个人的结果露出来
   const current = owner === userId ? snapshot : IDLE;
-  return { ...current, reload: () => void loadBots(userId, true) };
+  return { ...current, reload };
 }
