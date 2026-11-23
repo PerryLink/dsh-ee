@@ -40,7 +40,7 @@ dsh-ee 保存机器人定义、队列、状态事件和文件；执行在 OpenSa
 
 只收集产物目录及其两层以内子目录里的普通文件（不含隐藏文件和隐藏目录；最多 8 个、每个不超过 8 MiB），子目录里的文件以相对路径命名，例如 `reports/周报.md`。超限或无效的文件会记入服务端日志。文件在 `DSH_EE_DATA_DIR/runtime-artifacts`。网页对话（`/bot-chat`）右侧的「文件库」列出这个机器人在对话和定时任务里生成的文件，可以预览和下载，只有机器人的所属员工本人看得到。队列支持多个实例抢占，但多实例必须共享该产物目录；试点未实现对象存储、自动保留期限、Feishu 重试、补跑以及持久 Agent 记忆。不支持 E2B。
 
-网页对话里可以把文档拖进对话框（或点回形针选文件）发给机器人：支持 PDF、Word（.docx）、Excel（.xlsx）、CSV、PPT（.pptx）、Markdown 和纯文本，单个文件不超过 50 MB，一条消息最多 5 个，只发附件不写字也可以。上传时服务端用知识库同一套转换当场转成 Markdown（格式不支持、扫描件、损坏当场报错），原件和正文存在 `DSH_EE_DATA_DIR/runtime-chat-uploads`；执行这一轮时写进机器人工作目录的 `.uploads/<轮次 ID>/`（原件，加 `.md` 后缀的是正文），提示词里告诉机器人去读。隐藏目录不会被当成产物收回文件库；常驻电脑上这些文件跨轮保留。上传了一天还没发出的附件会被清理。接口：`POST /api/runtime/chat/conversations/{id}/uploads`（multipart 的 `file`），`DELETE /api/runtime/chat/uploads/{id}` 删除没发出的附件，发消息时在 `messages` 里带 `uploads`（附件 ID 列表）。
+网页对话里可以把文档拖进对话框（或点回形针选文件）发给机器人：支持 PDF、Word（.docx）、Excel（.xlsx）、CSV、PPT（.pptx）、Markdown 和纯文本，单个文件不超过 50 MB，一条消息最多 5 个，只发附件不写字也可以。上传时服务端用知识库同一套转换当场转成 Markdown（格式不支持、扫描件、损坏当场报错），原件和正文存在 `DSH_EE_DATA_DIR/runtime-chat-uploads`；执行这一轮时写进机器人工作目录的 `.uploads/<轮次 ID>/`（原件，加 `.md` 后缀的是正文），提示词里告诉机器人去读。多实例部署时这个目录也要跟产物目录一样共享。隐藏目录不会被当成产物收回文件库；常驻电脑上这些文件跨轮保留。上传了一天还没发出的附件会被清理。接口：`POST /api/runtime/chat/conversations/{id}/uploads`（multipart 的 `file`），`DELETE /api/runtime/chat/uploads/{id}` 删除没发出的附件，发消息时在 `messages` 里带 `uploads`（附件 ID 列表）。
 
 ## 每个员工一台常驻云电脑
 
