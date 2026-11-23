@@ -89,6 +89,8 @@ var demoSiteBlocked = map[string]bool{
 	"POST /api/runtime/chat/conversations":               true,
 	"GET /api/runtime/chat/conversations/{id}":           true,
 	"POST /api/runtime/chat/conversations/{id}/messages": true,
+	"POST /api/runtime/chat/conversations/{id}/uploads":  true,
+	"DELETE /api/runtime/chat/uploads/{id}":              true,
 	"PUT /api/runtime/chat/bots/{id}/share":              true,
 	"POST /api/runtime/chat/bots/{id}/computer/{action}": true,
 	"GET /api/admin/runtime/bots":                        true,
