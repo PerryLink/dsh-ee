@@ -858,6 +858,9 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		tools := []map[string]any{}
 		for _, cn := range c.conns {
 			for _, t := range cn.tools {
+				if pr.RuntimeReadOnly && !t.ReadOnly {
+					continue
+				}
 				tools = append(tools, map[string]any{
 					"name":        mcpToolName(cn.asset.Slug, t.Name),
 					"description": "【" + cn.spec.Title + "】" + t.Description,
@@ -871,18 +874,20 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		if len(c.kbases) > 0 {
 			tools = append(tools, kbToolDefs()...)
 		}
-		if targets := s.appToolTargets(r.Context(), v, c); len(targets) > 0 {
-			tools = append(tools, appToolDefs(targets)...)
-		}
-		if sets, err := s.visibleDataSets(r.Context(), v); err != nil {
-			s.internalErr(w, r, err)
-			return
-		} else if len(sets) > 0 {
-			tools = append(tools, dataToolDefs(sets)...)
-		}
-		tools = append(tools, homeToolDefs()...)
-		for _, def := range s.agentToolList(r.Context(), pr) {
-			tools = append(tools, def)
+		if !pr.RuntimeReadOnly {
+			if targets := s.appToolTargets(r.Context(), v, c); len(targets) > 0 {
+				tools = append(tools, appToolDefs(targets)...)
+			}
+			if sets, err := s.visibleDataSets(r.Context(), v); err != nil {
+				s.internalErr(w, r, err)
+				return
+			} else if len(sets) > 0 {
+				tools = append(tools, dataToolDefs(sets)...)
+			}
+			tools = append(tools, homeToolDefs()...)
+			for _, def := range s.agentToolList(r.Context(), pr) {
+				tools = append(tools, def)
+			}
 		}
 		// 第三方 Harness 跟 cursor 翻页；DSH 接入插件一次要全量（mcp_tools_page.go）。
 		page, next, err := mcpToolsListPage(tools, msg.Params, dshConnect(r))
@@ -902,6 +907,11 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
 			writeRPC(w, msg.ID, nil, &mcp.Error{Code: -32602, Message: "参数格式不对"})
+			return
+		}
+		if pr.RuntimeReadOnly && (strings.HasPrefix(p.Name, "ee_") || strings.HasPrefix(p.Name, dataConn+"__") ||
+			strings.HasPrefix(p.Name, appConn+"__") || strings.HasPrefix(p.Name, homeConn+"__")) {
+			writeRPC(w, msg.ID, mcp.TextResult("Tool unavailable to read-only cloud tasks", true), nil)
 			return
 		}
 		if strings.HasPrefix(p.Name, "ee_") {
@@ -946,6 +956,10 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, t := range cn.tools {
 				if t.Name == tool {
+					if pr.RuntimeReadOnly && !t.ReadOnly {
+						writeRPC(w, msg.ID, mcp.TextResult("Tool unavailable to read-only cloud tasks", true), nil)
+						return
+					}
 					ctx := r.Context()
 					// 写操作：调用方不是 DSH 时先由员工在网页上确认（write_confirm.go）
 					if ask := s.confirmWrite(r, v, cn.asset, t, p.Arguments); ask != nil {

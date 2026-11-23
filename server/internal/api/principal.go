@@ -45,9 +45,10 @@ type Principal struct {
 	Client     string
 	// 令牌签发给哪类客户端：dsh / third_party（store.ClientKind*）。
 	// 网页会话不是令牌，为空。写确认只认这个属性，不认可伪造的 X-DshEE-Client 头。
-	ClientKind string
-	Prefix     string
-	ExpiresAt  *time.Time
+	ClientKind      string
+	Prefix          string
+	ExpiresAt       *time.Time
+	RuntimeReadOnly bool
 }
 
 func (p *Principal) quota() *store.UserQuota {
@@ -105,6 +106,10 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 	hash := secret.Hash(token)
 	switch {
 	case strings.HasPrefix(token, "ee_at_"):
+		runtimeToken := strings.HasPrefix(token, runtimeTokenPrefix)
+		if runtimeToken && ctx.Value(runtimeTokenRouteKey{}) != true {
+			return nil, tokenError(tokenInvalid)
+		}
 		t, err := s.store.ActiveAccessToken(ctx, hash)
 		if errors.Is(err, store.ErrNotFound) {
 			inactive, lookupErr := s.store.AccessTokenByHash(ctx, hash)
@@ -143,7 +148,7 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 		return &Principal{
 			User: u, Access: rbac.ScopeFilter(account, effective), Scopes: scopes, TokenID: t.ID,
 			Limit: t.MonthlyTokenLimit, Models: t.AllowedModels, Client: t.ClientName, ClientKind: store.NormalizeClientKind(t.ClientKind),
-			Prefix: t.Prefix, ExpiresAt: t.ExpiresAt, AdminLive: live, AdminUntil: t.AdminUntil, CanAdmin: rbac.HasAdminPerms(account), Account: account,
+			Prefix: t.Prefix, ExpiresAt: t.ExpiresAt, AdminLive: live, AdminUntil: t.AdminUntil, CanAdmin: rbac.HasAdminPerms(account), Account: account, RuntimeReadOnly: runtimeToken,
 		}, nil
 	case strings.HasPrefix(token, npmTokenPrefix):
 		t, u, err := s.store.ActiveNpmToken(ctx, hash)

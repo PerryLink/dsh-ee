@@ -15,6 +15,7 @@
     "dev/publish-precheck.md",
     "dev/quality-standards.md",
     "dev/responses-api.md",
+    "dev/cloud-runtime.md",
     "dev/chatbot.md",
     "dev/beta-completions.md"
   ],

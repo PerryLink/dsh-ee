@@ -78,6 +78,18 @@ func (sp *agentSpec) key() string { return sp.Tool + "." + sp.Action }
 
 // agentExcluded 是永久不开放给 Agent 的路由，必须写清原因。
 var agentExcluded = map[string]string{
+	"POST /api/runtime/tasks":                          "云任务只能由员工显式提交",
+	"GET /api/runtime/tasks":                           "云任务记录只供员工查看",
+	"GET /api/runtime/tasks/{id}":                      "云任务状态只供员工查看",
+	"GET /api/runtime/tasks/{id}/events":               "云任务事件只供员工查看",
+	"POST /api/runtime/tasks/{id}/cancel":              "云任务取消只能由员工显式操作",
+	"GET /api/runtime/tasks/{id}/artifacts":            "云任务产物只供员工查看",
+	"GET /api/runtime/tasks/{id}/artifacts/{artifact}": "云任务产物只供员工下载",
+	"GET /api/admin/runtime/bots":                      "云机器人由管理员管理",
+	"POST /api/admin/runtime/bots":                     "云机器人由管理员管理",
+	"PUT /api/admin/runtime/bots/{id}":                 "云机器人由管理员管理",
+	"POST /api/admin/runtime/bots/{id}/run":            "云机器人只能由管理员手动触发",
+
 	"POST /api/auth/feishu/event":               "飞书事件使用独立来源验证，不由 Agent 调用",
 	"GET /api/me/feishu-chat":                   "员工界面与接入插件查询机器人状态",
 	"GET /api/me/feishu-chat/next":              "接入插件长轮询消息，不能由模型消费队列",

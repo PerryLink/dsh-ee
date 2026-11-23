@@ -16,6 +16,7 @@
 - [发布入口与预检结果怎么读 / Publish entries and how to read the precheck](/docs/publish-precheck): 三个发布入口、预检的扫描键、结果语义与提交前自查清单。
 - [规范与检查：ENTRY / FLOW / BOOST / Standards and checks: ENTRY / FLOW / BOOST](/docs/quality-standards): 上游规范三层与 dsh-ee 预检的边界：哪些是作者自证，哪些是企业准入。
 - [OpenAI Responses API 兼容 / OpenAI Responses API compatibility](/docs/responses-api): Codex / OpenAI Agents SDK 接 POST /v1/responses：请求映射、输出、SSE、错误与 v0 边界。
+- [云端常驻机器人试点 / Cloud resident bot pilot](/docs/cloud-runtime): 用 OpenSandbox 定时执行只读 DSH 任务、保存文件产物，并通过飞书私聊交付。
 - [Chatbot 网关选项与透传 / Chatbot gateway options and passthrough](/docs/chatbot): 联网工具、内容安全与会话标题：网关透传，可按部署注入 safety_check / title。
 - [DeepSeek FIM / 前缀续写 beta 透传 / DeepSeek FIM / chat-prefix beta passthrough](/docs/beta-completions): FIM 补全与 Chat Prefix 续写挂在 /beta/* 透传，沿用同一令牌、模型权限、额度与限流。
 

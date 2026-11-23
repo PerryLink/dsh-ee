@@ -173,6 +173,7 @@ func run(log *slog.Logger) error {
 		InitCode:       initCode,
 		Web:            webui.Handler(),
 		DataDir:        cfg.DataDir,
+		Runtime:        cfg.Runtime,
 		PublicURL:      cfg.PublicURL,
 		TrustedProxies: cfg.TrustedProxies,
 		CORSOrigins:    cfg.CORSOrigins,

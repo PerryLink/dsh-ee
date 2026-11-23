@@ -33,6 +33,7 @@ import directory from "./directory";
 import devdocs from "./devdocs";
 import embed from "./embed";
 import expertCenter from "./expert-center";
+import { runtime } from "./runtime";
 
 export default {
   ...common,
@@ -68,4 +69,5 @@ export default {
   ...devdocs,
   ...embed,
   ...expertCenter,
+  runtime,
 } satisfies Messages<typeof zh>;
