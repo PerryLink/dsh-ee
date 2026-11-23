@@ -43,6 +43,22 @@ const (
 	runtimeComputerReapTick = 30 * time.Second
 )
 
+// 回收旧电脑时每次 provider 调用最多等这么久：provider 控制面挂起时不能拖住整个回收器
+// （休眠 / retention 回收也跟着停摆，云成本泄漏）。测试会调短。
+var runtimeComputerOrphanCallTimeout = 30 * time.Second
+
+// 回收失败后的内存退避：30s → 1m → 2m……上限 runtimeComputerOrphanRetryMax，
+// 避免每 30s 无退避地重试一次永远失败的删除。测试会把基数调小。
+var runtimeComputerOrphanRetryBase = 30 * time.Second
+
+const runtimeComputerOrphanRetryMax = 30 * time.Minute
+
+// computerOrphanRetry 是一条旧电脑回收记录的重试状态：下次重试时间与连续失败次数。
+type computerOrphanRetry struct {
+	next     time.Time
+	attempts int
+}
+
 const (
 	// runtimeSharedDir 是同一台电脑上所有机器人共用的目录。
 	runtimeSharedDir = runtimeWorkDir + "/shared"
@@ -471,6 +487,10 @@ func (s *Server) reapCloudComputers(ctx context.Context) {
 }
 
 // reapComputerOrphans 删除 0058 迁移合并下来的多余旧电脑（每位员工只保留最近使用的一台）。
+//
+// 每次 provider 调用都有独立超时：控制面 TCP 连上却不回 header（见 runtime 包的 transport）时，
+// 没有超时的调用会让整个回收器（包括空闲休眠和 retention 回收）停摆。失败按内存退避重试，
+// 正常情况下 30s 的回收周期只会重试到期的记录。
 func (s *Server) reapComputerOrphans(ctx context.Context) {
 	pp, ok := s.opts.Runtime.Provider.(runtime.PersistentProvider)
 	if !ok {
@@ -483,23 +503,34 @@ func (s *Server) reapComputerOrphans(ctx context.Context) {
 		}
 		return
 	}
+	now := time.Now()
 	for _, o := range orphans {
+		if !s.computerOrphanDue(o.ID, now) {
+			continue
+		}
 		id := o.SandboxID
 		if id == "" {
 			// 旧记录新建到一半中断：按 creation_key 找沙箱；找不到就是从没建成，直接去掉记录。
 			p, ok := pp.(runtime.PersistentRecovery)
 			if ok {
-				found, err := p.FindPersistent(ctx, o.CreationKey)
+				callCtx, cancel := context.WithTimeout(ctx, runtimeComputerOrphanCallTimeout)
+				found, err := p.FindPersistent(callCtx, o.CreationKey)
+				cancel()
 				if err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
 					s.log.Warn("查找待回收的旧云电脑失败", "err", err)
+					s.computerOrphanFailed(o.ID, now)
 					continue
 				}
 				id = found
 			}
 		}
 		if id != "" {
-			if err := pp.Remove(ctx, id); err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
+			callCtx, cancel := context.WithTimeout(ctx, runtimeComputerOrphanCallTimeout)
+			err := pp.Remove(callCtx, id)
+			cancel()
+			if err != nil && !errors.Is(err, runtime.ErrSandboxGone) {
 				s.log.Warn("回收旧云电脑失败", "err", err)
+				s.computerOrphanFailed(o.ID, now)
 				continue
 			}
 		}
@@ -507,10 +538,40 @@ func (s *Server) reapComputerOrphans(ctx context.Context) {
 			s.log.Warn("删除旧云电脑记录失败", "err", err)
 			continue
 		}
+		s.computerOrphanReclaimed(o.ID)
 		if id != "" {
 			s.auditSystem(ctx, "runtime.computer.reclaim", "sandbox", map[string]any{"reason": "merged_per_owner"})
 		}
 	}
+}
+
+// computerOrphanDue 报告某条旧电脑记录是否该重试；退避期内直接跳过，不再占用一轮回收。
+func (s *Server) computerOrphanDue(id int64, now time.Time) bool {
+	r, ok := s.computerOrphanRetries[id]
+	return !ok || !now.Before(r.next)
+}
+
+// computerOrphanFailed 记一次回收失败，并把下次重试推后：30s、1m、2m……最多 30m。
+func (s *Server) computerOrphanFailed(id int64, now time.Time) {
+	r := s.computerOrphanRetries[id]
+	r.attempts++
+	delay := runtimeComputerOrphanRetryBase
+	for i := 1; i < r.attempts && delay < runtimeComputerOrphanRetryMax; i++ {
+		delay *= 2
+	}
+	if delay > runtimeComputerOrphanRetryMax {
+		delay = runtimeComputerOrphanRetryMax
+	}
+	r.next = now.Add(delay)
+	if s.computerOrphanRetries == nil {
+		s.computerOrphanRetries = map[int64]computerOrphanRetry{}
+	}
+	s.computerOrphanRetries[id] = r
+}
+
+// computerOrphanReclaimed 在记录删除（或确认从没建成）后清掉退避状态。
+func (s *Server) computerOrphanReclaimed(id int64) {
+	delete(s.computerOrphanRetries, id)
 }
 
 // computerTarget 是审计里电脑的标识：computer:<id>:user:<员工 ID> 或 computer:<id>:team:<部门>。

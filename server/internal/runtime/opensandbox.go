@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -25,6 +26,34 @@ const (
 	maxOutput                = 1 << 20
 )
 
+// openSandboxResponseHeaderTimeout 是等 provider 响应头的上限：控制面 TCP 连上却不回 header 时，
+// 没有这个上限的请求（以及调用它的回收器）会永久阻塞。做成变量是为了测试能临时改小。
+//
+// 不能改成 http.Client.Timeout：Exec 的响应是以 SSE 形式持续返回的，命令最长跑 5 分钟，
+// 一个总超时会把它拦腰截断。ResponseHeaderTimeout 只约束响应头到达之前。
+var openSandboxResponseHeaderTimeout = 30 * time.Second
+
+// newOpenSandboxClient 返回访问 provider 的 HTTP 客户端。Transport 显式设置各段超时，
+// 避免像 http.DefaultTransport 那样在 provider 不回响应头时无限等待（DefaultTransport 没有
+// ResponseHeaderTimeout）。保留不跟随重定向：provider 用 3xx 表达 endpoint 未就绪等语义。
+func newOpenSandboxClient() http.Client {
+	return http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			// 和 DefaultTransport 一样在自定义 DialContext 时仍启用 HTTP/2。
+			ForceAttemptHTTP2:     true,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: openSandboxResponseHeaderTimeout,
+			IdleConnTimeout:       90 * time.Second,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
 type OpenSandbox struct {
 	base, key string
 	client    http.Client
@@ -38,9 +67,7 @@ func NewOpenSandbox(base, key string) (*OpenSandbox, error) {
 	if !strings.HasSuffix(u.Path, "/v1") {
 		u.Path = strings.TrimRight(u.Path, "/") + "/v1"
 	}
-	return &OpenSandbox{base: u.String(), key: key, client: http.Client{
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}}, nil
+	return &OpenSandbox{base: u.String(), key: key, client: newOpenSandboxClient()}, nil
 }
 
 func validEndpoint(u *url.URL) bool {
@@ -165,6 +192,10 @@ func (p *OpenSandbox) ReplaceAllowedHosts(ctx context.Context, id string, hosts 
 	return p.lifecycle(ctx, http.MethodPut, s.path+"/networkpolicy", openSandboxNetworkPolicy(hosts), nil)
 }
 
+// openSandboxMaxPages 是 FindPersistent 最多翻的页数。分页 API 异常（永远返回 hasNextPage）
+// 时不能无限循环；做成变量是为了测试能临时改小。
+var openSandboxMaxPages = 100
+
 func (p *OpenSandbox) FindPersistent(ctx context.Context, creationKey string) (string, error) {
 	if creationKey == "" {
 		return "", ErrSandboxGone
@@ -173,6 +204,9 @@ func (p *OpenSandbox) FindPersistent(ctx context.Context, creationKey string) (s
 	query := url.Values{"metadata": {filter.Encode()}, "pageSize": {"20"}}
 	var found string
 	for page := 1; ; page++ {
+		if page > openSandboxMaxPages {
+			return "", fmt.Errorf("OpenSandbox sandbox list did not terminate within %d pages", openSandboxMaxPages)
+		}
 		query.Set("page", strconv.Itoa(page))
 		var response struct {
 			Items      []sandboxStatus `json:"items"`

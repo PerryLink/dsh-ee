@@ -43,7 +43,12 @@ type fakeComputers struct {
 	createContext      context.Context
 	awaitCreateTimeout bool
 	awaitLookupTimeout bool
-	allowedHost        string
+	// removeBlocks / findBlocks 让 Remove / FindPersistent 一直挂到调用方超时，模拟 provider 控制面不回包。
+	removeBlocks bool
+	findBlocks   bool
+	removes      int
+	finds        int
+	allowedHost  string
 	// onRun 在模拟 DSH 运行时调用（凭证有效、任务在运行）；handled 为真时用它的输出代替默认行为。
 	onRun func(token, dir, prompt string) (stdout string, handled bool)
 }
@@ -92,7 +97,15 @@ func (f *fakeComputers) CreatePersistent(ctx context.Context, spec runtime.Sandb
 	return b, nil
 }
 
-func (f *fakeComputers) FindPersistent(_ context.Context, key string) (string, error) {
+func (f *fakeComputers) FindPersistent(ctx context.Context, key string) (string, error) {
+	f.mu.Lock()
+	f.finds++
+	block := f.findBlocks
+	f.mu.Unlock()
+	if block {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.hideCreatedBox {
@@ -156,7 +169,15 @@ func (f *fakeComputers) Hibernate(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeComputers) Remove(_ context.Context, id string) error {
+func (f *fakeComputers) Remove(ctx context.Context, id string) error {
+	f.mu.Lock()
+	f.removes++
+	block := f.removeBlocks
+	f.mu.Unlock()
+	if block {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.boxes, id)
@@ -801,4 +822,78 @@ esac`, "sh", "{prompt}"}
 	if v := c.profile(); v.State != store.RuntimeComputerRunning || v.DiskBytes <= 0 {
 		t.Fatalf("after second run: %+v", v)
 	}
+}
+
+// 回收旧电脑时 provider 挂起（TCP 连上但不回包）不能拖住整个回收器：每次调用有超时；
+// 失败后按退避重试，退避期内不再调用 provider，成功删除后清掉退避状态。
+func TestComputerOrphanReaperBoundsBlockedProvider(t *testing.T) {
+	f := &fakeComputers{removeBlocks: true, findBlocks: true}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true})
+	ctx := context.Background()
+	// 两条旧记录：一条只有 sandbox_id（走 Remove），一条只有 creation_key（走 FindPersistent）。
+	var orphanIDs []int64
+	for _, o := range []struct{ sandbox, creation string }{{"stuck-box", ""}, {"", "stuck-creation-key"}} {
+		res, err := c.s.store.DB().ExecContext(ctx,
+			`INSERT INTO runtime_computer_orphans (sandbox_id, creation_key, bot_id, reason, created_at) VALUES (?, ?, 0, 'merge', NOW(3))`,
+			o.sandbox, o.creation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		orphanIDs = append(orphanIDs, id)
+	}
+	oldTimeout, oldBackoff := runtimeComputerOrphanCallTimeout, runtimeComputerOrphanRetryBase
+	runtimeComputerOrphanCallTimeout = 50 * time.Millisecond
+	runtimeComputerOrphanRetryBase = time.Hour
+	defer func() {
+		runtimeComputerOrphanCallTimeout, runtimeComputerOrphanRetryBase = oldTimeout, oldBackoff
+	}()
+
+	start := time.Now()
+	c.s.reapComputerOrphans(ctx)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("回收器在挂起的 provider 上等了 %v，单次调用必须有超时", elapsed)
+	}
+	if f.removes != 1 || f.finds != 1 {
+		t.Fatalf("first pass provider calls: removes=%d finds=%d", f.removes, f.finds)
+	}
+	if n := computerOrphanCount(t, c); n != 2 {
+		t.Fatalf("provider 失败后不应删除记录，剩余 %d 条", n)
+	}
+
+	// 退避期内再跑一轮：不再调用 provider。
+	c.s.reapComputerOrphans(ctx)
+	if f.removes != 1 || f.finds != 1 {
+		t.Fatalf("退避期内又调用了 provider: removes=%d finds=%d", f.removes, f.finds)
+	}
+
+	// 退避到期、provider 恢复：删除成功并清掉退避状态。
+	f.mu.Lock()
+	f.removeBlocks, f.findBlocks = false, false
+	f.mu.Unlock()
+	for _, id := range orphanIDs {
+		c.s.computerOrphanRetries[id] = computerOrphanRetry{next: time.Now().Add(-time.Second)}
+	}
+	c.s.reapComputerOrphans(ctx)
+	if f.removes != 2 || f.finds != 2 {
+		t.Fatalf("retry provider calls: removes=%d finds=%d", f.removes, f.finds)
+	}
+	if n := computerOrphanCount(t, c); n != 0 {
+		t.Fatalf("重试成功后剩余 %d 条旧记录", n)
+	}
+	if len(c.s.computerOrphanRetries) != 0 {
+		t.Fatalf("退避状态没有清理: %+v", c.s.computerOrphanRetries)
+	}
+}
+
+func computerOrphanCount(t *testing.T, c *computerTest) int {
+	t.Helper()
+	var n int
+	if err := c.s.store.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM runtime_computer_orphans`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
