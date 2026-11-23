@@ -576,8 +576,8 @@ func runtimeAffected(res sql.Result, err error) error {
 }
 
 // SetRuntimeBotShare 把机器人共享给 department（users.department 的取值；空串表示取消共享），返回原来共享给的部门。
-// ownerID>0 时只能改这位员工本人、以本人身份运行的机器人（所有者自己操作），共享时还要求只读且开着网页对话；
-// ownerID=0 是管理员，不限所有者。
+// ownerID>0 时只能改这位员工本人、以本人身份运行的机器人（所有者自己操作），共享时还要求只读、开着网页对话，
+// 且它不是机器人替员工新建的（runtime_bot_origins 有记录，只能由管理员共享）；ownerID=0 是管理员，不限所有者。
 // 取消共享或改到别的部门时，原团队线程里排队 / 运行中的轮次在同一个事务里取消：原部门的成员已经看不到这条线程，
 // 结果不该再写进去；正在运行的轮次由 worker 的状态巡检停下沙箱（见 runCloudClaim）。
 func (s *Store) SetRuntimeBotShare(ctx context.Context, botID, ownerID int64, department string) (string, error) {
@@ -588,8 +588,11 @@ func (s *Store) SetRuntimeBotShare(ctx context.Context, botID, ownerID int64, de
 	defer tx.Rollback()
 	var previous string
 	// 所有者取消共享不看网页对话开关（管理员关掉网页对话后所有者仍能收回共享）；共享时才要求机器人此刻可对话。
-	err = tx.QueryRowContext(ctx, `SELECT shared_department FROM runtime_bots
-		WHERE id=? AND (?=0 OR (owner_id=? AND run_as_id=owner_id AND (?='' OR (read_only=1 AND web_chat_enabled=1)))) FOR UPDATE`,
+	// 机器人替员工新建的机器人（runtime_bot_origins 有记录）不能由所有者共享给部门：它的提示词由机器人 / 模型控制，
+	// 共享后同部门的同事会以本人权限执行所有者写的提示词，超出「共享不放大权限」的边界；要共享由管理员另行处理。
+	err = tx.QueryRowContext(ctx, `SELECT b.shared_department FROM runtime_bots b
+		WHERE b.id=? AND (?=0 OR (b.owner_id=? AND b.run_as_id=b.owner_id AND (?='' OR (b.read_only=1 AND b.web_chat_enabled=1
+		AND NOT EXISTS (SELECT 1 FROM runtime_bot_origins o WHERE o.bot_id=b.id))))) FOR UPDATE`,
 		botID, ownerID, ownerID, department).Scan(&previous)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
