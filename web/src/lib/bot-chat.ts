@@ -34,6 +34,33 @@ export interface ChatBot {
   bot_id?: ChatId | null;
   /** 只出现在自己的机器人上：当前共享给了哪个部门（没共享时没有）。 */
   shared_department?: string | null;
+  /** 写操作审批模式（管理员设置）；旧后端没有这个字段，按只读处理。 */
+  approval_mode?: ApprovalMode | null;
+  /** 管理员是否允许本人在对话页切换审批模式。 */
+  approval_editable?: boolean | null;
+}
+
+/**
+ * 云端机器人的写操作审批模式：
+ * read_only 只读；manual 逐个审批；auto 按规则自动审批，其余逐个审批；full 完全放行（不再审批，仍有审计）。
+ */
+export type ApprovalMode = "read_only" | "manual" | "auto" | "full";
+export const APPROVAL_MODES: ApprovalMode[] = ["read_only", "manual", "auto", "full"];
+export const approvalModeOf = (b: Pick<ChatBot, "approval_mode"> | null | undefined): ApprovalMode =>
+  b?.approval_mode && APPROVAL_MODES.includes(b.approval_mode) ? b.approval_mode : "read_only";
+
+/** 一张审批卡：机器人在某一轮（runtime_task_id）里要做的写操作，等员工批准或拒绝。复用写操作确认（/api/me/confirmations）。 */
+export interface ChatApproval {
+  id: ChatId;
+  tool: string;
+  /** 规整后的参数 JSON。 */
+  args: string;
+  status: string;
+  /** 企业系统名、工具说明（后端按连接补上）。 */
+  system?: string;
+  description?: string;
+  runtime_task_id?: ChatId | null;
+  expires_at: string;
 }
 
 export interface ChatConversation {
@@ -73,11 +100,32 @@ export interface ChatArtifact {
 /** 机器人资料里的文件：带所属云任务，下载走 artifactUrl(task_id, id)。 */
 export interface ChatBotArtifact extends ChatArtifact {
   task_id: ChatId;
+  /** 来自对话轮次（chat）还是定时 / 手动任务（task）。 */
+  source?: "chat" | "task" | null;
   size?: number | null;
   created_at?: string | null;
 }
 
-/** 机器人资料：每日定时任务（UTC cron）、是否开启、云端电脑是否在运行、生成过的文件。 */
+/**
+ * 机器人自己的常驻云电脑。none：还没有（下一轮新建）；waking：正在新建或从休眠恢复；running：开着；
+ * hibernating：正在休眠；hibernated：已休眠（文件保留，下一轮自动唤醒）。
+ */
+export type ChatComputerState = "none" | "waking" | "running" | "hibernating" | "hibernated";
+
+export interface ChatComputer {
+  /** 为假：这个运行时每轮都用一台新电脑，没有休眠 / 唤醒。 */
+  persistent: boolean;
+  state: ChatComputerState;
+  /** 正被一个任务或操作占用。 */
+  busy: boolean;
+  disk_bytes: number;
+  disk_limit_bytes: number;
+  idle_timeout_seconds: number;
+  last_used_at?: string | null;
+  hibernated_at?: string | null;
+}
+
+/** 机器人资料：每日定时任务（UTC cron）、是否开启、是否有任务在跑、云电脑状态、生成过的文件。 */
 export interface ChatBotProfile {
   /** 团队机器人的资料：没有所有者的定时设置，文件库只有团队会话里的文件。 */
   shared?: boolean;
@@ -85,6 +133,8 @@ export interface ChatBotProfile {
   schedule: string;
   schedule_enabled: boolean;
   running: boolean;
+  /** 旧后端没有这个字段。 */
+  computer?: ChatComputer | null;
   artifacts: ChatBotArtifact[];
 }
 
@@ -126,6 +176,19 @@ export const chatApi = {
   send: (id: ChatId, content: string, idempotencyKey: string) =>
     request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, { content, idempotency_key: idempotencyKey }),
   artifacts: (taskId: ChatId) => request<ChatArtifact[] | null>("GET", `${tasksBase}/${enc(taskId)}/artifacts`).then((x) => x ?? []),
+  /** 我待审批的云端机器人写操作（只取带 runtime_task_id 的）。 */
+  approvals: () =>
+    request<{ items: ChatApproval[] | null }>("GET", "/api/me/confirmations").then((x) => (x.items ?? []).filter((a) => a.runtime_task_id != null)),
+  /** 批准或拒绝一张审批卡；机器人那一轮在等这个决定，批准后才执行。 */
+  decide: (id: ChatId, approve: boolean) => request<ChatApproval>("POST", `/api/me/confirmations/${enc(id)}`, { approve }),
+  /** 本人切换审批模式（需管理员允许）；切到完全放行必须带 confirmFullAccess。 */
+  setApprovalMode: (botId: ChatId, mode: ApprovalMode, confirmFullAccess: boolean) =>
+    request<{ approval_mode: ApprovalMode; approval_editable: boolean }>("PUT", `${base}/bots/${enc(botId)}/approval`, {
+      approval_mode: mode,
+      confirm_full_access: confirmFullAccess,
+    }),
+  /** 立即休眠（文件保留）或重置（删除整台电脑和其中的文件）。 */
+  computer: (botId: ChatId, action: "hibernate" | "reset") => request<ChatComputer>("POST", `${base}/bots/${enc(botId)}/computer/${action}`),
   /** 产物下载地址：只在员工点击时访问，页面不会自动下载。 */
   artifactUrl: (taskId: ChatId, artifactId: ChatId) => `${tasksBase}/${enc(taskId)}/artifacts/${enc(artifactId)}`,
 };

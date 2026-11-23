@@ -856,9 +856,11 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tools := []map[string]any{}
+		// 云任务：审批模式不是只读时才下发写工具，执行前再按模式审批（runtime_approval.go）
+		runtimeWrites := pr.Runtime && s.runtimeWritesListed(r.Context(), pr)
 		for _, cn := range c.conns {
 			for _, t := range cn.tools {
-				if pr.RuntimeReadOnly && !t.ReadOnly {
+				if pr.Runtime && !t.ReadOnly && !runtimeWrites {
 					continue
 				}
 				tools = append(tools, map[string]any{
@@ -874,7 +876,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		if len(c.kbases) > 0 {
 			tools = append(tools, kbToolDefs()...)
 		}
-		if !pr.RuntimeReadOnly {
+		if !pr.Runtime {
 			if targets := s.appToolTargets(r.Context(), v, c); len(targets) > 0 {
 				tools = append(tools, appToolDefs(targets)...)
 			}
@@ -909,9 +911,9 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			writeRPC(w, msg.ID, nil, &mcp.Error{Code: -32602, Message: "参数格式不对"})
 			return
 		}
-		if pr.RuntimeReadOnly && (strings.HasPrefix(p.Name, "ee_") || strings.HasPrefix(p.Name, dataConn+"__") ||
+		if pr.Runtime && (strings.HasPrefix(p.Name, "ee_") || strings.HasPrefix(p.Name, dataConn+"__") ||
 			strings.HasPrefix(p.Name, appConn+"__") || strings.HasPrefix(p.Name, homeConn+"__")) {
-			writeRPC(w, msg.ID, mcp.TextResult("Tool unavailable to read-only cloud tasks", true), nil)
+			writeRPC(w, msg.ID, mcp.TextResult(runtimeReadOnlyRejection, true), nil)
 			return
 		}
 		if strings.HasPrefix(p.Name, "ee_") {
@@ -956,8 +958,9 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, t := range cn.tools {
 				if t.Name == tool {
-					if pr.RuntimeReadOnly && !t.ReadOnly {
-						writeRPC(w, msg.ID, mcp.TextResult("Tool unavailable to read-only cloud tasks", true), nil)
+					// 云任务的写操作：按机器人的审批模式放行、出卡等员工批准或拦下，都留审计
+					if pr.Runtime && !t.ReadOnly {
+						writeRPC(w, msg.ID, s.runtimeWrite(r, v, pr, cn.asset, t, p.Arguments), nil)
 						return
 					}
 					ctx := r.Context()

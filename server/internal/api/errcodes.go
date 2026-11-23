@@ -80,6 +80,25 @@ const (
 	codeRuntimeChatNoDepartment = "runtime_chat.no_department"
 	// codeRuntimeChatInvalidDepartment：管理员共享机器人时给的部门名为空白以外的非法值（超长、含控制字符），400。params：max（最大字符数）。
 	codeRuntimeChatInvalidDepartment = "runtime_chat.invalid_department"
+	// codeRuntimeApprovalInvalidMode：云端机器人的审批模式不是 read_only / manual / auto / full，400。params 无。
+	codeRuntimeApprovalInvalidMode = "runtime_approval.invalid_mode"
+	// codeRuntimeApprovalInvalidRules：自动审批规则不合法（空模式、单独的 *、含空白或斜杠、超长或超过条数上限），400。params：max（最多条数）。
+	codeRuntimeApprovalInvalidRules = "runtime_approval.invalid_rules"
+	// codeRuntimeApprovalRiskUnconfirmed：切到完全放行时没有确认风险（confirm_full_access），400。params 无。
+	codeRuntimeApprovalRiskUnconfirmed = "runtime_approval.risk_unconfirmed"
+	// codeRuntimeApprovalLocked：管理员没有允许所有者本人修改这个机器人的审批模式，403。params 无。
+	codeRuntimeApprovalLocked = "runtime_approval.locked"
+
+	// ---- 机器人常驻云电脑：server/internal/api/runtime_computer.go ----
+
+	// codeRuntimeComputerBusy：电脑正在跑任务或正在被另一次操作改动，手动休眠 / 重置 / 回收被拒，409。params 无。
+	codeRuntimeComputerBusy = "runtime_computer.busy"
+	// codeRuntimeComputerUnsupported：当前运行时不支持常驻电脑（provider 不支持休眠 / 唤醒或已关闭常驻），每轮都是新电脑，409。params 无。
+	codeRuntimeComputerUnsupported = "runtime_computer.unsupported"
+	// codeRuntimeComputerProviderFailed：沙箱服务执行休眠 / 删除失败，502。params 无。
+	codeRuntimeComputerProviderFailed = "runtime_computer.provider_failed"
+	// codeRuntimeComputerNotFound：管理员回收时机器人没有电脑记录，404。params 无。
+	codeRuntimeComputerNotFound = "runtime_computer.not_found"
 
 	// ---- 登录与认证：server/internal/api/auth.go ----
 

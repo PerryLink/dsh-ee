@@ -224,4 +224,16 @@ export default {
     no_department: "Your account has no department, so you can't share the bot.",
     invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
   },
+  runtime_approval: {
+    invalid_mode: "El modo de aprobación debe ser solo lectura, aprobar cada una, aprobación automática o acceso total.",
+    invalid_rules: "Reglas de aprobación automática no válidas: sin * aislado, sin espacios ni barras, y como máximo {{max}} reglas.",
+    risk_unconfirmed: "Confirma los riesgos antes de activar el acceso total.",
+    locked: "Tu administrador no te permite cambiar el modo de aprobación de este bot.",
+  },
+  runtime_computer: {
+    busy: "The cloud computer is working or being changed right now. Try again shortly.",
+    unsupported: "This runtime doesn't keep cloud computers; every task uses a fresh one.",
+    provider_failed: "The sandbox service couldn't complete the operation. Try again later.",
+    not_found: "This bot doesn't have a cloud computer yet.",
+  },
 } satisfies Messages<typeof zh>;

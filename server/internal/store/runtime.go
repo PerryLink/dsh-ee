@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -43,20 +44,73 @@ type RuntimeBot struct {
 	WebChatEnabled bool `json:"web_chat_enabled"`
 	// SharedDepartment 是机器人共享给的部门（users.department）；空串表示不共享（默认）。
 	// 只由 SetRuntimeBotShare 写入，SaveRuntimeBot 不改它。
-	SharedDepartment string    `json:"shared_department"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	SharedDepartment string `json:"shared_department"`
+	// ApprovalMode 是写操作的放行方式（RuntimeApproval*）；ReadOnly 与它保持一致，只读时为 true。
+	ApprovalMode string `json:"approval_mode"`
+	// ApprovalRules 是自动审批的规则：匹配工具全名（<连接>__<工具>）的通配模式，只在 auto 模式下生效。
+	ApprovalRules []string `json:"approval_rules"`
+	// ApprovalEmployeeEditable 表示管理员允许所有者本人在对话页切换审批模式（规则仍只由管理员设置）。
+	ApprovalEmployeeEditable bool      `json:"approval_employee_editable"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
-const runtimeBotColumns = `id, owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, web_chat_enabled, shared_department, created_at, updated_at`
+// 云端机器人的写操作审批模式。
+const (
+	// RuntimeApprovalReadOnly：只读，写工具不下发、调用一律拦下（默认，与旧行为一致）。
+	RuntimeApprovalReadOnly = "read_only"
+	// RuntimeApprovalManual：每个写操作都在对话里出审批卡，员工批准后才执行。
+	RuntimeApprovalManual = "manual"
+	// RuntimeApprovalAuto：命中自动审批规则的直接执行，其余照逐个审批出卡。
+	RuntimeApprovalAuto = "auto"
+	// RuntimeApprovalFull：完全放行，不再审批（仍然留审计）。
+	RuntimeApprovalFull = "full"
+)
+
+// ValidRuntimeApprovalMode 判断审批模式取值是否合法。
+func ValidRuntimeApprovalMode(mode string) bool {
+	switch mode {
+	case RuntimeApprovalReadOnly, RuntimeApprovalManual, RuntimeApprovalAuto, RuntimeApprovalFull:
+		return true
+	}
+	return false
+}
+
+const runtimeBotColumns = `id, owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, web_chat_enabled,
+	approval_mode, COALESCE(approval_rules,''), approval_employee_editable, shared_department, created_at, updated_at`
 
 func scanRuntimeBot(row interface{ Scan(...any) error }) (*RuntimeBot, error) {
 	var b RuntimeBot
-	err := row.Scan(&b.ID, &b.OwnerID, &b.RunAsID, &b.Name, &b.Prompt, &b.Schedule, &b.Enabled, &b.ReadOnly, &b.DeliveryTarget, &b.WebChatEnabled, &b.SharedDepartment, &b.CreatedAt, &b.UpdatedAt)
+	var rules string
+	err := row.Scan(&b.ID, &b.OwnerID, &b.RunAsID, &b.Name, &b.Prompt, &b.Schedule, &b.Enabled, &b.ReadOnly, &b.DeliveryTarget, &b.WebChatEnabled,
+		&b.ApprovalMode, &rules, &b.ApprovalEmployeeEditable, &b.SharedDepartment, &b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return &b, err
+	if err != nil {
+		return nil, err
+	}
+	b.ApprovalRules = decodeRuntimeApprovalRules(rules)
+	return &b, nil
+}
+
+func decodeRuntimeApprovalRules(raw string) []string {
+	rules := []string{}
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &rules)
+	}
+	if rules == nil {
+		rules = []string{}
+	}
+	return rules
+}
+
+func encodeRuntimeApprovalRules(rules []string) string {
+	if len(rules) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(rules)
+	return string(b)
 }
 
 // SaveRuntimeBot 新建或更新机器人。webChat 是网页对话开关的显式取值：nil 表示调用方没带这个字段，
@@ -64,9 +118,16 @@ func scanRuntimeBot(row interface{ Scan(...any) error }) (*RuntimeBot, error) {
 // b.WebChatEnabled 只用于读取，不参与写入。
 func (s *Store) SaveRuntimeBot(ctx context.Context, b *RuntimeBot, webChat *bool) error {
 	t := now()
+	if !ValidRuntimeApprovalMode(b.ApprovalMode) {
+		b.ApprovalMode = RuntimeApprovalReadOnly
+	}
+	b.ReadOnly = b.ApprovalMode == RuntimeApprovalReadOnly
+	rules := encodeRuntimeApprovalRules(b.ApprovalRules)
 	if b.ID == 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bots (owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, web_chat_enabled, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?)`, b.OwnerID, b.RunAsID, b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, webChat != nil && *webChat, t, t)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bots (owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, web_chat_enabled,
+			approval_mode, approval_rules, approval_employee_editable, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, b.OwnerID, b.RunAsID, b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, webChat != nil && *webChat,
+			b.ApprovalMode, rules, b.ApprovalEmployeeEditable, t, t)
 		if err != nil {
 			return err
 		}
@@ -77,9 +138,80 @@ func (s *Store) SaveRuntimeBot(ctx context.Context, b *RuntimeBot, webChat *bool
 	if webChat != nil {
 		webChatParam = sql.NullBool{Bool: *webChat, Valid: true}
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE runtime_bots SET name=?, prompt=?, schedule=?, enabled=?, read_only=?, delivery_target=?, web_chat_enabled=COALESCE(?, web_chat_enabled), updated_at=? WHERE id=? AND owner_id=? AND run_as_id=?`,
-		b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, webChatParam, t, b.ID, b.OwnerID, b.RunAsID)
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_bots SET name=?, prompt=?, schedule=?, enabled=?, read_only=?, delivery_target=?, web_chat_enabled=COALESCE(?, web_chat_enabled),
+		approval_mode=?, approval_rules=?, approval_employee_editable=?, updated_at=? WHERE id=? AND owner_id=? AND run_as_id=?`,
+		b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, webChatParam, b.ApprovalMode, rules, b.ApprovalEmployeeEditable, t, b.ID, b.OwnerID, b.RunAsID)
 	return runtimeAffected(res, err)
+}
+
+// SetRuntimeBotApprovalMode 是所有者本人在对话页切换审批模式：只有管理员允许员工修改、且机器人属于本人时才改得动。
+// 规则和「是否允许员工修改」不动。改不动（不存在、不属于本人、不允许修改）返回 ErrNotFound。
+func (s *Store) SetRuntimeBotApprovalMode(ctx context.Context, botID, ownerID int64, mode string) error {
+	if !ValidRuntimeApprovalMode(mode) {
+		return ErrConflict
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE runtime_bots SET approval_mode=?, read_only=?, updated_at=?
+		WHERE id=? AND owner_id=? AND run_as_id=owner_id AND approval_employee_editable=1`,
+		mode, mode == RuntimeApprovalReadOnly, now(), botID, ownerID)
+	if err != nil {
+		return err
+	}
+	// 模式没变时 MySQL 报 0 行受影响；用一次读取区分「没变」和「改不动」。
+	var ok int
+	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM runtime_bots WHERE id=? AND owner_id=? AND run_as_id=owner_id AND approval_employee_editable=1 AND approval_mode=?`,
+		botID, ownerID, mode).Scan(&ok)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
+// RuntimeWriteContext 是一轮云任务做写操作时要用的上下文：任务、它所属的机器人和那个机器人此刻的审批设置。
+// 没有机器人的临时任务 BotID 为 0、模式为只读。
+type RuntimeWriteContext struct {
+	TaskID        int64
+	OwnerID       int64
+	RunAsID       int64
+	Status        string
+	BotID         int64
+	BotName       string
+	ApprovalMode  string
+	ApprovalRules []string
+}
+
+// SetRuntimeTaskCredential 记下这一轮云任务签发的短期凭证，/mcp 用它找回任务。
+func (s *Store) SetRuntimeTaskCredential(ctx context.Context, taskID, tokenID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE runtime_tasks SET credential_token_id=? WHERE id=?`, tokenID, taskID)
+	return err
+}
+
+// RuntimeWriteContextByToken 按云任务的短期凭证找回任务和机器人的审批设置；审批模式每次现读，管理员改了立即生效。
+func (s *Store) RuntimeWriteContextByToken(ctx context.Context, tokenID int64) (*RuntimeWriteContext, error) {
+	var w RuntimeWriteContext
+	var botID sql.NullInt64
+	var name, mode, rules sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT t.id, t.owner_id, t.run_as_id, t.status, b.id, b.name, b.approval_mode, b.approval_rules
+		FROM runtime_tasks t
+		LEFT JOIN runtime_chat_conversations c ON c.id = t.chat_conversation_id
+		LEFT JOIN runtime_bots b ON b.id = COALESCE(t.bot_id, IF(c.owner_id=t.owner_id, c.bot_id, NULL))
+			AND b.owner_id = t.owner_id AND b.run_as_id = t.run_as_id
+		WHERE t.credential_token_id=? ORDER BY t.id DESC LIMIT 1`, tokenID).
+		Scan(&w.TaskID, &w.OwnerID, &w.RunAsID, &w.Status, &botID, &name, &mode, &rules)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	w.ApprovalMode, w.ApprovalRules = RuntimeApprovalReadOnly, []string{}
+	if botID.Valid {
+		w.BotID, w.BotName = botID.Int64, name.String
+		if ValidRuntimeApprovalMode(mode.String) {
+			w.ApprovalMode = mode.String
+		}
+		w.ApprovalRules = decodeRuntimeApprovalRules(rules.String)
+	}
+	return &w, nil
 }
 
 func (s *Store) RuntimeBot(ctx context.Context, id int64) (*RuntimeBot, error) {
@@ -126,21 +258,25 @@ type RuntimeTask struct {
 	// 网页对话轮次才有；不进公开 DTO。对话轮次的 BotID 为空，机器人记在对话上。
 	ChatConversationID *int64 `json:"-"`
 	ChatContent        string `json:"-"`
+	// 与常驻工作目录接触过的任务结果只对所有者开放。
+	PrivateResult bool `json:"private_result,omitempty"`
+	// A queued retry isn't claimable while its previous computer lease is active.
+	RetryAfter *time.Time `json:"-"`
 }
 
 const runtimeTaskColumns = `id, owner_id, run_as_id, bot_id, prompt, status, attempts, COALESCE(idempotency_key,''), timeout_seconds,
-	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,'')`
+	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,''), private_result`
 
 // runtimeTaskOwned 是任务读取的归属条件（两个参数都是 ownerID）：所有者能读自己的全部任务；
-// ownerID=0 的管理员通配只覆盖普通任务，员工网页对话的轮次、回复和产物不对管理员开放。
+// ownerID=0 的管理员通配不包含网页对话和使用过常驻工作目录的任务。
 func runtimeTaskOwned(prefix string) string {
-	return `(` + prefix + `owner_id=? OR (?=0 AND ` + prefix + `chat_conversation_id IS NULL))`
+	return `(` + prefix + `owner_id=? OR (?=0 AND ` + prefix + `chat_conversation_id IS NULL AND NOT ` + prefix + `private_result))`
 }
 
 func scanRuntimeTask(row interface{ Scan(...any) error }) (*RuntimeTask, error) {
 	var t RuntimeTask
 	err := row.Scan(&t.ID, &t.OwnerID, &t.RunAsID, &t.BotID, &t.Prompt, &t.Status, &t.Attempts, &t.IdempotencyKey, &t.TimeoutSeconds,
-		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt, &t.ChatConversationID, &t.ChatContent)
+		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt, &t.ChatConversationID, &t.ChatContent, &t.PrivateResult)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -242,7 +378,7 @@ func (s *Store) RuntimeTask(ctx context.Context, id, ownerID int64) (*RuntimeTas
 
 func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-		WHERE (?=0 OR owner_id=?) AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
+		WHERE (owner_id=? OR ?=0) AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -252,6 +388,9 @@ func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask,
 		t, err := scanRuntimeTask(rows)
 		if err != nil {
 			return nil, err
+		}
+		if ownerID == 0 && t.PrivateResult {
+			t.Summary, t.Error = "", ""
 		}
 		out = append(out, *t)
 	}
@@ -265,14 +404,15 @@ func (s *Store) ClaimRuntimeTask(ctx context.Context, attemptLimit int, grace ti
 	}
 	for {
 		task, err := scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-			WHERE status=? OR (status=? AND lease_until<=? AND attempts<?) ORDER BY id LIMIT 1`, RuntimeQueued, RuntimeRunning, t, attemptLimit))
+			WHERE (status=? AND (lease_until IS NULL OR lease_until<=?)) OR (status=? AND lease_until<=? AND attempts<?)
+			ORDER BY id LIMIT 1`, RuntimeQueued, t, RuntimeRunning, t, attemptLimit))
 		if err != nil {
 			return nil, err
 		}
 		lease := t.Add(time.Duration(task.TimeoutSeconds)*time.Second + grace)
 		err = s.recordRuntimeTransition(ctx, task.ID, RuntimeRunning, t, `UPDATE runtime_tasks SET status=?, attempts=attempts+1, started_at=?, updated_at=?, lease_until=?
-			WHERE id=? AND attempts=? AND (status=? OR (status=? AND lease_until<=?))`,
-			RuntimeRunning, t, t, lease, task.ID, task.Attempts, RuntimeQueued, RuntimeRunning, t)
+			WHERE id=? AND attempts=? AND ((status=? AND (lease_until IS NULL OR lease_until<=?)) OR (status=? AND lease_until<=?))`,
+			RuntimeRunning, t, t, lease, task.ID, task.Attempts, RuntimeQueued, t, RuntimeRunning, t)
 		switch {
 		case errors.Is(err, ErrConflict):
 			continue
@@ -383,12 +523,14 @@ func (s *Store) FinishRuntimeTask(ctx context.Context, task *RuntimeTask, status
 	}
 	defer tx.Rollback()
 	t := now()
-	var finished *time.Time
-	if status != RuntimeQueued {
+	var finished, retryAfter *time.Time
+	if status == RuntimeQueued {
+		retryAfter = task.RetryAfter
+	} else {
 		finished = &t
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=NULL
-		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, task.ID, RuntimeRunning, task.Attempts, t)
+	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=?, private_result=private_result OR ?
+		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, retryAfter, task.PrivateResult, task.ID, RuntimeRunning, task.Attempts, t)
 	if err := runtimeAffected(res, err); err != nil {
 		return err
 	}

@@ -33,7 +33,7 @@ func (m *memoryRuntime) Create(context.Context, runtime.SandboxSpec) (runtime.Sa
 }
 
 func (m *memoryRuntime) Exec(_ context.Context, c runtime.Command) (runtime.Result, error) {
-	if c.Args[0] == "mkdir" {
+	if c.Args[0] == "mkdir" || c.Args[0] == "rm" {
 		return runtime.Result{}, nil
 	}
 	if err := m.run(c); err != nil {
@@ -92,7 +92,7 @@ func TestCloudRuntimePilot(t *testing.T) {
 				t.Fatal("runtime credential accepted outside the model gateway and MCP")
 			}
 			pr, err := s.resolveBearer(context.WithValue(context.Background(), runtimeTokenRouteKey{}, true), token, "")
-			if err != nil || !pr.RuntimeReadOnly || pr.User.ID != employee || pr.AdminLive {
+			if err != nil || !pr.Runtime || pr.User.ID != employee || pr.AdminLive {
 				t.Fatalf("unexpected runtime principal: %v", err)
 			}
 			req := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ee_write","arguments":{}}}`))

@@ -38,8 +38,9 @@ const (
 )
 
 // runtimeChatBotEligible 是机器人可用于网页对话的条件（参数是当前员工 ID）：
-// 所有者本人、以所有者身份运行、只读、且管理员打开了网页对话。
-const runtimeChatBotEligible = `owner_id=? AND run_as_id=owner_id AND read_only=1 AND web_chat_enabled=1`
+// 所有者本人、以所有者身份运行、且管理员打开了网页对话。写操作是否放行由机器人的审批模式决定
+// （只读模式与旧行为一致），不再要求机器人只读。
+const runtimeChatBotEligible = `owner_id=? AND run_as_id=owner_id AND web_chat_enabled=1`
 
 // runtimeChatTeamBotEligible 是机器人可用于团队对话的条件（表别名 b，参数是当前员工 ID）：机器人共享给了某个部门、
 // 以所有者身份定义、只读、开着网页对话，并且当前员工此刻就在这个部门、账号没停用。
@@ -69,6 +70,9 @@ type RuntimeChatBot struct {
 	OwnerName  string `json:"owner_name,omitempty"`
 	// SharedDepartment 只出现在所有者自己的机器人入口上：这个机器人当前共享给的部门（没共享时省略）。
 	SharedDepartment string `json:"shared_department,omitempty"`
+	// ApprovalMode 是机器人的写操作审批模式；ApprovalEditable 表示管理员允许本人在对话页切换。
+	ApprovalMode     string `json:"approval_mode"`
+	ApprovalEditable bool   `json:"approval_editable"`
 }
 
 // RuntimeChatArtifact 是机器人资料页里的一个产物；下载走任务产物接口
@@ -188,14 +192,14 @@ func scanRuntimeChatTurns(rows *sql.Rows, team bool) ([]RuntimeChatTurn, error) 
 // 再是共享给他所在部门的团队机器人（Shared 为真）。所有者本人也在这个部门时，同一个机器人会出现两次：
 // 一次是自己的线程，一次是团队线程。
 func (s *Store) RuntimeChatBots(ctx context.Context, ownerID int64) ([]RuntimeChatBot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, shared_department FROM runtime_bots WHERE `+runtimeChatBotEligible+` ORDER BY id`, ownerID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, approval_mode, approval_employee_editable, shared_department FROM runtime_bots WHERE `+runtimeChatBotEligible+` ORDER BY id`, ownerID)
 	if err != nil {
 		return nil, err
 	}
 	out := []RuntimeChatBot{}
 	for rows.Next() {
 		var b RuntimeChatBot
-		if err := rows.Scan(&b.ID, &b.Name, &b.SharedDepartment); err != nil {
+		if err := rows.Scan(&b.ID, &b.Name, &b.ApprovalMode, &b.ApprovalEditable, &b.SharedDepartment); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -212,7 +216,7 @@ func (s *Store) RuntimeChatBots(ctx context.Context, ownerID int64) ([]RuntimeCh
 		return nil, err
 	}
 	for rows.Next() {
-		b := RuntimeChatBot{Shared: true}
+		b := RuntimeChatBot{Shared: true, ApprovalMode: RuntimeApprovalReadOnly}
 		if err := rows.Scan(&b.ID, &b.Name, &b.Department, &b.OwnerName); err != nil {
 			rows.Close()
 			return nil, err

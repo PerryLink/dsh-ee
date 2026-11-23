@@ -18,6 +18,7 @@
 - [OpenAI Responses API 兼容 / OpenAI Responses API compatibility](/docs/responses-api): Codex / OpenAI Agents SDK 接 POST /v1/responses：请求映射、输出、SSE、错误与 v0 边界。
 - [云端常驻机器人试点 / Cloud resident bot pilot](/docs/cloud-runtime): 用 OpenSandbox 定时执行只读 DSH 任务、保存文件产物，并通过飞书私聊交付。
 - [团队共享机器人 / Sharing a bot with a team](/docs/bot-team-sharing): 把云端机器人共享给一个部门：成员共用一条团队对话、看到彼此的消息和文件，每条消息都用发送人自己的权限运行。
+- [云端机器人的写操作审批 / Write approval for cloud bots](/docs/bot-approval): 每个云端机器人的写操作审批模式：只读、逐个审批（对话里的审批卡）、按规则自动审批、完全放行，以及每次写操作的审计记录。
 - [Chatbot 网关选项与透传 / Chatbot gateway options and passthrough](/docs/chatbot): 联网工具、内容安全与会话标题：网关透传，可按部署注入 safety_check / title。
 - [DeepSeek FIM / 前缀续写 beta 透传 / DeepSeek FIM / chat-prefix beta passthrough](/docs/beta-completions): FIM 补全与 Chat Prefix 续写挂在 /beta/* 透传，沿用同一令牌、模型权限、额度与限流。
 

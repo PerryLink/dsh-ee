@@ -122,7 +122,7 @@ dsh-ee 是**一个文件**：前端嵌在 Go 二进制里，同一个端口提�
 curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh
 ```
 
-它会建 `./dsh-ee/` 目录，拉取最新发布的镜像，生成 `.env`（主密钥与初始管理员密码），用单机 TiDB 启动 dsh-ee，并打印管理员密码。选数据库用 `sh -s -- oceanbase` 或 `sh -s -- external`，固定版本用 `DSH_EE_VERSION=v0.3.0`。升级时在 `./dsh-ee/` 里再执行一次 `./install.sh`。**`.env` 要和数据库一起备份。**
+它会建 `./dsh-ee/` 目录，拉取最新发布的镜像，生成 `.env`（主密钥与初始管理员密码），用单机 TiDB 启动 dsh-ee，并打印管理员密码。选数据库用 `sh -s -- oceanbase` 或 `sh -s -- external`，固定版本用 `DSH_EE_VERSION=v0.3.1`。升级时在 `./dsh-ee/` 里再执行一次 `./install.sh`。**`.env` 要和数据库一起备份。**
 
 ### 离线安装包
 
@@ -143,13 +143,13 @@ sha256sum -c SHA256SUMS
 
 ### docker compose
 
-发布 tag 自动把 linux/amd64 与 linux/arm64 镜像推送到 GHCR。建议固定完整版本（如 `v0.3.0`）；
+发布 tag 自动把 linux/amd64 与 linux/arm64 镜像推送到 GHCR。建议固定完整版本（如 `v0.3.1`）；
 稳定版另更新 `0.3` 与 `latest`，预发布不更新浮动标签。镜像可以匿名拉取。上面的一条命令安装用的就是它；已有数据库时也可以直接跑：
 
 ```bash
 docker run -d --name dsh-ee -p 8080:8080 -v dsh-ee-data:/data \
   -e DSH_EE_DSN='root:@tcp(tidb-host:4000)/dsh_ee' \
-  ghcr.io/hikariming/dsh-ee:v0.3.0
+  ghcr.io/hikariming/dsh-ee:v0.3.1
 docker logs dsh-ee 2>&1 | grep 初始化码   # 创建第一个管理员用的初始化码
 ```
 

@@ -1,6 +1,6 @@
 export const runtime = {
   title: "Cloud resident bots",
-  desc: "Run daily read-only tasks on a UTC schedule and notify the task owner in Feishu.",
+  desc: "Run daily tasks on a UTC schedule and notify the task owner in Feishu. Writes follow each bot's approval mode (read-only by default).",
   unavailable: "Cloud tasks are not enabled.",
   employee: "Employee ID",
   name: "Name",
@@ -29,4 +29,25 @@ export const runtime = {
   succeeded: "Succeeded",
   failed: "Failed",
   canceled: "Canceled",
+  privateResult: "Only the owner can view this run’s results.",
+  computers: {
+    title: "Bot cloud computers",
+    policy: "Sleep after {{idle}} min idle; disk limit {{disk}} each; {{retention}}.",
+    retentionDays: "reclaimed after {{days}} days asleep",
+    retentionHours: "reclaimed after {{hours}} hours asleep",
+    retentionOff: "never reclaimed automatically",
+    ephemeral: "This runtime doesn't keep cloud computers; every task uses a new one. Computers left from before are listed below and can be reclaimed.",
+    empty: "No cloud computers yet.",
+    busy: "in use",
+    hibernate: "Sleep",
+    reclaim: "Reclaim",
+    reclaimConfirm: "Reclaiming deletes the cloud computer of bot \"{{bot}}\" and every file on it. The next run starts on a brand-new one.",
+    state: {
+      none: "off",
+      waking: "waking up",
+      running: "running",
+      hibernating: "going to sleep",
+      hibernated: "sleeping",
+    },
+  },
 };

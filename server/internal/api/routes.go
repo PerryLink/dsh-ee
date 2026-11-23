@@ -128,16 +128,22 @@ func (s *Server) routes() []route {
 		// 员工网页对话（runtime_chat.go）：只认网页会话里的员工本人
 		usr("GET /api/runtime/chat/bots", s.handleRuntimeChatBots),
 		usr("GET /api/runtime/chat/bots/{id}/profile", s.handleRuntimeChatBotProfile),
+		// 所有者本人切换机器人的写操作审批模式（runtime_approval.go），需管理员允许
+		usr("PUT /api/runtime/chat/bots/{id}/approval", s.handleRuntimeChatBotApproval),
 		usr("GET /api/runtime/chat/conversations", s.handleRuntimeChatConversations),
 		usr("POST /api/runtime/chat/conversations", s.handleRuntimeChatCreate),
 		usr("GET /api/runtime/chat/conversations/{id}", s.handleRuntimeChatConversation),
 		usr("POST /api/runtime/chat/conversations/{id}/messages", s.handleRuntimeChatMessage),
 		usr("PUT /api/runtime/chat/bots/{id}/share", s.handleRuntimeChatShare),
+		usr("POST /api/runtime/chat/bots/{id}/computer/{action}", s.handleRuntimeChatComputer),
 		prm("GET /api/admin/runtime/bots", s.handleRuntimeBots, rbac.SettingsManage),
 		prm("POST /api/admin/runtime/bots", s.handleRuntimeSaveBot, rbac.SettingsManage),
 		prm("PUT /api/admin/runtime/bots/{id}", s.handleRuntimeSaveBot, rbac.SettingsManage),
 		prm("POST /api/admin/runtime/bots/{id}/run", s.handleRuntimeRunBot, rbac.SettingsManage),
 		prm("PUT /api/admin/runtime/bots/{id}/share", s.handleRuntimeShareBot, rbac.SettingsManage),
+		prm("GET /api/admin/runtime/computers", s.handleRuntimeComputers, rbac.SettingsManage),
+		prm("POST /api/admin/runtime/computers/{id}/hibernate", s.handleRuntimeComputerAdmin, rbac.SettingsManage),
+		prm("DELETE /api/admin/runtime/computers/{id}", s.handleRuntimeComputerAdmin, rbac.SettingsManage),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
 		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
 		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),

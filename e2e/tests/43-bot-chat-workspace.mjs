@@ -4,6 +4,8 @@
 // - 更早的消息通过 ?before= 往前翻；日期分隔按语言显示；
 // - 发送后切到别的机器人，原来那条仍在等回复，回复到了左栏出现未读点；
 // - 右栏资料：动态（定时任务只读、云端电脑状态）与文件库（真实产物链接），可关闭、可从名字胶囊重新打开；
+// - 文件库里的文件可以在网页里预览（Markdown 排版 / 原文）；
+// - 全屏：盖住系统侧栏和顶栏，刷新后保持，可以退出，窄屏也能用；
 // - ?bot= 与旧的 ?conversation= 链接都能回到对应的机器人；窄屏上机器人列表和资料是可关闭的浮层。
 // E2E 环境没有配置云端运行时，/api/runtime/chat/* 用有状态的路由拦截代替；页面逻辑与登录、权限都是真的。
 import { ADMIN_PW, BASE, api, assert, assertEq, login, newPage, shot, step, tag } from "../lib.mjs";
@@ -56,7 +58,10 @@ export default async function (t) {
       schedule: "0 9 * * *",
       schedule_enabled: true,
       running: false,
-      artifacts: [{ id: 7, task_id: 3, name: `report-${tag}.csv`, size: 2048, created_at: ago(0) }],
+      artifacts: [
+        { id: 8, task_id: 3, name: `明日待办-${tag}.md`, source: "chat", size: 40, created_at: ago(0) },
+        { id: 7, task_id: 3, name: `report-${tag}.csv`, source: "task", size: 2048, created_at: ago(0) },
+      ],
     },
     [botB.id]: { schedule: "", schedule_enabled: false, running: true, artifacts: [] },
     [botC.id]: { schedule: "30 1 * * *", schedule_enabled: false, running: false, artifacts: [] },
@@ -104,7 +109,11 @@ export default async function (t) {
       const more = older.length > pageOf.length;
       return json(route, { conversation: conversationOf(id), messages: pageOf, ...(more ? { next_before: pageOf[0].id } : {}) });
     });
-    await p.route("**/api/runtime/tasks/*/artifacts/*", (route) => route.fulfill({ status: 200, contentType: "text/csv", body: "a,b\n1,2\n" }));
+    await p.route("**/api/runtime/tasks/*/artifacts/*", (route) =>
+      route.request().url().endsWith("/artifacts/8")
+        ? route.fulfill({ status: 200, contentType: "application/octet-stream", body: `# 明日待办\n\n- 九点站会-${tag}\n` })
+        : route.fulfill({ status: 200, contentType: "text/csv", body: "a,b\n1,2\n" }),
+    );
   };
   await mock(page);
 
@@ -218,6 +227,19 @@ export default async function (t) {
   await file.waitFor();
   assertEq(await file.getAttribute("href"), "/api/runtime/tasks/3/artifacts/7", "文件库链接应走已有的产物下载地址");
   assertEq(await api(page, "GET", await file.getAttribute("href")).then((r) => r.status), 200, "产物地址应可访问");
+  assert((await pane(page).locator("[data-profile-library]").innerText()).includes("定时任务"), "文件库应标出定时任务的产物");
+  // 预览：Markdown 默认排版，可切到原文；下载仍走产物地址
+  await pane(page).getByRole("button", { name: `预览 明日待办-${tag}.md`, exact: true }).click();
+  const viewer = page.locator("[data-file-preview]");
+  await viewer.getByText(`九点站会-${tag}`).waitFor();
+  assertEq(await viewer.getByRole("heading", { name: "明日待办", exact: true }).count(), 1, "Markdown 应排版显示");
+  await page.waitForTimeout(300);
+  await shot(page, "bot-chat-file-preview");
+  await viewer.getByRole("button", { name: "原文", exact: true }).click();
+  await viewer.getByText("# 明日待办", { exact: false }).waitFor();
+  assertEq(await viewer.getByRole("link", { name: "下载", exact: true }).getAttribute("href"), "/api/runtime/tasks/3/artifacts/8", "预览里的下载走产物地址");
+  await page.keyboard.press("Escape");
+  await viewer.waitFor({ state: "detached" });
   await pane(page).getByRole("button", { name: "关闭机器人资料", exact: true }).click();
   assertEq(await pane(page).count(), 0, "关闭后资料栏应收起");
   assertEq(await pill(page, botA).getAttribute("aria-expanded"), "false", "名字胶囊应反映资料栏已收起");
@@ -243,6 +265,28 @@ export default async function (t) {
   assertEq(hits.create, 1, "重新打开不应再创建对话");
   step("?bot= 与旧的 ?conversation= 链接都回到对应机器人的同一条对话");
 
+  // ---- 全屏：盖住系统侧栏和顶栏，只留机器人列表、对话和资料；刷新后保持；可以退出 ----
+  const workspace = (p) => p.locator("[data-bot-workspace]");
+  const covered = (p) => p.evaluate(() => !!document.elementFromPoint(8, 8)?.closest("[data-bot-workspace]"));
+  assertEq(await covered(page), false, "默认不全屏，系统侧栏可见");
+  await page.getByRole("button", { name: "全屏", exact: true }).click();
+  assertEq(await workspace(page).getAttribute("data-fullscreen"), "true", "进入全屏");
+  const box = await workspace(page).boundingBox();
+  const vp = page.viewportSize();
+  assert(box && box.x === 0 && box.y === 0 && Math.round(box.width) === vp.width && Math.round(box.height) === vp.height, `全屏应铺满窗口：${JSON.stringify(box)} vs ${JSON.stringify(vp)}`);
+  assertEq(await covered(page), true, "全屏时系统侧栏被盖住");
+  assertEq(await composer(page, botA).isVisible(), true, "全屏时输入框还在");
+  assertEq(await radio(page, botB).isVisible(), true, "全屏时机器人列表还在");
+  await page.reload();
+  await log(page).getByText(`报表已生成-${tag}`).waitFor();
+  assertEq(await workspace(page).getAttribute("data-fullscreen"), "true", "刷新后保持全屏");
+  await page.waitForTimeout(400); // 等入场动画播完再截图
+  await shot(page, "bot-chat-fullscreen");
+  await page.getByRole("button", { name: "退出全屏", exact: true }).click();
+  assertEq(await workspace(page).getAttribute("data-fullscreen"), "false", "退出全屏");
+  assertEq(await covered(page), false, "退出后系统侧栏回来");
+  step("全屏盖住系统侧栏和顶栏，刷新后保持，可以退出");
+
   // ---- 窄屏：机器人列表和资料是可关闭的浮层 ----
   const phone = await newPage(t, { viewport: { width: 390, height: 800 } });
   await mock(phone);
@@ -265,6 +309,15 @@ export default async function (t) {
   assertEq(await pane(phone).count(), 0, "窄屏上资料可以关闭");
   assertEq(await composer(phone, botB).isVisible(), true, "关闭后回到对话");
   await shot(phone, "bot-chat-workspace-mobile");
+  await phone.getByRole("button", { name: "全屏", exact: true }).click();
+  assertEq(await workspace(phone).getAttribute("data-fullscreen"), "true", "窄屏也能全屏");
+  assertEq(await composer(phone, botB).isVisible(), true, "窄屏全屏时输入框还在");
+  await phone.getByRole("button", { name: "打开机器人列表", exact: true }).click();
+  await radio(phone, botA).waitFor();
+  await phone.keyboard.press("Escape");
+  assertEq(await workspace(phone).getAttribute("data-fullscreen"), "true", "Esc 先关浮层，不退出全屏");
+  await phone.getByRole("button", { name: "退出全屏", exact: true }).click();
+  assertEq(await workspace(phone).getAttribute("data-fullscreen"), "false", "窄屏可以退出全屏");
   step("窄屏上可以选择机器人、打开并关闭资料");
 
   // ---- 英文界面：页签与输入提示有本地化文案 ----

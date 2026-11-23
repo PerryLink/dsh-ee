@@ -45,10 +45,12 @@ type Principal struct {
 	Client     string
 	// 令牌签发给哪类客户端：dsh / third_party（store.ClientKind*）。
 	// 网页会话不是令牌，为空。写确认只认这个属性，不认可伪造的 X-DshEE-Client 头。
-	ClientKind      string
-	Prefix          string
-	ExpiresAt       *time.Time
-	RuntimeReadOnly bool
+	ClientKind string
+	Prefix     string
+	ExpiresAt  *time.Time
+	// Runtime：这是云任务（云端机器人）一轮的短期凭证。只能用模型网关和 /mcp 的连接工具；
+	// 写操作按机器人的审批模式放行（runtime_approval.go），只读模式下与以前一样一律拦下。
+	Runtime bool
 }
 
 func (p *Principal) quota() *store.UserQuota {
@@ -148,7 +150,7 @@ func (s *Server) resolveBearer(ctx context.Context, token, ip string, clientHost
 		return &Principal{
 			User: u, Access: rbac.ScopeFilter(account, effective), Scopes: scopes, TokenID: t.ID,
 			Limit: t.MonthlyTokenLimit, Models: t.AllowedModels, Client: t.ClientName, ClientKind: store.NormalizeClientKind(t.ClientKind),
-			Prefix: t.Prefix, ExpiresAt: t.ExpiresAt, AdminLive: live, AdminUntil: t.AdminUntil, CanAdmin: rbac.HasAdminPerms(account), Account: account, RuntimeReadOnly: runtimeToken,
+			Prefix: t.Prefix, ExpiresAt: t.ExpiresAt, AdminLive: live, AdminUntil: t.AdminUntil, CanAdmin: rbac.HasAdminPerms(account), Account: account, Runtime: runtimeToken,
 		}, nil
 	case strings.HasPrefix(token, npmTokenPrefix):
 		t, u, err := s.store.ActiveNpmToken(ctx, hash)

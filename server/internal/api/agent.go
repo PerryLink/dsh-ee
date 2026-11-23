@@ -87,6 +87,7 @@ var agentExcluded = map[string]string{
 	"GET /api/runtime/tasks/{id}/artifacts/{artifact}":   "云任务产物只供员工下载",
 	"GET /api/runtime/chat/bots":                         "网页对话只供员工本人在浏览器里使用",
 	"GET /api/runtime/chat/bots/{id}/profile":            "机器人资料只供员工本人在浏览器里查看",
+	"PUT /api/runtime/chat/bots/{id}/approval":           "审批模式决定机器人的写操作要不要人批，只能由员工本人在浏览器里显式切换，不能交给 Agent",
 	"GET /api/runtime/chat/conversations":                "网页对话只供员工本人在浏览器里使用",
 	"POST /api/runtime/chat/conversations":               "网页对话只能由员工本人在浏览器里发起",
 	"GET /api/runtime/chat/conversations/{id}":           "网页对话记录只供员工本人查看",
@@ -97,6 +98,10 @@ var agentExcluded = map[string]string{
 	"PUT /api/admin/runtime/bots/{id}":                   "云机器人由管理员管理",
 	"POST /api/admin/runtime/bots/{id}/run":              "云机器人只能由管理员手动触发",
 	"PUT /api/admin/runtime/bots/{id}/share":             "共享云机器人给团队由管理员管理",
+	"POST /api/runtime/chat/bots/{id}/computer/{action}": "机器人云电脑的休眠和重置只能由员工本人在浏览器里操作",
+	"GET /api/admin/runtime/computers":                   "机器人云电脑的占用情况只供管理员在后台查看",
+	"POST /api/admin/runtime/computers/{id}/hibernate":   "机器人云电脑只能由管理员在后台手动休眠",
+	"DELETE /api/admin/runtime/computers/{id}":           "回收机器人云电脑会删除其中的文件，只能由管理员在后台操作",
 
 	"POST /api/auth/feishu/event":               "飞书事件使用独立来源验证，不由 Agent 调用",
 	"GET /api/me/feishu-chat":                   "员工界面与接入插件查询机器人状态",
