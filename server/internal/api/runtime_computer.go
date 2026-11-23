@@ -221,6 +221,7 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 			createSpec.DiskQuotaBytes = limit
 		}
 		if box, err = pp.CreatePersistent(ctx, createSpec); err != nil {
+			createCtxErr := ctx.Err()
 			switch {
 			case c.CreationKey == "", errors.Is(err, runtime.ErrSandboxCreateRejected):
 				c.CreationKey = ""
@@ -241,7 +242,10 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 				task.RetryAfter = &leaseUntil
 			}
 			s.log.Warn("创建常驻沙箱失败", "bot_id", botID, "native_disk_quota", policy.NativeDiskQuota, "err", err)
-			return nil, errors.New("creating cloud sandbox failed")
+			if createCtxErr != nil {
+				return nil, createCtxErr
+			}
+			return nil, errCloudCreateRetryable
 		}
 		c.SandboxID, c.CreationKey = box.ID(), ""
 	}

@@ -86,7 +86,7 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 	if err != nil {
 		status, message = store.RuntimeFailed, err.Error()
 		switch {
-		case errors.Is(runErr, context.DeadlineExceeded):
+		case errors.Is(runErr, context.DeadlineExceeded) && !errors.Is(err, errCloudCreateRetryable):
 			message = "cloud task timed out"
 		case task.Attempts < runtimeAttempts && !errors.Is(err, errCloudEmployee) && !errors.Is(err, errCloudQuota) && !errors.Is(err, errCloudDisk):
 			status = store.RuntimeQueued
@@ -111,6 +111,8 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 
 var (
 	errCloudEmployee = errors.New("run identity is not an eligible employee")
+	// Creation failed before the attempt deadline; recovery may finish after it.
+	errCloudCreateRetryable = errors.New("creating cloud sandbox failed")
 	// errCloudQuota 是终态失败：额度未分配或已用完，重试不会改变结果。
 	errCloudQuota = errors.New("cloud task run-as employee has no model quota")
 )

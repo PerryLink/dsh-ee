@@ -39,6 +39,9 @@ type fakeComputers struct {
 	check              func(token string) // 每轮 DSH 运行时检查凭证
 	loseCreateResponse bool
 	hideCreatedBox     bool
+	createContext      context.Context
+	awaitCreateTimeout bool
+	awaitLookupTimeout bool
 	allowedHost        string
 }
 
@@ -68,7 +71,7 @@ func (f *fakeComputers) Create(_ context.Context, spec runtime.SandboxSpec) (run
 	return f.newBox(spec.Env), nil
 }
 
-func (f *fakeComputers) CreatePersistent(_ context.Context, spec runtime.SandboxSpec) (runtime.PersistentSandbox, error) {
+func (f *fakeComputers) CreatePersistent(ctx context.Context, spec runtime.SandboxSpec) (runtime.PersistentSandbox, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.creates++
@@ -77,6 +80,10 @@ func (f *fakeComputers) CreatePersistent(_ context.Context, spec runtime.Sandbox
 	b.creationKey = spec.CreationKey
 	f.allowedHost = spec.AllowedHosts[0]
 	if f.loseCreateResponse {
+		f.createContext = ctx
+		if f.awaitCreateTimeout {
+			<-ctx.Done()
+		}
 		return nil, errors.New("lost create response")
 	}
 	return b, nil
@@ -87,6 +94,9 @@ func (f *fakeComputers) FindPersistent(_ context.Context, key string) (string, e
 	defer f.mu.Unlock()
 	if f.hideCreatedBox {
 		return "", runtime.ErrSandboxGone
+	}
+	if f.awaitLookupTimeout {
+		<-f.createContext.Done()
 	}
 	for _, b := range f.boxes {
 		if b.creationKey == key {
@@ -504,7 +514,16 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 }
 
 func TestBotComputerWorkerRetriesLostCreateResponse(t *testing.T) {
-	f := &fakeComputers{loseCreateResponse: true}
+	t.Run("immediate lookup", func(t *testing.T) {
+		testBotComputerWorkerRetriesLostCreate(t, &fakeComputers{loseCreateResponse: true})
+	})
+	t.Run("lookup crosses deadline", func(t *testing.T) {
+		testBotComputerWorkerRetriesLostCreate(t, &fakeComputers{loseCreateResponse: true, awaitLookupTimeout: true})
+	})
+}
+
+func testBotComputerWorkerRetriesLostCreate(t *testing.T, f *fakeComputers) {
+	t.Helper()
 	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond})
 	ctx := context.Background()
 	b := *c.bot
@@ -518,11 +537,33 @@ func TestBotComputerWorkerRetriesLostCreateResponse(t *testing.T) {
 		if err != nil || claim.ID != task.ID || claim.Attempts != attempt {
 			t.Fatalf("attempt %d: %+v, %v", attempt, claim, err)
 		}
+		if attempt == 1 && f.awaitLookupTimeout {
+			claim.TimeoutSeconds = 1
+		}
 		c.s.runCloudClaim(ctx, claim)
 	}
 	got, err := c.s.store.RuntimeTask(ctx, task.ID, c.employee)
 	if err != nil || got.Status != store.RuntimeSucceeded || got.Attempts != 2 || f.creates != 1 {
 		t.Fatalf("lost response didn't recover in the same task: %+v, %v, creates=%d", got, err, f.creates)
+	}
+}
+
+func TestBotComputerCreateTimeoutIsTerminal(t *testing.T) {
+	f := &fakeComputers{loseCreateResponse: true, awaitCreateTimeout: true}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true})
+	ctx := context.Background()
+	if _, err := c.s.enqueueCloudBot(ctx, c.bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.TimeoutSeconds = 1
+	c.s.runCloudClaim(ctx, task)
+	got, err := c.s.store.RuntimeTask(ctx, task.ID, c.employee)
+	if err != nil || got.Status != store.RuntimeFailed || got.Error != "cloud task timed out" || got.Attempts != 1 {
+		t.Fatalf("a create timeout should stay terminal: %+v, %v", got, err)
 	}
 }
 
