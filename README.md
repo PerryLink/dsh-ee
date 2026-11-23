@@ -125,7 +125,7 @@ The machine needs Docker, Docker Compose v2 and access to GitHub and GHCR:
 curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/install.sh | sh
 ```
 
-This creates `./dsh-ee/`, pulls the latest release image, generates `.env` (master key and initial admin password), starts dsh-ee with a single-node TiDB, and prints the admin password. Pass `sh -s -- oceanbase` or `sh -s -- external` to pick the database, and `DSH_EE_VERSION=v0.3.0` to pin a version. To upgrade, run `./install.sh` again in `./dsh-ee/`. **Back up `.env` together with the database.**
+This creates `./dsh-ee/`, pulls the latest release image, generates `.env` (master key and initial admin password), starts dsh-ee with a single-node TiDB, and prints the admin password. Pass `sh -s -- oceanbase` or `sh -s -- external` to pick the database, and `DSH_EE_VERSION=v0.3.1` to pin a version. To upgrade, run `./install.sh` again in `./dsh-ee/`. **Back up `.env` together with the database.**
 
 ### Offline bundle
 
@@ -147,13 +147,13 @@ Build a bundle yourself with `make bundle VERSION=v0.1.0 ARCH=amd64` (or `ARCH=a
 ### Docker Compose
 
 Release tags automatically publish multi-platform images (linux/amd64 and linux/arm64) to GHCR.
-Use a full version such as `v0.3.0`; stable releases also update `0.3` and `latest`, while prereleases do not.
+Use a full version such as `v0.3.1`; stable releases also update `0.3` and `latest`, while prereleases do not.
 The images can be pulled anonymously. The one-command install above uses them; to run one directly against an existing database:
 
 ```bash
 docker run -d --name dsh-ee -p 8080:8080 -v dsh-ee-data:/data \
   -e DSH_EE_DSN='root:@tcp(tidb-host:4000)/dsh_ee' \
-  ghcr.io/hikariming/dsh-ee:v0.3.0
+  ghcr.io/hikariming/dsh-ee:v0.3.1
 docker logs dsh-ee 2>&1 | grep init_code   # setup code for the first admin
 ```
 
