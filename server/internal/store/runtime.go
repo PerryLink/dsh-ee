@@ -125,7 +125,7 @@ type RuntimeTask struct {
 }
 
 const runtimeTaskColumns = `id, owner_id, run_as_id, bot_id, prompt, status, attempts, COALESCE(idempotency_key,''), timeout_seconds,
-	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,'')`
+	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,''), private_result`
 
 // runtimeTaskOwned 是任务读取的归属条件（两个参数都是 ownerID）：所有者能读自己的全部任务；
 // ownerID=0 的管理员通配不包含网页对话和使用过常驻工作目录的任务。
@@ -136,7 +136,7 @@ func runtimeTaskOwned(prefix string) string {
 func scanRuntimeTask(row interface{ Scan(...any) error }) (*RuntimeTask, error) {
 	var t RuntimeTask
 	err := row.Scan(&t.ID, &t.OwnerID, &t.RunAsID, &t.BotID, &t.Prompt, &t.Status, &t.Attempts, &t.IdempotencyKey, &t.TimeoutSeconds,
-		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt, &t.ChatConversationID, &t.ChatContent)
+		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt, &t.ChatConversationID, &t.ChatContent, &t.PrivateResult)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
