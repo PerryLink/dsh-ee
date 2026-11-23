@@ -61,6 +61,9 @@ func (s *Server) runtimeError(w http.ResponseWriter, r *http.Request, err error)
 	switch {
 	case notFound(err):
 		writeErr(w, http.StatusNotFound, "任务、机器人或产物不存在")
+	case errors.Is(err, store.ErrRuntimeChatTeamForbidden):
+		// 团队线程里的任务/轮次要求当前团队成员资格，与对话接口同一个机器码。
+		writeErrCode(w, http.StatusForbidden, codeRuntimeChatTeamForbidden, nil, "这个机器人没有共享给你所在的部门")
 	case errors.Is(err, store.ErrConflict):
 		writeErr(w, http.StatusConflict, "任务状态或幂等键冲突")
 	case errors.Is(err, store.ErrRuntimeQueueFull):
@@ -134,11 +137,34 @@ func (s *Server) handleRuntimeTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tasks)
 }
 
+// runtimeTaskForViewer 读取当前员工可见的一轮云任务：先按任务归属读；团队线程里的一轮再叠加当前的
+// 团队成员资格（与产物接口一致）。被调岗或取消共享后，曾经触发过这一轮的员工也读不到它的 summary /
+// 事件，也不能取消它；ErrRuntimeChatTeamForbidden 由 runtimeError 映射成 403。
+// 个人任务和仍在团队里的成员行为不变。
+func (s *Server) runtimeTaskForViewer(ctx context.Context, id, owner int64) (*store.RuntimeTask, error) {
+	task, err := s.store.RuntimeTask(ctx, id, owner)
+	if err != nil {
+		return nil, err
+	}
+	if owner == 0 || task.ChatConversationID == nil {
+		return task, nil
+	}
+	teamTask, teamErr := s.store.RuntimeTeamChatTask(ctx, id, owner)
+	switch {
+	case teamErr == nil:
+		return teamTask, nil
+	case notFound(teamErr):
+		return task, nil
+	default:
+		return nil, teamErr
+	}
+}
+
 func (s *Server) handleRuntimeTask(w http.ResponseWriter, r *http.Request) {
 	if !s.runtimeAvailable(w) {
 		return
 	}
-	task, err := s.store.RuntimeTask(r.Context(), runtimeID(r, "id"), runtimeOwner(r))
+	task, err := s.runtimeTaskForViewer(r.Context(), runtimeID(r, "id"), runtimeOwner(r))
 	if err != nil {
 		s.runtimeError(w, r, err)
 		return
@@ -151,7 +177,7 @@ func (s *Server) handleRuntimeEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, owner := runtimeID(r, "id"), runtimeOwner(r)
-	if _, err := s.store.RuntimeTask(r.Context(), id, owner); err != nil {
+	if _, err := s.runtimeTaskForViewer(r.Context(), id, owner); err != nil {
 		s.runtimeError(w, r, err)
 		return
 	}
@@ -168,7 +194,8 @@ func (s *Server) handleRuntimeCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, owner := runtimeID(r, "id"), runtimeOwner(r)
-	if _, err := s.store.RuntimeTask(r.Context(), id, owner); err != nil {
+	// 可见性先按当前成员资格校验；能否取消仍只由 CancelRuntimeTask 按触发人本人判断。
+	if _, err := s.runtimeTaskForViewer(r.Context(), id, owner); err != nil {
 		s.runtimeError(w, r, err)
 		return
 	}
@@ -190,10 +217,6 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 		teamTask, teamErr := s.store.RuntimeTeamChatTask(r.Context(), id, owner)
 		if !notFound(teamErr) {
 			task, err = teamTask, teamErr
-		}
-		if errors.Is(err, store.ErrRuntimeChatTeamForbidden) {
-			writeErrCode(w, http.StatusForbidden, codeRuntimeChatTeamForbidden, nil, "这个机器人没有共享给你所在的部门")
-			return
 		}
 	}
 	if err != nil {

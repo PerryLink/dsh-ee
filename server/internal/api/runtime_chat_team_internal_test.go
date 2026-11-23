@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/runtime"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
@@ -249,6 +250,17 @@ func TestRuntimeTeamChatSharing(t *testing.T) {
 	}
 	expectRuntimeChatCode(t, "bob downloads after unshare", bob("GET", download, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
 	expectRuntimeChatCode(t, "alice downloads her turn after unshare", alice("GET", download, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
+	// 任务级接口（summary / 事件 / 取消）同样要求当前成员资格：取消共享后，触发过这一轮的 alice
+	// 也读不到、看不了、取消不了；修复前这三条都只按 owner_id 放行。
+	for _, probe := range []struct{ name, method, path string }{
+		{"alice reads her turn after unshare", "GET", aliceTask},
+		{"alice reads her turn events after unshare", "GET", aliceTask + "/events"},
+		{"alice cancels her turn after unshare", "POST", aliceTask + "/cancel"},
+	} {
+		t.Run(probe.name, func(t *testing.T) {
+			expectRuntimeChatCode(t, probe.name, alice(probe.method, probe.path, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
+		})
+	}
 	if canceled, err := st.RuntimeTask(ctx, pending.ID, aliceID); err != nil || canceled.Status != store.RuntimeCanceled {
 		t.Fatalf("pending team turn after unshare: %+v, %v", canceled, err)
 	}
@@ -284,6 +296,106 @@ func TestRuntimeTeamChatSharing(t *testing.T) {
 	decodeRuntimeChat[store.RuntimeBot](t, "admin re-shares", admin("PUT", sharePath, `{"department":"`+rd+`"}`), http.StatusOK)
 	if d := decodeRuntimeChat[runtimeChatDetail](t, "alice after re-share", alice("GET", threadPath, ""), http.StatusOK); len(d.Messages) != 3 {
 		t.Fatalf("team history after re-share: %d turns", len(d.Messages))
+	}
+
+	// 仍在团队里时任务级接口行为不变；成员资格一失去，触发过这一轮的员工也读不到任务和事件，也取消不了。
+	turn := decodeRuntimeChat[store.RuntimeChatTurn](t, "alice queues another team turn", alice("POST", threadPath+"/messages", message("部门调整后还在吗？", "a3")), http.StatusAccepted)
+	turnTask := "/api/runtime/tasks/" + strconv.FormatInt(turn.ID, 10)
+	if got := decodeRuntimeChat[store.RuntimeTask](t, "alice reads her team turn", alice("GET", turnTask, ""), http.StatusOK); got.ID != turn.ID || got.Status != store.RuntimeQueued {
+		t.Fatalf("alice's team turn view: %+v", got)
+	}
+	if events := decodeRuntimeChat[[]store.RuntimeTaskEvent](t, "alice reads her team turn events", alice("GET", turnTask+"/events", ""), http.StatusOK); len(events) != 1 {
+		t.Fatalf("queued team turn events: %+v", events)
+	}
+	t.Run("team visibility lookup fails closed", func(t *testing.T) {
+		if _, err := st.DB().ExecContext(ctx, "RENAME TABLE runtime_bots TO runtime_bots_unavailable"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if _, err := st.DB().ExecContext(ctx, "RENAME TABLE runtime_bots_unavailable TO runtime_bots"); err != nil {
+				t.Fatal(err)
+			}
+		})
+		for _, probe := range []struct{ method, path string }{
+			{"GET", turnTask},
+			{"GET", turnTask + "/events"},
+			{"POST", turnTask + "/cancel"},
+		} {
+			if rec := alice(probe.method, probe.path, ""); rec.Code != http.StatusInternalServerError {
+				t.Errorf("%s %s: got HTTP %d, want 500", probe.method, probe.path, rec.Code)
+			}
+		}
+	})
+	setDept(aliceID, mkt)
+	for _, probe := range []struct{ name, method, path string }{
+		{"alice reads her team turn after moving", "GET", turnTask},
+		{"alice reads her team turn events after moving", "GET", turnTask + "/events"},
+		{"alice cancels her team turn after moving", "POST", turnTask + "/cancel"},
+	} {
+		t.Run(probe.name, func(t *testing.T) {
+			expectRuntimeChatCode(t, probe.name, alice(probe.method, probe.path, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
+		})
+	}
+	if kept, err := st.RuntimeTask(ctx, turn.ID, aliceID); err != nil || kept.Status != store.RuntimeQueued {
+		t.Fatalf("a former member canceled the team turn: %+v, %v", kept, err)
+	}
+	setDept(aliceID, rd)
+	if rec := alice("POST", turnTask+"/cancel", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("alice cancels her team turn after rejoining: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if canceled, err := st.RuntimeTask(ctx, turn.ID, aliceID); err != nil || canceled.Status != store.RuntimeCanceled {
+		t.Fatalf("team turn status after in-team cancel: %+v, %v", canceled, err)
+	}
+
+	// 个人任务（不是团队线程）不受影响：读、事件、取消都照旧。
+	personal := decodeRuntimeChat[store.RuntimeTask](t, "alice submits a personal task", alice("POST", "/api/runtime/tasks", `{"prompt":"个人任务","idempotency_key":"personal-1"}`), http.StatusAccepted)
+	personalTask := "/api/runtime/tasks/" + strconv.FormatInt(personal.ID, 10)
+	if got := decodeRuntimeChat[store.RuntimeTask](t, "alice reads her personal task", alice("GET", personalTask, ""), http.StatusOK); got.ID != personal.ID {
+		t.Fatalf("personal task view: %+v", got)
+	}
+	if events := decodeRuntimeChat[[]store.RuntimeTaskEvent](t, "alice reads her personal task events", alice("GET", personalTask+"/events", ""), http.StatusOK); len(events) != 1 {
+		t.Fatalf("personal task events: %+v", events)
+	}
+	if rec := alice("POST", personalTask+"/cancel", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("alice cancels her personal task: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 团队轮次始终只读：管理员把机器人切成完全放行后，已排队的团队轮次领取时也不带机器人的审批模式
+	// （团队轮次以发送人身份运行，写审批设置只属于机器人所有者本人）。
+	queuedTurn := decodeRuntimeChat[store.RuntimeChatTurn](t, "alice queues a team turn before full access", alice("POST", threadPath+"/messages", message("写个文件", "a4")), http.StatusAccepted)
+	fullBody, err := json.Marshal(map[string]any{
+		"owner_id": ownerID, "run_as_id": ownerID, "name": "Team analyst", "prompt": "Persona of Team analyst",
+		"schedule": "0 9 * * *", "enabled": false, "web_chat_enabled": true,
+		"approval_mode": store.RuntimeApprovalFull, "confirm_full_access": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := admin("PUT", runtimeBotsTestPath+"/"+strconv.FormatInt(bot.ID, 10), string(fullBody)); rec.Code != http.StatusOK {
+		t.Fatalf("switch the team bot to full access: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	claimed, err := st.ClaimRuntimeTask(ctx, runtimeAttempts, time.Minute)
+	if err != nil || claimed.ID != queuedTurn.ID {
+		t.Fatalf("claim the queued team turn: %+v, %v", claimed, err)
+	}
+	credential, revoke, err := c.s.cloudCredential(ctx, claimed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer revoke()
+	routeCtx := context.WithValue(ctx, runtimeTokenRouteKey{}, true)
+	pr, err := c.s.resolveBearer(routeCtx, credential, "")
+	if err != nil || !pr.Runtime {
+		t.Fatalf("team turn credential: %v", err)
+	}
+	if wc := c.s.runtimeWriteContext(ctx, pr); wc == nil || wc.ApprovalMode != store.RuntimeApprovalReadOnly || wc.BotID != 0 {
+		t.Fatalf("team turn write context: %+v", wc)
+	}
+	if c.s.runtimeWritesListed(ctx, pr) {
+		t.Fatal("team turn lists write tools after the bot switched to full access")
+	}
+	if err := st.CancelRuntimeTask(ctx, claimed.ID, aliceID); err != nil {
+		t.Fatal(err)
 	}
 
 	// 管理员关掉网页对话后，所有者仍能收回共享；但关着的时候不能新共享。
