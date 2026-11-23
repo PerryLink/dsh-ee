@@ -86,6 +86,7 @@ var agentExcluded = map[string]string{
 	"GET /api/runtime/tasks/{id}/artifacts":              "云任务产物只供员工查看",
 	"GET /api/runtime/tasks/{id}/artifacts/{artifact}":   "云任务产物只供员工下载",
 	"GET /api/runtime/chat/bots":                         "网页对话只供员工本人在浏览器里使用",
+	"GET /api/runtime/chat/bots/{id}/profile":            "机器人资料只供员工本人在浏览器里查看",
 	"GET /api/runtime/chat/conversations":                "网页对话只供员工本人在浏览器里使用",
 	"POST /api/runtime/chat/conversations":               "网页对话只能由员工本人在浏览器里发起",
 	"GET /api/runtime/chat/conversations/{id}":           "网页对话记录只供员工本人查看",

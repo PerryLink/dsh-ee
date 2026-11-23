@@ -112,6 +112,7 @@ func expectRuntimeChatCode(t *testing.T, what string, rec *httptest.ResponseReco
 type runtimeChatDetail struct {
 	Conversation store.RuntimeChatConversation `json:"conversation"`
 	Messages     []store.RuntimeChatTurn       `json:"messages"`
+	NextBefore   int64                         `json:"next_before"`
 }
 
 func TestRuntimeWebChat(t *testing.T) {
@@ -288,13 +289,14 @@ func TestRuntimeWebChat(t *testing.T) {
 		t.Fatalf("detail after failure: %s", rec.Body.String())
 	}
 	history := []store.RuntimeChatTurn{{Content: strings.Repeat("old ", runtimeChatHistoryBudget/4), Summary: "dropped"}, {Content: "recent", Summary: "kept"}}
-	bounded := runtimeChatPrompt("Persona", history, strings.Repeat("问", 2000))
-	if strings.Contains(bounded, "dropped") || !strings.Contains(bounded, `[{"employee":"recent","bot":"kept"}]`) || !strings.HasSuffix(bounded, strings.Repeat("问", 2000)) {
+	bounded, _, _ := runtimeChatPlan("Persona", "", history, strings.Repeat("问", 2000))
+	// 放不进历史预算的更早轮次不再原样出现（runtimeChatPlan 把它并进了前面的滚动记忆）。
+	if _, verbatim, _ := strings.Cut(bounded, "Earlier exchanges in this conversation"); strings.Contains(verbatim, "dropped") || !strings.Contains(bounded, `[{"employee":"recent","bot":"kept"}]`) || !strings.HasSuffix(bounded, strings.Repeat("问", 2000)) {
 		t.Fatal("history budget must drop the oldest exchanges and never the current message")
 	}
 	// 最近一轮的回复自己就超预算：员工原文完整保留，回复截成带 "…" 的前缀，历史不清空也不超预算；更早的轮次照旧丢弃。
 	history = []store.RuntimeChatTurn{{Content: "older", Summary: "dropped"}, {Content: "recent", Summary: strings.Repeat("😀", runtimeChatReplyRunes)}}
-	bounded = runtimeChatPrompt("Persona", history, "next")
+	bounded, _, _ = runtimeChatPlan("Persona", "", history, "next")
 	_, afterHeader, _ := strings.Cut(bounded, "oldest first):\n")
 	encodedHistory, _, _ := strings.Cut(afterHeader, "\n\nCurrent employee message")
 	var kept []struct{ Employee, Bot string }
@@ -304,7 +306,7 @@ func TestRuntimeWebChat(t *testing.T) {
 		t.Fatalf("oversized latest reply must keep a bounded prefix: %d exchanges, %d history bytes, err %v", len(kept), len(encodedHistory), err)
 	}
 	history = []store.RuntimeChatTurn{{Content: strings.Repeat("问", runtimeChatHistoryBudget), Summary: "dropped"}}
-	if bounded = runtimeChatPrompt("Persona", history, "next"); !strings.Contains(bounded, "oldest first):\n[]\n") {
+	if bounded, _, _ = runtimeChatPlan("Persona", "", history, "next"); !strings.Contains(bounded, "oldest first):\n[]\n") {
 		t.Fatal("an employee message that cannot fit the history budget must still be dropped")
 	}
 

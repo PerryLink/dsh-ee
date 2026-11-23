@@ -226,7 +226,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	defer revoke()
 	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
 	if task.ChatConversationID != nil {
-		// 网页对话的提示词在入队时已拼好（runtimeChatPrompt）：要的是直接回答员工，而不是任务摘要；
+		// 网页对话的提示词在入队时已拼好（runtimeChatPlan）：要的是直接回答员工，而不是任务摘要；
 		// 当前消息必须留在最后，这里不再追加任何内容。
 		prompt = task.Prompt
 	}

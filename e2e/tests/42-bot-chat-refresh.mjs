@@ -13,8 +13,25 @@ export default async function (t) {
   const username = `botchat-emp-${tag}`;
   const password = "botchat-employee-password-1";
 
-  const botA = { id: 1, name: `客服助手-${tag}` };
-  const botB = { id: 2, name: `报销助手-${tag}` };
+  const botA = { id: 1, name: `客服助手-${tag}`, thread_id: 101 };
+  const botB = { id: 2, name: `报销助手-${tag}`, thread_id: 102 };
+  // 页面以机器人为中心：选中的机器人会读它那条对话和资料，这里给空的
+  const mockThreads = async (p) => {
+    await p.route("**/api/runtime/chat/conversations/*", (route) => {
+      const id = Number(new URL(route.request().url()).pathname.split("/").pop());
+      const bot = [botA, botB].find((b) => b.thread_id === id) ?? botA;
+      const conversation = { id, bot_id: bot.id, bot_name: bot.name, title: "", updated_at: new Date().toISOString() };
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ conversation, messages: [] }) });
+    });
+    await p.route("**/api/runtime/chat/bots/*/profile", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ schedule: "0 9 * * *", schedule_enabled: true, running: false, artifacts: [] }),
+      }),
+    );
+  };
+  await mockThreads(page);
   let bots = [botA];
   let fail = false;
   let hits = 0;
@@ -98,6 +115,7 @@ export default async function (t) {
   const en = await newPage(t, { lang: "en" });
   await en.route("**/api/runtime/chat/bots", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await en.route("**/api/runtime/chat/conversations", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await mockThreads(en);
   await login(en, username, password);
   await en.goto(`${BASE}/bot-chat`);
   await en.getByRole("button", { name: "Refresh bots", exact: true }).first().waitFor();

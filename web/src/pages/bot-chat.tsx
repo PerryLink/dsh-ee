@@ -1,50 +1,95 @@
 /**
  * 机器人对话（/bot-chat）：员工在网页里与管理员为自己开通的云端机器人对话。
  *
- * - 当前会话写在地址里（?conversation=<id>），刷新、前进后退、分享给自己都能回到原处；
- * - 一轮 = 员工的一条消息 + 机器人的回复（回复状态来自云任务）；有排队 / 运行中的回复时
- *   才轮询，且上一次请求回来之后才发下一次，不会重叠；
- * - 切换会话后才回来的旧响应一律丢弃；发送失败时内容留在输入框里，重试复用同一个幂等键。
+ * 三栏，以机器人为中心：
+ * - 左：机器人列表（没有「会话」这一层）。每个机器人对当前员工只有一条连续的对话；
+ *   预览与未读点来自真实的回复状态，已读位置只记在本机（按账号 + 机器人）。
+ * - 中：选中机器人的那条对话。选中项写在地址里（?bot=<id>），刷新、前进后退都能回到原处；
+ *   旧的 ?conversation=<id> 链接会换算成对应的机器人。
+ * - 右：机器人资料（动态 / 文件库），可关闭；定时任务只读，开关仍由管理员在后台操作。
+ *
+ * 沿用原有的保护：有排队 / 运行中的回复时才轮询，且上一次请求回来之后才发下一次；
+ * 本地追加消息之前发出的读取结果一律丢弃；发送失败时内容留在输入框里，重试复用同一个幂等键。
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Bot, CircleAlert, Download, FileDown, History, Lock, MessageSquare, Plus, RefreshCw, X } from "lucide-react";
-import { Badge, Button, Card, Empty, Notice, Spinner, cx, inputCls } from "../components/ui";
+import { ArrowUp, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDown, FileText, Lock, Monitor, RefreshCw, Users, X } from "lucide-react";
+import { Badge, Button, Card, Empty, Notice, Spinner, cx, tabCls, tabListCls } from "../components/ui";
 import { ChatMarkdown } from "../components/chat-markdown";
-import { formatTime } from "../lib/api";
-import { formatNumber, formatRelativeTime } from "../lib/format";
+import { useAuth } from "../lib/auth";
+import { formatBytes, formatDateOnly, formatDateTime, formatNumber, formatTimeOnly, resolveLang } from "../lib/format";
 import {
   CHAT_CONTENT_MAX_BYTES,
   chatApi,
+  getLastRead,
   isPendingTurn,
   newIdempotencyKey,
   sameId,
+  setLastRead,
   toChatError,
   useChatBots,
   utf8Bytes,
   type ChatArtifact,
   type ChatBot,
-  type ChatConversation,
+  type ChatBotProfile,
   type ChatError,
+  type ChatErrorScope,
   type ChatId,
   type ChatTurn,
+  type ChatTurnStatus,
 } from "../lib/bot-chat";
 
 /** 有回复在排队 / 运行时的轮询间隔：上一次请求结束后再等这么久。 */
 const POLL_MS = 2500;
+/** 资料栏开着时刷新资料（云端电脑状态、文件库）的间隔。 */
+const PROFILE_POLL_MS = 5000;
 /** 离底部这么近就算「在看最新消息」，新内容到了跟着滚下去。 */
 const STICK_PX = 96;
+/** 滚到离顶部这么近就去读更早的消息。 */
+const EARLIER_PX = 48;
 
-type ConvsState = { status: "loading" | "ready" | "error"; items: ChatConversation[]; error: ChatError | null };
-
-type Detail = {
-  id: string;
+/** 一个机器人的那条对话。 */
+type Thread = {
   status: "loading" | "ready" | "error";
-  conversation: ChatConversation | null;
+  convId: string | null;
   messages: ChatTurn[];
+  /** 还有更早的消息时，读上一页要带的 before。 */
+  nextBefore: ChatId | null;
+  earlierLoading: boolean;
+  earlierError: ChatError | null;
   error: ChatError | null;
   /** 已经有内容之后的刷新 / 轮询失败：保留对话记录，只提示一下。 */
+  refreshError: ChatError | null;
+};
+
+const LOADING_THREAD: Thread = {
+  status: "loading",
+  convId: null,
+  messages: [],
+  nextBefore: null,
+  earlierLoading: false,
+  earlierError: null,
+  error: null,
+  refreshError: null,
+};
+
+/** 每个机器人的请求控制：不进渲染，只用来去重和丢弃过期结果。 */
+type ThreadCtl = {
+  convId: string | null;
+  /** 列表里的 thread_id 读不到了（404）：下次改用幂等的创建接口重新取得。 */
+  skipListed: boolean;
+  inflight: Promise<void> | null;
+  /** 本地追加过消息（发送成功）就 +1：在那之前发出的读取结果不含新消息，回来后丢弃。 */
+  version: number;
+  earlier: boolean;
+};
+
+type ProfileState = {
+  status: "loading" | "ready" | "error";
+  data: ChatBotProfile | null;
+  error: ChatError | null;
+  /** 已有资料后的刷新失败：保留上一次的内容。 */
   refreshError: ChatError | null;
 };
 
@@ -59,17 +104,46 @@ function useAlive() {
   return alive;
 }
 
-function BotAvatar({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const box = size === "lg" ? "h-14 w-14" : size === "md" ? "h-10 w-10" : "h-7 w-7";
+const isWide = (query: string) => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+/** 与下面的 lg: / xl: 断点一致：更窄时列表 / 资料是盖在对话区上的浮层。 */
+const LIST_STATIC = "(min-width: 1024px)";
+const PROFILE_STATIC = "(min-width: 1280px)";
+
+// ---------- 头像：按机器人 id 稳定生成的彩色圆点脸 ----------
+
+const FACE_COLORS: ReadonlyArray<readonly [string, string]> = [
+  ["#ffd166", "#4a3200"],
+  ["#9bdcfd", "#0b3350"],
+  ["#b8e6c1", "#0f3d24"],
+  ["#ffb4a2", "#5a1a0c"],
+  ["#cdb4fb", "#2c1463"],
+  ["#f9c6e0", "#5b1238"],
+  ["#a8e6e0", "#0a3f3b"],
+  ["#d8e2a4", "#3a3f0a"],
+];
+
+function hashOf(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** 装饰性头像：同一个机器人永远是同一张脸；名字由旁边的文字给出。 */
+function DotFace({ seed, size }: { seed: ChatId; size: number }) {
+  const h = hashOf(String(seed));
+  const [bg, fg] = FACE_COLORS[h % FACE_COLORS.length];
+  const gap = 5 + ((h >>> 3) % 3);
+  const lift = ((h >>> 5) % 3) - 1;
+  const r = 2 + ((h >>> 7) % 2) * 0.5;
   return (
-    <span
-      aria-hidden
-      className={cx(
-        "flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#73c8ff] via-brand-500 to-[#6d5dfc] text-white shadow-control",
-        box,
-      )}
-    >
-      <Bot size={size === "lg" ? 28 : size === "md" ? 20 : 15} strokeWidth={1.8} />
+    <span aria-hidden className="inline-flex shrink-0 rounded-full" style={{ width: size, height: size, backgroundColor: bg }}>
+      <svg viewBox="0 0 40 40" width={size} height={size} focusable="false">
+        <circle cx={20 - gap} cy={18 + lift} r={r} fill={fg} />
+        <circle cx={20 + gap} cy={18 + lift} r={r} fill={fg} />
+      </svg>
     </span>
   );
 }
@@ -87,6 +161,52 @@ function TypingDots() {
     </span>
   );
 }
+
+// ---------- 小工具 ----------
+
+/** 预览用：把 Markdown 压成一行纯文字。 */
+function plainText(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[#>*_`~|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+function dayKey(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : String(dayStart(d));
+}
+
+/** 日期分隔：今天 / 昨天用各语言自己的说法，其余是完整日期。 */
+function dayLabel(iso: string, lang: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const diff = Math.round((dayStart(d) - dayStart(new Date())) / 86_400_000);
+  if (diff === 0 || diff === -1) {
+    const text = new Intl.RelativeTimeFormat(resolveLang(lang), { numeric: "auto" }).format(diff, "day");
+    return text.charAt(0).toLocaleUpperCase(resolveLang(lang)) + text.slice(1);
+  }
+  return formatDateOnly(d, lang);
+}
+
+/** 每日 cron（UTC，「分 时 * * *」）换成本地时间；不是这种写法就返回 null，只显示原规则。 */
+function dailyLocalTime(cron: string, lang: string): string | null {
+  const m = /^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*$/.exec(cron.trim());
+  if (!m) return null;
+  const minute = Number(m[1]);
+  const hour = Number(m[2]);
+  if (minute > 59 || hour > 23) return null;
+  const d = new Date();
+  d.setUTCHours(hour, minute, 0, 0);
+  return formatTimeOnly(d, lang);
+}
+
+// ---------- 对话里的一轮 ----------
 
 /** 成功回复生成的文件：员工点了才读列表，点了文件名才下载。 */
 function TurnFiles({ taskId }: { taskId: ChatId }) {
@@ -149,25 +269,25 @@ function TurnFiles({ taskId }: { taskId: ChatId }) {
   );
 }
 
-function Turn({ turn, botName, onReuse }: { turn: ChatTurn; botName: string; onReuse?: (content: string) => void }) {
-  const { t } = useTranslation();
+function Turn({ turn, bot, onReuse }: { turn: ChatTurn; bot: ChatBot; onReuse?: (content: string) => void }) {
+  const { t, i18n } = useTranslation();
   const pending = isPendingTurn(turn);
   const stopped = turn.status === "failed" || turn.status === "canceled";
   return (
-    <li className="min-w-0">
+    <li className="min-w-0" data-turn={String(turn.id)}>
       <div className="flex flex-col items-end">
         <span className="sr-only">{t("botChat.thread.you")}</span>
         <div className="max-w-[88%] rounded-2xl rounded-br-md bg-neutral-100 px-4 py-2.5 text-sm leading-6 break-words whitespace-pre-wrap text-neutral-900 [overflow-wrap:anywhere] sm:max-w-[80%]">
           {turn.content}
         </div>
         <time dateTime={turn.created_at} className="mt-1 text-[11px] text-neutral-400">
-          {formatTime(turn.created_at)}
+          {formatTimeOnly(turn.created_at, i18n.language)}
         </time>
       </div>
       <div className="mt-3 flex min-w-0 gap-2.5 sm:gap-3">
-        <BotAvatar size="sm" />
-        <div className="min-w-0 flex-1 pt-0.5">
-          <div className="mb-1 truncate text-xs font-medium text-neutral-500">{botName}</div>
+        <DotFace seed={bot.id} size={28} />
+        <div className="min-w-0 flex-1 pt-0.5 text-sm leading-6 text-neutral-800">
+          <span className="sr-only">{bot.name}</span>
           {pending && (
             <div role="status" className="flex items-center gap-2.5 text-sm text-neutral-500">
               <TypingDots />
@@ -200,149 +320,423 @@ function Turn({ turn, botName, onReuse }: { turn: ChatTurn; botName: string; onR
   );
 }
 
+// ---------- 右栏：机器人资料 ----------
+
+type ProfileTab = "activity" | "library";
+const PROFILE_TABS: ProfileTab[] = ["activity", "library"];
+
+function ProfilePane({
+  id,
+  bot,
+  state,
+  open,
+  closeRef,
+  onClose,
+  onRetry,
+}: {
+  id: string;
+  bot: ChatBot;
+  state: ProfileState | undefined;
+  open: boolean;
+  closeRef: RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const [tab, setTab] = useState<ProfileTab>("activity");
+  const tabRefs = useRef<Partial<Record<ProfileTab, HTMLButtonElement | null>>>({});
+  const errText = (e: ChatError) => t(`botChat.errors.${e.key}`);
+  const data = state?.data ?? null;
+  const localTime = data?.schedule ? dailyLocalTime(data.schedule, lang) : null;
+
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const next = PROFILE_TABS[(PROFILE_TABS.indexOf(tab) + (e.key === "ArrowRight" ? 1 : PROFILE_TABS.length - 1)) % PROFILE_TABS.length];
+    setTab(next);
+    tabRefs.current[next]?.focus();
+  };
+
+  return (
+    <aside
+      id={id}
+      aria-label={t("botChat.profile.label")}
+      data-bot-profile=""
+      className={cx(
+        "absolute inset-0 z-20 min-h-0 flex-col bg-card xl:static xl:z-auto xl:w-72 xl:shrink-0 xl:border-l xl:border-neutral-200 dark:xl:border-white/10",
+        open ? "flex" : "hidden",
+      )}
+    >
+      <div className="flex justify-end px-3 pt-3">
+        <button
+          ref={closeRef}
+          type="button"
+          aria-label={t("botChat.profile.close")}
+          title={t("botChat.profile.close")}
+          onClick={onClose}
+          className="rounded-md p-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+        >
+          <X size={18} aria-hidden />
+        </button>
+      </div>
+      <div className="flex flex-col items-center px-5 pb-4 text-center">
+        <DotFace seed={bot.id} size={96} />
+        <h2 className="mt-3 max-w-full text-lg leading-7 font-bold tracking-[-0.01em] break-words text-neutral-900">{bot.name}</h2>
+      </div>
+      <div role="tablist" aria-label={t("botChat.profile.label")} className={cx(tabListCls, "justify-center px-5 dark:border-white/10")}>
+        {PROFILE_TABS.map((key) => (
+          <button
+            key={key}
+            ref={(el) => {
+              tabRefs.current[key] = el;
+            }}
+            type="button"
+            role="tab"
+            id={`${id}-tab-${key}`}
+            aria-selected={tab === key}
+            aria-controls={`${id}-panel-${key}`}
+            tabIndex={tab === key ? 0 : -1}
+            onClick={() => setTab(key)}
+            onKeyDown={onTabKey}
+            className={tabCls(tab === key)}
+          >
+            {t(`botChat.profile.tabs.${key}`)}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`${id}-panel-${tab}`} aria-labelledby={`${id}-tab-${tab}`} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        {(!state || state.status === "loading") && (
+          <div role="status" className="flex items-center justify-center gap-2 py-8 text-[13px] text-neutral-500">
+            <Spinner size={14} className="text-neutral-400" />
+            {t("botChat.profile.loading")}
+          </div>
+        )}
+        {state?.status === "error" && state.error && (
+          <div className="py-6 text-center">
+            <p role="alert" className="text-[13px] leading-5 text-neutral-600">
+              {t("botChat.profile.failed", { reason: errText(state.error) })}
+            </p>
+            <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={onRetry}>
+              {t("botChat.retry")}
+            </Button>
+          </div>
+        )}
+        {state?.status === "ready" && data && (
+          <>
+            {state.refreshError && (
+              <Notice tone="warn" role="status" className="mb-3 text-[13px]">
+                <span className="mr-2">{t("botChat.profile.refreshFailed", { reason: errText(state.refreshError) })}</span>
+                <button type="button" className="font-medium underline-offset-2 hover:underline" onClick={onRetry}>
+                  {t("botChat.retry")}
+                </button>
+              </Notice>
+            )}
+            {tab === "activity" && (
+              <div className="flex flex-col gap-3">
+                <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-schedule="">
+                  <div className="flex items-start gap-2.5">
+                    <CalendarClock size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.scheduleTitle")}</h3>
+                        {data.schedule && (
+                          <Badge tone={data.schedule_enabled ? "green" : "slate"}>
+                            {t(data.schedule_enabled ? "botChat.profile.activity.on" : "botChat.profile.activity.off")}
+                          </Badge>
+                        )}
+                      </div>
+                      {data.schedule ? (
+                        <>
+                          {localTime && <p className="mt-1 text-sm text-neutral-800">{t("botChat.profile.activity.scheduleAt", { time: localTime })}</p>}
+                          <p className="mt-1 text-xs break-words text-neutral-500">
+                            {t("botChat.profile.activity.scheduleCron", { cron: data.schedule })}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="mt-1 text-[13px] text-neutral-500">{t("botChat.profile.activity.scheduleNone")}</p>
+                      )}
+                    </div>
+                  </div>
+                  <p className="mt-3 flex items-start gap-1.5 border-t border-neutral-200 pt-2.5 text-xs leading-5 text-neutral-500 dark:border-white/10">
+                    <Lock size={12} aria-hidden className="mt-1 shrink-0" />
+                    {t("botChat.profile.activity.readonly")}
+                  </p>
+                </section>
+                <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-computer="">
+                  <div className="flex items-start gap-2.5">
+                    <Monitor size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.computerTitle")}</h3>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-700">
+                          <span aria-hidden className={cx("h-2 w-2 rounded-full", data.running ? "bg-emerald-500" : "bg-neutral-300 dark:bg-white/25")} />
+                          {t(data.running ? "botChat.profile.activity.running" : "botChat.profile.activity.asleep")}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-neutral-500">
+                        {t(data.running ? "botChat.profile.activity.runningDesc" : "botChat.profile.activity.asleepDesc")}
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+            {tab === "library" &&
+              (data.artifacts.length ? (
+                <ul className="flex flex-col gap-2">
+                  {data.artifacts.map((file) => (
+                    <li key={`${String(file.task_id)}:${String(file.id)}`} className="min-w-0">
+                      <a
+                        href={chatApi.artifactUrl(file.task_id, file.id)}
+                        download={file.name}
+                        aria-label={t("botChat.files.download", { name: file.name })}
+                        className="flex min-w-0 items-start gap-2.5 rounded-lg border border-neutral-200 bg-card px-3 py-2.5 shadow-control transition-colors hover:border-neutral-300 hover:bg-neutral-50 dark:border-white/10 dark:hover:border-white/20"
+                      >
+                        <FileText size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[13px] font-medium break-all text-neutral-800">{file.name}</span>
+                          <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-neutral-500">
+                            {typeof file.size === "number" && <span>{formatBytes(file.size, lang)}</span>}
+                            {file.created_at && <time dateTime={file.created_at}>{formatDateTime(file.created_at, lang)}</time>}
+                          </span>
+                        </span>
+                        <Download size={14} aria-hidden className="mt-0.5 shrink-0 text-neutral-400" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="py-8 text-center text-[13px] leading-5 text-neutral-500">{t("botChat.profile.library.empty")}</p>
+              ))}
+          </>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+// ---------- 工作区 ----------
+
 function Workspace({
+  userId,
   bots,
   reloadBots,
   botsRefreshing,
   botsError,
 }: {
+  userId: number;
   bots: ChatBot[];
   reloadBots: () => void;
   botsRefreshing: boolean;
   botsError: ChatError | null;
 }) {
   const { t, i18n } = useTranslation();
+  const lang = i18n.language;
   const alive = useAlive();
   const composerId = useId();
+  const profileId = useId();
   const [params, setParams] = useSearchParams();
-  const activeId = params.get("conversation") ?? "";
-  const activeRef = useRef(activeId);
-  activeRef.current = activeId;
+  const botParam = params.get("bot");
+  const convParam = params.get("conversation");
+  const botsRef = useRef(bots);
+  botsRef.current = bots;
 
-  const openConversation = useCallback(
-    (id: string) => {
-      setParams(id ? { conversation: id } : {});
-    },
-    [setParams],
-  );
-
-  // ---------- 会话列表 ----------
-  const [convs, setConvs] = useState<ConvsState>({ status: "loading", items: [], error: null });
-  const convsInflight = useRef<Promise<void> | null>(null);
-
-  const upsertConv = useCallback((c: ChatConversation) => {
-    setConvs((s) => ({ ...s, items: [c, ...s.items.filter((x) => !sameId(x.id, c.id))] }));
-  }, []);
-
-  const loadConvs = useCallback(() => {
-    if (convsInflight.current) return;
-    setConvs((s) => ({ ...s, status: s.status === "ready" ? "ready" : "loading", error: null }));
-    const p: Promise<void> = chatApi
-      .conversations()
-      .then(
-        (items) => {
-          if (!alive.current) return;
-          // 请求在路上时本地新建 / 刚打开的会话可能还不在结果里：留着，不要被旧结果冲掉
-          setConvs((s) => ({ status: "ready", error: null, items: [...items, ...s.items.filter((x) => !items.some((y) => sameId(x.id, y.id)))] }));
-        },
-        (err: unknown) => {
-          if (alive.current) setConvs((s) => ({ ...s, status: s.status === "ready" ? "ready" : "error", error: toChatError(err, "runtime") }));
-        },
-      )
-      .finally(() => {
-        if (convsInflight.current === p) convsInflight.current = null;
-      });
-    convsInflight.current = p;
-  }, [alive]);
-
+  // ---------- 选中的机器人 ----------
+  // 旧链接 ?conversation=<id>：先问一次它属于哪个机器人，再换成 ?bot=；读不到就回到默认的第一个。
+  const [resolving, setResolving] = useState(() => !botParam && !!convParam);
   useEffect(() => {
-    loadConvs();
-  }, [loadConvs]);
+    if (!resolving || !convParam) return;
+    let stopped = false;
+    chatApi
+      .conversation(convParam)
+      .then(
+        (d) => String(d.conversation.bot_id),
+        () => null,
+      )
+      .then((botId) => {
+        if (stopped || !alive.current) return;
+        const target = botId !== null && botsRef.current.some((b) => sameId(b.id, botId)) ? botId : null;
+        setParams(target !== null ? { bot: target } : {}, { replace: true });
+        setResolving(false);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [resolving, convParam, alive, setParams]);
 
-  const sortedConvs = useMemo(
-    () => [...convs.items].sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0)),
-    [convs.items],
+  const selected = resolving ? null : (bots.find((b) => sameId(b.id, botParam)) ?? bots[0] ?? null);
+  const selKey = selected ? String(selected.id) : "";
+  const selKeyRef = useRef(selKey);
+  selKeyRef.current = selKey;
+
+  const [listOpen, setListOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(() => isWide(PROFILE_STATIC));
+  const profileOpenRef = useRef(profileOpen);
+  profileOpenRef.current = profileOpen;
+  const pillRef = useRef<HTMLButtonElement>(null);
+  const listOpenRef = useRef<HTMLButtonElement>(null);
+  const profileCloseRef = useRef<HTMLButtonElement>(null);
+  const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  const selectBot = (bot: ChatBot) => {
+    if (!sameId(bot.id, selKey)) setParams({ bot: String(bot.id) });
+    setListOpen(false);
+  };
+
+  // ---------- 每个机器人的对话 ----------
+  const [threads, setThreads] = useState<Record<string, Thread>>({});
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  const ctls = useRef<Record<string, ThreadCtl>>({});
+  const ctlOf = useCallback((key: string) => (ctls.current[key] ??= { convId: null, skipListed: false, inflight: null, version: 0, earlier: false }), []);
+
+  const stick = useRef(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /** 往前补了更早的消息：记下离底部的距离，渲染后恢复，画面不跳。 */
+  const anchor = useRef<number | null>(null);
+
+  /** 读最近一页（首次打开、刷新、轮询都走这里）；同一个机器人同时只有一个请求。 */
+  const loadThread = useCallback(
+    (bot: ChatBot): Promise<void> => {
+      const key = String(bot.id);
+      const ctl = ctlOf(key);
+      if (ctl.inflight) return ctl.inflight;
+      const version = ctl.version;
+      setThreads((s) => (s[key] ? s : { ...s, [key]: LOADING_THREAD }));
+      const run = async () => {
+        let scope: ChatErrorScope = "runtime";
+        try {
+          let convId = ctl.convId ?? (!ctl.skipListed && bot.thread_id != null ? String(bot.thread_id) : null);
+          if (!convId) {
+            // 还没聊过：用幂等的创建接口取得这条对话，不会多出第二条
+            const c = await chatApi.createConversation(bot.id);
+            if (c?.id == null) throw new Error("missing thread id");
+            convId = String(c.id);
+          }
+          scope = "conversation";
+          const d = await chatApi.conversation(convId);
+          ctl.convId = convId;
+          if (!alive.current || version !== ctl.version) return;
+          const id = convId;
+          setThreads((s) => {
+            const prev = s[key];
+            // 已经往前翻过的更早消息留着，最近一页用新结果覆盖
+            const kept = prev?.status === "ready" ? prev.messages.filter((m) => !d.messages.some((x) => sameId(x.id, m.id))) : [];
+            return {
+              ...s,
+              [key]: {
+                status: "ready",
+                convId: id,
+                messages: [...kept, ...d.messages],
+                nextBefore: kept.length && prev ? prev.nextBefore : (d.next_before ?? null),
+                earlierLoading: prev?.earlierLoading ?? false,
+                earlierError: prev?.earlierError ?? null,
+                error: null,
+                refreshError: null,
+              },
+            };
+          });
+        } catch (err) {
+          if (!alive.current) return;
+          const error = toChatError(err, scope);
+          if (scope === "conversation" && error.key === "notFound") {
+            ctl.convId = null;
+            ctl.skipListed = true;
+          }
+          if (error.key === "botUnavailable") reloadBots();
+          setThreads((s) => {
+            const prev = s[key];
+            return { ...s, [key]: prev?.status === "ready" ? { ...prev, refreshError: error } : { ...LOADING_THREAD, status: "error", error } };
+          });
+        }
+      };
+      const promise: Promise<void> = run().finally(() => {
+        if (ctl.inflight === promise) ctl.inflight = null;
+      });
+      ctl.inflight = promise;
+      return promise;
+    },
+    [alive, ctlOf, reloadBots],
   );
 
-  // ---------- 当前会话 ----------
-  const [detail, setDetail] = useState<Detail | null>(null);
-  const detailInflight = useRef<{ id: string; promise: Promise<void> } | null>(null);
-  const detailSeq = useRef(0);
-  /** 本地追加过消息（发送成功）就 +1：在那之前发出的读取结果不含新消息，回来后丢弃。 */
-  const localVersion = useRef(0);
-
-  const loadDetail = useCallback(
-    (id: string): Promise<void> => {
-      const current = detailInflight.current;
-      if (current && current.id === id) return current.promise;
-      const seq = ++detailSeq.current;
-      const version = localVersion.current;
-      const fresh = () => alive.current && activeRef.current === id && seq === detailSeq.current;
-      const promise: Promise<void> = chatApi
-        .conversation(id)
+  /** 读更早的一页，接在前面。 */
+  const loadEarlier = useCallback(
+    (key: string) => {
+      const ctl = ctlOf(key);
+      const th = threadsRef.current[key];
+      if (ctl.earlier || !th || th.status !== "ready" || th.nextBefore == null || !th.convId) return;
+      ctl.earlier = true;
+      setThreads((s) => (s[key] ? { ...s, [key]: { ...s[key], earlierLoading: true, earlierError: null } } : s));
+      chatApi
+        .conversation(th.convId, th.nextBefore)
         .then(
           (d) => {
-            if (!fresh() || version !== localVersion.current) return;
-            setDetail({ id, status: "ready", conversation: d.conversation, messages: d.messages, error: null, refreshError: null });
-            upsertConv(d.conversation);
+            if (!alive.current) return;
+            const el = scrollRef.current;
+            if (el && selKeyRef.current === key) anchor.current = el.scrollHeight - el.scrollTop;
+            setThreads((s) => {
+              const prev = s[key];
+              if (!prev || prev.status !== "ready") return s;
+              const older = d.messages.filter((m) => !prev.messages.some((x) => sameId(x.id, m.id)));
+              // 这一页没带来任何新内容就当作到头了，避免对着同一个 before 反复请求
+              return { ...s, [key]: { ...prev, messages: [...older, ...prev.messages], nextBefore: older.length ? (d.next_before ?? null) : null, earlierLoading: false } };
+            });
           },
           (err: unknown) => {
-            if (!fresh()) return;
+            if (!alive.current) return;
             const error = toChatError(err, "conversation");
-            setDetail((prev) =>
-              prev && prev.id === id && prev.status === "ready"
-                ? { ...prev, refreshError: error }
-                : { id, status: "error", conversation: null, messages: [], error, refreshError: null },
-            );
+            setThreads((s) => (s[key] ? { ...s, [key]: { ...s[key], earlierLoading: false, earlierError: error } } : s));
           },
         )
         .finally(() => {
-          if (detailInflight.current?.promise === promise) detailInflight.current = null;
+          ctl.earlier = false;
         });
-      detailInflight.current = { id, promise };
-      return promise;
     },
-    [alive, upsertConv],
+    [alive, ctlOf],
   );
 
-  const [listOpen, setListOpen] = useState(false);
-  const idem = useRef<{ conv: string; content: string; key: string } | null>(null);
-  const stick = useRef(true);
-
+  // 选中机器人：没读过就读；读过的先显示原样（同一条对话），后台刷新一次。
   useEffect(() => {
-    // 换了会话：幂等键作废，回到「跟随最新消息」
-    idem.current = null;
-    stick.current = true;
-    setListOpen(false);
-    if (!activeId) {
-      setDetail(null);
-      return;
+    if (!selKey) return;
+    const bot = botsRef.current.find((b) => sameId(b.id, selKey));
+    if (bot) void loadThread(bot);
+  }, [selKey, loadThread]);
+
+  // 机器人列表刷新后：已经读过的对话如果和列表里的最新回复对不上，补读一次。
+  useEffect(() => {
+    for (const b of bots) {
+      const th = threadsRef.current[String(b.id)];
+      if (!th || th.status !== "ready" || b.last_task_id == null) continue;
+      const last = th.messages[th.messages.length - 1];
+      if (!last || !sameId(last.id, b.last_task_id) || (b.last_status && b.last_status !== last.status)) void loadThread(b);
     }
-    setDetail((prev) =>
-      prev?.id === activeId ? prev : { id: activeId, status: "loading", conversation: null, messages: [], error: null, refreshError: null },
-    );
-    void loadDetail(activeId);
-  }, [activeId, loadDetail]);
+  }, [bots, loadThread]);
 
-  /** 打开失败后的重试：先回到加载态，再读一次。 */
-  const reopen = () => {
-    setDetail({ id: activeId, status: "loading", conversation: null, messages: [], error: null, refreshError: null });
-    void loadDetail(activeId);
-  };
-
-  const current = detail && detail.id === activeId ? detail : null;
-  const conversation = current?.conversation ?? convs.items.find((c) => sameId(c.id, activeId)) ?? null;
-  const messages = current?.messages ?? [];
-  const replying = current?.status === "ready" && messages.some(isPendingTurn);
-
-  // 只在有排队 / 运行中的回复时轮询；上一次读取结束后才排下一次，页面在后台时跳过。
+  // 只在有排队 / 运行中的回复时轮询（切到别的机器人后，原来那条也继续等回复）；
+  // 上一轮读取都结束后才排下一轮，页面在后台时跳过。
+  const pendingKeys = bots
+    .filter((b) => {
+      const th = threads[String(b.id)];
+      return th?.status === "ready" && th.messages.some(isPendingTurn);
+    })
+    .map((b) => String(b.id))
+    .join("\n");
   useEffect(() => {
-    if (!replying || !activeId) return;
+    if (!pendingKeys) return;
+    const keys = pendingKeys.split("\n");
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
       if (stopped) return;
-      if (!document.hidden) await loadDetail(activeId);
+      if (!document.hidden) {
+        await Promise.all(
+          keys.map((key) => {
+            const bot = botsRef.current.find((b) => sameId(b.id, key));
+            return bot ? loadThread(bot) : undefined;
+          }),
+        );
+      }
       if (!stopped) timer = setTimeout(() => void tick(), POLL_MS);
     };
     timer = setTimeout(() => void tick(), POLL_MS);
@@ -350,99 +744,238 @@ function Workspace({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [replying, activeId, loadDetail]);
+  }, [pendingKeys, loadThread]);
 
-  // ---------- 新建会话 ----------
-  const [selectedBot, setSelectedBot] = useState("");
-  const bot = bots.find((b) => sameId(b.id, selectedBot)) ?? bots[0] ?? null;
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<ChatError | null>(null);
+  const thread = selKey ? threads[selKey] : undefined;
+  const messages = thread?.messages ?? [];
+  const ready = thread?.status === "ready";
+  const replying = ready && messages.some(isPendingTurn);
+  const botName = selected?.name || t("botChat.unknownBot");
 
-  const create = async () => {
-    if (!bot || creating) return;
-    const from = activeRef.current;
-    setCreating(true);
-    setCreateError(null);
-    try {
-      const c = await chatApi.createConversation(bot.id);
-      if (!alive.current) return;
-      upsertConv(c);
-      // 等待期间员工自己点开了别的会话，就不把他拉走
-      if (activeRef.current === from) openConversation(String(c.id));
-    } catch (err) {
-      if (!alive.current) return;
-      const error = toChatError(err, "runtime");
-      setCreateError(error);
-      if (error.key === "botUnavailable") reloadBots();
-    } finally {
-      if (alive.current) setCreating(false);
-    }
+  /** 打开失败后的重试：先回到加载态，再读一次。 */
+  const reopen = () => {
+    if (!selected) return;
+    setThreads((s) => ({ ...s, [selKey]: LOADING_THREAD }));
+    void loadThread(selected);
   };
+
+  // ---------- 预览与未读 ----------
+  const [reads, setReads] = useState<Record<string, string>>({});
+  const readOf = (key: string) => reads[key] ?? getLastRead(userId, key);
+
+  /** 最近一条：读过对话就以对话为准，否则用机器人列表里带的。 */
+  const latestOf = (b: ChatBot): { id: ChatId | null; status: ChatTurnStatus | null; text: string } | null => {
+    const th = threads[String(b.id)];
+    const last = th?.status === "ready" ? th.messages[th.messages.length - 1] : undefined;
+    if (last) return { id: last.id, status: last.status, text: last.status === "succeeded" ? last.summary : last.content };
+    if (b.last_task_id != null || b.last_message) return { id: b.last_task_id ?? null, status: b.last_status ?? null, text: b.last_message ?? "" };
+    return null;
+  };
+  const previewOf = (b: ChatBot): string => {
+    const latest = latestOf(b);
+    if (!latest) return t("botChat.preview.empty");
+    if (latest.status === "queued" || latest.status === "running") return t("botChat.preview.replying");
+    if (latest.status === "failed") return t("botChat.preview.failed");
+    if (latest.status === "canceled") return t("botChat.preview.canceled");
+    return plainText(latest.text) || t(latest.status === "succeeded" ? "botChat.preview.noText" : "botChat.preview.empty");
+  };
+  /** 未读：有一条真实完成的回复，且本机这个账号还没在这个机器人的对话里看到过它。 */
+  const unreadOf = (b: ChatBot): boolean => {
+    if (sameId(b.id, selKey)) return false;
+    const latest = latestOf(b);
+    return !!latest && latest.id != null && latest.status === "succeeded" && readOf(String(b.id)) !== String(latest.id);
+  };
+
+  // 正在看的对话：把读到的位置记到本机
+  const lastDone = ready ? [...messages].reverse().find((m) => !isPendingTurn(m)) : undefined;
+  const lastDoneId = lastDone ? String(lastDone.id) : "";
+  useEffect(() => {
+    if (!selKey || !lastDoneId) return;
+    setLastRead(userId, selKey, lastDoneId);
+    setReads((r) => (r[selKey] === lastDoneId ? r : { ...r, [selKey]: lastDoneId }));
+  }, [userId, selKey, lastDoneId]);
+
+  // ---------- 机器人资料 ----------
+  const [profiles, setProfiles] = useState<Record<string, ProfileState>>({});
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
+  const profileInflight = useRef<Record<string, Promise<void> | undefined>>({});
+
+  /** 同一个机器人同时只读一次：已有读取在途时返回那一次。 */
+  const loadProfile = useCallback(
+    (bot: ChatBot): Promise<void> => {
+      const key = String(bot.id);
+      const pending = profileInflight.current[key];
+      if (pending) return pending;
+      setProfiles((s) => (s[key]?.status === "ready" ? s : { ...s, [key]: { status: "loading", data: null, error: null, refreshError: null } }));
+      const p: Promise<void> = chatApi
+        .profile(bot.id)
+        .then(
+          (data) => {
+            if (!alive.current) return;
+            setProfiles((s) => {
+              // 内容没变就不动状态，轮询时不引起重绘
+              const prev = s[key];
+              if (prev?.status === "ready" && !prev.refreshError && JSON.stringify(prev.data) === JSON.stringify(data)) return s;
+              return { ...s, [key]: { status: "ready", data, error: null, refreshError: null } };
+            });
+          },
+          (err: unknown) => {
+            if (!alive.current) return;
+            const error = toChatError(err, "files");
+            setProfiles((s) => ({
+              ...s,
+              [key]: s[key]?.status === "ready" ? { ...s[key], refreshError: error } : { status: "error", data: null, error, refreshError: null },
+            }));
+          },
+        )
+        .finally(() => {
+          if (profileInflight.current[key] === p) profileInflight.current[key] = undefined;
+        });
+      profileInflight.current[key] = p;
+      return p;
+    },
+    [alive],
+  );
+
+  // 打开资料、或换了机器人：读一次（已有内容时原地刷新）；之后只要资料还开着就定时刷新，
+  // 这样回复进行中、或定时任务在跑时，云端电脑状态不会一直停在打开那一刻。
+  // 和对话轮询一样：上一轮结束后才排下一轮，页面在后台时跳过；首次读取失败停在错误态时不自动重试。
+  useEffect(() => {
+    if (!profileOpen || !selKey) return;
+    const current = () => botsRef.current.find((b) => sameId(b.id, selKey));
+    const first = current();
+    if (first) void loadProfile(first);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (stopped) return;
+      const bot = current();
+      if (bot && !document.hidden && profilesRef.current[selKey]?.status === "ready") await loadProfile(bot);
+      if (!stopped) timer = setTimeout(() => void tick(), PROFILE_POLL_MS);
+    };
+    timer = setTimeout(() => void tick(), PROFILE_POLL_MS);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [profileOpen, selKey, loadProfile]);
+
+  // 一次回复刚结束：云端电脑状态和文件库可能变了，资料开着就刷新一下
+  const wasReplying = useRef("");
+  useEffect(() => {
+    if (replying) {
+      wasReplying.current = selKey;
+      return;
+    }
+    if (!selKey || wasReplying.current !== selKey) return;
+    wasReplying.current = "";
+    const bot = botsRef.current.find((b) => sameId(b.id, selKey));
+    if (bot && profileOpenRef.current) void loadProfile(bot);
+  }, [replying, selKey, loadProfile]);
+
+  const openList = () => {
+    setProfileOpen((v) => (isWide(PROFILE_STATIC) ? v : false));
+    setListOpen(true);
+  };
+  const closeList = () => {
+    setListOpen(false);
+    listOpenRef.current?.focus();
+  };
+  const toggleProfile = () => {
+    setListOpen(false);
+    setProfileOpen((v) => !v);
+  };
+  const closeProfile = () => {
+    setProfileOpen(false);
+    pillRef.current?.focus();
+  };
+
+  // 窄屏上资料是浮层：打开后把焦点交给关闭按钮
+  useEffect(() => {
+    if (profileOpen && selKey && !isWide(PROFILE_STATIC)) profileCloseRef.current?.focus();
+  }, [profileOpen, selKey]);
+
+  // Esc 只关浮层；宽屏上常驻的栏不受影响（输入法里按 Esc 也不该把它关掉）
+  useEffect(() => {
+    if (!listOpen && !profileOpen) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing) return;
+      if (listOpen && !isWide(LIST_STATIC)) {
+        setListOpen(false);
+        listOpenRef.current?.focus();
+      } else if (profileOpen && !isWide(PROFILE_STATIC)) {
+        setProfileOpen(false);
+        pillRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [listOpen, profileOpen]);
 
   // ---------- 输入与发送 ----------
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState<string | null>(null);
-  const [sendError, setSendError] = useState<{ conv: string; error: ChatError } | null>(null);
-  /** 发送时后端明确说这个会话的机器人已停用（bot_disabled）。 */
+  const [sendError, setSendError] = useState<{ bot: string; error: ChatError } | null>(null);
+  /** 发送时后端明确说这个机器人已停用（bot_disabled）。 */
   const [blocked, setBlocked] = useState<string[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const idem = useRef<{ bot: string; content: string; key: string } | null>(null);
 
-  const draft = drafts[activeId] ?? "";
-  const setDraft = (value: string) => setDrafts((d) => ({ ...d, [activeId]: value }));
+  const draft = drafts[selKey] ?? "";
+  const setDraft = (value: string) => setDrafts((d) => ({ ...d, [selKey]: value }));
   const content = draft.trim();
   const bytes = useMemo(() => utf8Bytes(content), [content]);
   const tooLong = bytes > CHAT_CONTENT_MAX_BYTES;
 
-  const ready = current?.status === "ready";
-  const botName = conversation?.bot_name || t("botChat.unknownBot");
-  const botDisabled = !!ready && !!conversation && (!bots.some((b) => sameId(b.id, conversation.bot_id)) || blocked.includes(activeId));
-  const isSending = sending !== null;
-  const canSend = !!ready && !botDisabled && !isSending && !replying && content.length > 0 && !tooLong;
+  const botDisabled = ready && blocked.includes(selKey);
+  const isSending = sending === selKey && !!selKey;
+  const canSend = ready && !!thread?.convId && !botDisabled && sending === null && !replying && content.length > 0 && !tooLong;
 
   const send = async () => {
-    if (!canSend) return;
-    const conv = activeId;
+    if (!canSend || !selected || !thread?.convId) return;
+    const bot = selected;
+    const key = selKey;
+    const conv = thread.convId;
+    const ctl = ctlOf(key);
     const reuse = idem.current;
-    const key = reuse && reuse.conv === conv && reuse.content === content ? reuse.key : newIdempotencyKey();
-    idem.current = { conv, content, key };
-    setSending(conv);
+    const idemKey = reuse && reuse.bot === key && reuse.content === content ? reuse.key : newIdempotencyKey();
+    idem.current = { bot: key, content, key: idemKey };
+    setSending(key);
     setSendError(null);
     try {
-      const turn = await chatApi.send(conv, content, key);
-      if (idem.current?.key === key) idem.current = null;
+      const turn = await chatApi.send(conv, content, idemKey);
+      if (idem.current?.key === idemKey) idem.current = null;
       if (!alive.current) return;
       // 等待期间输入框里换了内容（例如点了「重新编辑」）：那是新草稿，原样留着
-      setDrafts((d) => ((d[conv] ?? "").trim() === content ? { ...d, [conv]: "" } : d));
-      setConvs((s) => ({ ...s, items: s.items.map((c) => (sameId(c.id, conv) ? { ...c, updated_at: turn.created_at || c.updated_at } : c)) }));
-      if (activeRef.current === conv) {
-        // 发送前发出的读取不含这条消息，回来后会被 localVersion 丢弃。切走又切回时会话可能还停在
-        // 加载态，没有内容可追加：等那次读取结束后补读一次（loadDetail 自带去重，不会和轮询重叠）。
-        const pendingRead = detailInflight.current?.id === conv ? detailInflight.current.promise : null;
-        localVersion.current++;
-        stick.current = true;
-        setDetail((prev) =>
-          prev && prev.id === conv && prev.status === "ready"
-            ? { ...prev, refreshError: null, messages: [...prev.messages.filter((m) => !sameId(m.id, turn.id)), turn] }
-            : prev,
-        );
-        if (pendingRead) {
-          void pendingRead.then(() => {
-            if (alive.current && activeRef.current === conv) void loadDetail(conv);
-          });
-        }
+      setDrafts((d) => ((d[key] ?? "").trim() === content ? { ...d, [key]: "" } : d));
+      // 发送前发出的读取不含这条消息，回来后会被 version 丢弃；等它结束后补读一次
+      // （loadThread 自带去重，不会和轮询重叠）。
+      const pendingRead = ctl.inflight;
+      ctl.version++;
+      if (selKeyRef.current === key) stick.current = true;
+      setThreads((s) => {
+        const prev = s[key];
+        if (!prev || prev.status !== "ready") return s;
+        return { ...s, [key]: { ...prev, refreshError: null, messages: [...prev.messages.filter((m) => !sameId(m.id, turn.id)), turn] } };
+      });
+      if (pendingRead) {
+        void pendingRead.then(() => {
+          if (alive.current) void loadThread(bot);
+        });
       }
     } catch (err) {
       const error = toChatError(err, "conversation");
       // 这个键后端不再接受：下次重试换一个新的
-      if (error.key === "conflict" && idem.current?.key === key) idem.current = null;
+      if (error.key === "conflict" && idem.current?.key === idemKey) idem.current = null;
       if (!alive.current) return;
-      setSendError({ conv, error });
+      setSendError({ bot: key, error });
       if (error.key === "botDisabled") {
-        setBlocked((b) => (b.includes(conv) ? b : [...b, conv]));
+        setBlocked((b) => (b.includes(key) ? b : [...b, key]));
         reloadBots();
       }
       // 已有一条在处理（例如另一个标签页发的）：读一次最新记录，轮询随之接上
-      if (error.key === "busy" && activeRef.current === conv) void loadDetail(conv);
+      if (error.key === "busy") void loadThread(bot);
     } finally {
       if (alive.current) setSending(null);
     }
@@ -466,7 +999,7 @@ function Workspace({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
-  }, [draft, activeId, ready]);
+  }, [draft, selKey, ready]);
 
   const reuseContent = (text: string) => {
     setDraft(text);
@@ -474,49 +1007,37 @@ function Workspace({
   };
 
   // ---------- 滚动 ----------
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const first = messages[0];
   const last = messages[messages.length - 1];
-  const tail = `${current?.status ?? ""}:${messages.length}:${last?.status ?? ""}:${last?.summary.length ?? 0}`;
+  const tail = `${selKey}:${thread?.status ?? ""}:${messages.length}:${first ? String(first.id) : ""}:${last ? String(last.id) : ""}:${last?.status ?? ""}:${last?.summary.length ?? 0}`;
+  const scrolledFor = useRef("");
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [activeId, tail]);
+    if (scrolledFor.current !== selKey) {
+      // 换了机器人：回到「跟随最新消息」
+      scrolledFor.current = selKey;
+      stick.current = true;
+      anchor.current = null;
+    }
+    if (!el) return;
+    if (anchor.current != null) {
+      el.scrollTop = el.scrollHeight - anchor.current;
+      anchor.current = null;
+    } else if (stick.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [selKey, tail]);
   const onScroll = () => {
     const el = scrollRef.current;
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+    if (!el) return;
+    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+    if (selKey && el.scrollTop < EARLIER_PX && el.scrollHeight > el.clientHeight) loadEarlier(selKey);
   };
 
-  useEffect(() => {
-    if (!listOpen) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") setListOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [listOpen]);
-
   const errText = (e: ChatError) => t(`botChat.errors.${e.key}`);
-  const refreshing = current?.status === "loading";
-  const activeSendError = sendError && sendError.conv === activeId ? sendError.error : null;
-  const title = conversation?.title?.trim() || t("botChat.untitled");
+  const activeSendError = sendError && sendError.bot === selKey ? sendError.error : null;
 
-  const botPicker = (
-    <select
-      aria-label={t("botChat.list.botLabel")}
-      className={cx(inputCls, "min-w-0")}
-      value={bot ? String(bot.id) : ""}
-      disabled={creating || !bots.length}
-      onChange={(e) => setSelectedBot(e.target.value)}
-    >
-      {bots.map((b) => (
-        <option key={String(b.id)} value={String(b.id)}>
-          {b.name}
-        </option>
-      ))}
-    </select>
-  );
-
-  // 机器人列表的手动刷新：会话栏和「暂无机器人」的欢迎区各放一个，没有机器人时也看得到
+  // 机器人列表的手动刷新：左栏和「暂无机器人」的欢迎区各放一个，没有机器人时也看得到
   const botsRefresh = (className?: string) => (
     <Button type="button" variant="ghost" size="sm" className={className} disabled={botsRefreshing} onClick={reloadBots} data-bot-refresh="">
       <RefreshCw size={14} aria-hidden className={cx(botsRefreshing && "animate-spin motion-reduce:animate-none")} />
@@ -529,251 +1050,243 @@ function Workspace({
     </p>
   );
 
+  /** 单选组的方向键：移到上 / 下一个机器人并选中。 */
+  const onRadioKey = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
+    if (!step || !bots.length) return;
+    e.preventDefault();
+    const next = bots[(index + step + bots.length) % bots.length];
+    if (!sameId(next.id, selKey)) setParams({ bot: String(next.id) });
+    radioRefs.current[String(next.id)]?.focus();
+  };
+
+  // 日期分隔：每条消息前，日期和上一条不同就插一行
+  let prevDay = "";
+
   return (
     <div className="relative flex h-[calc(100dvh-8rem)] min-h-[30rem] overflow-hidden rounded-xl border border-neutral-200 bg-card shadow-card lg:h-[calc(100dvh-6.5rem)] dark:border-white/10">
-      {/* 会话栏：宽屏常驻左侧，窄屏盖在对话区上 */}
+      {/* 左：机器人列表。宽屏常驻，窄屏盖在对话区上 */}
       <aside
-        aria-label={t("botChat.list.open")}
+        aria-label={t("botChat.list.label")}
         className={cx(
-          "absolute inset-0 z-20 min-h-0 flex-col bg-card lg:static lg:z-auto lg:w-72 lg:shrink-0 lg:border-r lg:border-neutral-200 dark:lg:border-white/10",
+          "absolute inset-0 z-20 min-h-0 flex-col bg-card lg:static lg:z-auto lg:w-64 lg:shrink-0 lg:border-r lg:border-neutral-200 dark:lg:border-white/10",
           listOpen ? "flex" : "hidden lg:flex",
         )}
       >
-        <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-          <h1 className="min-w-0 flex-1 truncate text-base font-bold tracking-[-0.01em] text-neutral-900">{t("botChat.title")}</h1>
+        <div className="flex items-center gap-2 px-4 pt-4 pb-1">
+          <h1 className="min-w-0 flex-1 truncate text-xs font-semibold tracking-[0.04em] text-neutral-500/80">{t("botChat.title")}</h1>
           <button
             type="button"
             aria-label={t("botChat.list.close")}
-            onClick={() => setListOpen(false)}
+            onClick={closeList}
             className="rounded-md p-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 lg:hidden"
           >
-            <X size={18} />
+            <X size={18} aria-hidden />
           </button>
         </div>
-        <div className="space-y-2 border-b border-neutral-200 px-4 pb-4 dark:border-white/10">
-          {bots.length ? (
-            <>
-              {botPicker}
-              <Button type="button" className="w-full" disabled={creating || !bot} onClick={() => void create()}>
-                {creating ? <Spinner size={15} /> : <Plus size={15} aria-hidden />}
-                {creating ? t("botChat.list.creating") : t("botChat.list.new")}
-              </Button>
-            </>
-          ) : (
-            <p className="text-[13px] leading-5 text-neutral-500">{t("botChat.list.noBots")}</p>
-          )}
-          {botsRefresh("w-full")}
-          {botsRefreshError}
-          {createError && (
-            <p role="alert" className="text-[13px] leading-5 text-red-600 dark:text-red-400">
-              {t("botChat.list.createFailed", { reason: errText(createError) })}
+        {selected && (
+          <div className="flex flex-col items-center px-4 pt-2 pb-4 text-center" data-bot-current="">
+            <DotFace seed={selected.id} size={72} />
+            <p className="mt-2.5 max-w-full truncate text-base leading-6 font-bold tracking-[-0.01em] text-neutral-900">
+              <span className="sr-only">{t("botChat.list.current")}: </span>
+              {selected.name}
             </p>
-          )}
-        </div>
-        <div className="flex items-center justify-between px-4 pt-3 pb-1.5">
-          <h2 className="text-xs font-semibold tracking-[0.04em] text-neutral-500/80">{t("botChat.list.title")}</h2>
-          {convs.status === "ready" && convs.error && (
-            <button type="button" onClick={loadConvs} className="text-xs font-medium text-red-600 hover:underline dark:text-red-400">
-              {t("botChat.retry")}
-            </button>
-          )}
-        </div>
-        <nav aria-label={t("botChat.list.title")} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {convs.status === "loading" && (
-            <div role="status" className="flex items-center gap-2 px-2 py-3 text-[13px] text-neutral-500">
-              <Spinner size={14} className="text-neutral-400" />
-              {t("botChat.list.loading")}
-            </div>
-          )}
-          {convs.status === "error" && (
-            <div role="alert" className="px-2 py-3 text-[13px] leading-5 text-neutral-600">
-              <p>
-                {t("botChat.list.failed")} {convs.error && errText(convs.error)}
-              </p>
-              <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={loadConvs}>
-                {t("botChat.retry")}
-              </Button>
-            </div>
-          )}
-          {convs.status === "ready" && !sortedConvs.length && <p className="px-2 py-3 text-[13px] leading-5 text-neutral-500">{t("botChat.list.empty")}</p>}
-          <ul className="flex flex-col gap-0.5">
-            {sortedConvs.map((c) => {
-              const active = sameId(c.id, activeId);
+          </div>
+        )}
+        {bots.length ? (
+          <div role="radiogroup" aria-label={t("botChat.list.pick")} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-t border-neutral-200 px-2 py-2 dark:border-white/10">
+            {bots.map((b, index) => {
+              const key = String(b.id);
+              const picked = sameId(b.id, selKey);
+              const unread = unreadOf(b);
+              const descId = `${composerId}-bot-${index}`;
               return (
-                <li key={String(c.id)}>
-                  <button
-                    type="button"
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => (active ? setListOpen(false) : openConversation(String(c.id)))}
-                    className={cx(
-                      "block w-full min-w-0 rounded-md px-2.5 py-2 text-left transition-colors",
-                      active ? "bg-brand-50 dark:bg-brand-500/15" : "hover:bg-neutral-100",
-                    )}
-                  >
-                    <span className={cx("block truncate text-sm font-medium", active ? "text-brand-600 dark:text-brand-200" : "text-neutral-800")}>
-                      {c.title?.trim() || t("botChat.untitled")}
+                <button
+                  key={key}
+                  ref={(el) => {
+                    radioRefs.current[key] = el;
+                  }}
+                  type="button"
+                  role="radio"
+                  aria-checked={picked}
+                  aria-label={b.name}
+                  aria-describedby={descId}
+                  tabIndex={picked || (!selKey && index === 0) ? 0 : -1}
+                  data-bot={key}
+                  data-unread={unread ? "true" : "false"}
+                  onClick={() => selectBot(b)}
+                  onKeyDown={(e) => onRadioKey(e, index)}
+                  className={cx(
+                    "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors",
+                    picked ? "bg-brand-50 dark:bg-brand-500/15" : "hover:bg-neutral-100",
+                  )}
+                >
+                  <DotFace seed={b.id} size={36} />
+                  <span className="min-w-0 flex-1">
+                    <span className={cx("block truncate text-sm font-medium", picked ? "text-brand-600 dark:text-brand-200" : "text-neutral-800")}>{b.name}</span>
+                    <span id={descId} className="mt-0.5 block truncate text-xs text-neutral-500">
+                      {previewOf(b)}
+                      {unread && <span className="sr-only"> · {t("botChat.list.unread")}</span>}
                     </span>
-                    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-neutral-500">
-                      <span className="min-w-0 truncate">{c.bot_name || t("botChat.unknownBot")}</span>
-                      <span aria-hidden>·</span>
-                      <span className="shrink-0">{formatRelativeTime(c.updated_at, i18n.language)}</span>
-                    </span>
-                  </button>
-                </li>
+                  </span>
+                  {unread && <span aria-hidden title={t("botChat.list.unread")} className="h-2 w-2 shrink-0 rounded-full bg-brand-500" />}
+                </button>
               );
             })}
-          </ul>
-        </nav>
+          </div>
+        ) : (
+          <p className="min-h-0 flex-1 border-t border-neutral-200 px-4 py-4 text-[13px] leading-5 text-neutral-500 dark:border-white/10">{t("botChat.list.noBots")}</p>
+        )}
+        <div className="space-y-1.5 border-t border-neutral-200 px-3 py-2.5 dark:border-white/10">
+          {botsRefresh("w-full")}
+          {botsRefreshError}
+        </div>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col" aria-label={activeId ? t("botChat.header.with", { bot: botName }) : t("botChat.title")}>
-        {/* 机器人头部 */}
-        <header className="flex items-center gap-3 border-b border-neutral-200 px-3 py-3 sm:px-5 dark:border-white/10">
+      {/* 中：选中机器人的对话 */}
+      <section className="flex min-w-0 flex-1 flex-col" aria-label={selected ? t("botChat.header.with", { bot: botName }) : t("botChat.title")}>
+        <header className="flex items-center gap-2 border-b border-neutral-200 px-3 py-2.5 sm:px-4 dark:border-white/10">
           <button
+            ref={listOpenRef}
             type="button"
             aria-label={t("botChat.list.open")}
-            onClick={() => setListOpen(true)}
-            className="-ml-1 shrink-0 rounded-md p-1.5 text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 lg:hidden"
+            title={t("botChat.list.open")}
+            onClick={openList}
+            className="shrink-0 rounded-md p-2 text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 lg:hidden"
           >
-            <History size={19} />
+            <Users size={18} aria-hidden />
           </button>
-          <BotAvatar />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <h2 className="min-w-0 truncate text-base leading-6 font-bold tracking-[-0.01em] text-neutral-900 sm:text-lg">
-                {activeId ? botName : (bot?.name ?? t("botChat.title"))}
-              </h2>
-              {botDisabled && <Badge tone="amber">{t("botChat.header.disabled")}</Badge>}
-              {replying && (
-                <span className="hidden sm:inline-flex">
-                  <Badge tone="brand">{t("botChat.header.replying")}</Badge>
-                </span>
-              )}
-            </div>
-            <p className="truncate text-xs leading-5 text-neutral-500">{activeId ? title : t("botChat.welcome.pick")}</p>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {selected ? (
+              <button
+                ref={pillRef}
+                type="button"
+                aria-label={t("botChat.header.profile", { bot: botName })}
+                aria-expanded={profileOpen}
+                aria-controls={profileId}
+                onClick={toggleProfile}
+                data-bot-pill=""
+                className={cx(
+                  "inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border py-1 pr-2.5 pl-1 text-sm font-semibold text-neutral-900 transition-colors",
+                  profileOpen
+                    ? "border-brand-200 bg-brand-50 dark:border-brand-400/30 dark:bg-brand-500/15"
+                    : "border-neutral-200 bg-card hover:border-neutral-300 hover:bg-neutral-50 dark:border-white/10 dark:hover:border-white/20",
+                )}
+              >
+                <DotFace seed={selected.id} size={26} />
+                <span className="min-w-0 truncate">{botName}</span>
+                <ChevronDown size={14} aria-hidden className={cx("shrink-0 text-neutral-500 transition-transform", profileOpen && "-rotate-90")} />
+              </button>
+            ) : (
+              <h2 className="min-w-0 truncate px-1 text-base font-bold text-neutral-900">{t("botChat.title")}</h2>
+            )}
+            {botDisabled && <Badge tone="amber">{t("botChat.header.disabled")}</Badge>}
+            {replying && (
+              <span className="hidden sm:inline-flex">
+                <Badge tone="brand">{t("botChat.header.replying")}</Badge>
+              </span>
+            )}
           </div>
-          {activeId && (
+          {selected && (
             <button
               type="button"
               aria-label={t("botChat.refresh")}
               title={t("botChat.refresh")}
-              disabled={refreshing}
-              onClick={() => void loadDetail(activeId)}
+              disabled={thread?.status === "loading"}
+              onClick={() => void loadThread(selected)}
               className="shrink-0 rounded-md p-2 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:opacity-50"
             >
-              <RefreshCw size={16} className={cx(refreshing && "animate-spin motion-reduce:animate-none")} />
+              <RefreshCw size={16} aria-hidden className={cx(thread?.status === "loading" && "animate-spin motion-reduce:animate-none")} />
             </button>
           )}
         </header>
 
-        {/* 对话区 */}
         <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-5 sm:px-6">
-          {!activeId && (
+          {!selected && !resolving && (
             <div className="mx-auto flex min-h-full max-w-xl flex-col items-center justify-center py-6 text-center">
-              <BotAvatar size="lg" />
-              {bots.length ? (
-                <>
-                  <h2 className="mt-5 text-xl leading-7 font-bold tracking-[-0.02em] text-neutral-900 sm:text-2xl sm:leading-8">{t("botChat.welcome.title")}</h2>
-                  <p className="mt-2 text-sm leading-6 text-neutral-600">{t("botChat.welcome.desc")}</p>
-                  <div role="radiogroup" aria-label={t("botChat.welcome.pick")} className="mt-6 flex max-w-full flex-wrap justify-center gap-2">
-                    {bots.map((b) => {
-                      const picked = sameId(b.id, bot?.id);
-                      return (
-                        <button
-                          key={String(b.id)}
-                          type="button"
-                          role="radio"
-                          aria-checked={picked}
-                          disabled={creating}
-                          onClick={() => setSelectedBot(String(b.id))}
-                          className={cx(
-                            "inline-flex max-w-full items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors",
-                            picked
-                              ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200"
-                              : "border-neutral-200 bg-card text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50 dark:border-white/10 dark:hover:border-white/20",
-                          )}
-                        >
-                          <Bot size={15} aria-hidden className="shrink-0" />
-                          <span className="min-w-0 truncate">{b.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <Button type="button" size="lg" className="mt-6 rounded-full" disabled={creating || !bot} onClick={() => void create()}>
-                    {creating ? <Spinner size={16} /> : <Plus size={16} aria-hidden />}
-                    {creating ? t("botChat.list.creating") : t("botChat.welcome.start")}
-                  </Button>
-                  {createError && (
-                    <p role="alert" className="mt-3 text-sm text-red-600 dark:text-red-400">
-                      {t("botChat.list.createFailed", { reason: errText(createError) })}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <>
-                  <h2 className="mt-5 text-lg font-bold text-neutral-900">{t("botChat.welcome.noBotsTitle")}</h2>
-                  <p className="mt-2 text-sm leading-6 text-neutral-600">{t("botChat.welcome.noBots")}</p>
-                  {botsRefresh("mt-4")}
-                  {botsRefreshError && <div className="mt-2">{botsRefreshError}</div>}
-                </>
-              )}
+              <span aria-hidden className="flex h-14 w-14 items-center justify-center rounded-full bg-neutral-100 text-neutral-400 ring-1 ring-neutral-200/70 ring-inset">
+                <Bot size={26} strokeWidth={1.6} />
+              </span>
+              <h2 className="mt-5 text-lg font-bold text-neutral-900">{t("botChat.welcome.noBotsTitle")}</h2>
+              <p className="mt-2 text-sm leading-6 text-neutral-600">{t("botChat.welcome.noBots")}</p>
+              {botsRefresh("mt-4")}
+              {botsRefreshError && <div className="mt-2">{botsRefreshError}</div>}
             </div>
           )}
 
-          {activeId && current?.status === "loading" && (
+          {(resolving || (selected && (!thread || thread.status === "loading"))) && (
             <div role="status" className="flex min-h-full items-center justify-center gap-2 text-sm text-neutral-500">
               <Spinner size={18} className="text-neutral-400" />
               {t("botChat.thread.loading")}
             </div>
           )}
 
-          {activeId && current?.status === "error" && current.error && (
+          {selected && thread?.status === "error" && thread.error && (
             <Empty
-              icon={current.error.key === "notFound" ? MessageSquare : CircleAlert}
-              title={t(current.error.key === "notFound" ? "botChat.thread.notFoundTitle" : "botChat.thread.loadFailedTitle")}
+              icon={CircleAlert}
+              title={t("botChat.thread.loadFailedTitle")}
               className="min-h-full"
               action={
-                <>
-                  {current.error.key !== "notFound" && (
-                    <Button type="button" onClick={reopen}>
-                      {t("botChat.retry")}
-                    </Button>
-                  )}
-                  <Button type="button" variant="secondary" onClick={() => openConversation("")}>
-                    {t("botChat.thread.back")}
-                  </Button>
-                </>
+                <Button type="button" onClick={reopen}>
+                  {t("botChat.retry")}
+                </Button>
               }
             >
-              <span role="alert">{current.error.key === "notFound" ? t("botChat.thread.notFound") : errText(current.error)}</span>
+              <span role="alert">{errText(thread.error)}</span>
             </Empty>
           )}
 
-          {activeId && ready && (
+          {selected && ready && thread && (
             <div className="mx-auto max-w-3xl">
+              {thread.nextBefore != null && (
+                <div className="mb-5 flex flex-col items-center gap-1.5">
+                  <Button type="button" variant="ghost" size="sm" disabled={thread.earlierLoading} onClick={() => loadEarlier(selKey)} data-load-earlier="">
+                    {thread.earlierLoading && <Spinner size={13} />}
+                    {thread.earlierLoading ? t("botChat.thread.earlierLoading") : t("botChat.thread.earlier")}
+                  </Button>
+                  {thread.earlierError && (
+                    <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                      {t("botChat.thread.earlierFailed", { reason: errText(thread.earlierError) })}
+                    </p>
+                  )}
+                </div>
+              )}
               {!messages.length && (
                 <div className="flex flex-col items-center px-4 py-10 text-center">
-                  <BotAvatar size="lg" />
+                  <DotFace seed={selected.id} size={64} />
                   <p className="mt-4 text-sm leading-6 text-neutral-600">{t("botChat.thread.empty", { bot: botName })}</p>
                 </div>
               )}
-              <ol role="log" aria-live="polite" aria-label={t("botChat.thread.label")} className="flex flex-col gap-7">
-                {messages.map((m) => (
-                  <Turn key={String(m.id)} turn={m} botName={botName} onReuse={botDisabled ? undefined : reuseContent} />
-                ))}
+              <ol role="log" aria-live="polite" aria-label={t("botChat.thread.label")} className="flex flex-col gap-6">
+                {messages.flatMap((m) => {
+                  const day = dayKey(m.created_at);
+                  const items: ReactNode[] = [];
+                  if (day && day !== prevDay) {
+                    items.push(
+                      <li key={`day-${day}`} className="flex justify-center" data-day-separator="">
+                        <time dateTime={m.created_at} className="rounded-full bg-neutral-100 px-3 py-0.5 text-[11px] font-medium text-neutral-500">
+                          {dayLabel(m.created_at, lang)}
+                        </time>
+                      </li>,
+                    );
+                  }
+                  if (day) prevDay = day;
+                  items.push(<Turn key={String(m.id)} turn={m} bot={selected} onReuse={botDisabled ? undefined : reuseContent} />);
+                  return items;
+                })}
               </ol>
             </div>
           )}
         </div>
 
         {/* 输入区 */}
-        {activeId && ready && (
-          <form onSubmit={onSubmit} className="border-t border-neutral-200 px-3 pt-3 pb-3 sm:px-6 dark:border-white/10">
+        {selected && ready && thread && (
+          <form onSubmit={onSubmit} className="px-3 pt-2 pb-3 sm:px-6">
             <div className="mx-auto max-w-3xl">
-              {current.refreshError && (
+              {thread.refreshError && (
                 <Notice tone="warn" role="status" className="mb-2">
-                  <span className="mr-2">{t("botChat.thread.refreshFailed", { reason: errText(current.refreshError) })}</span>
-                  <button type="button" className="font-medium underline-offset-2 hover:underline" onClick={() => void loadDetail(activeId)}>
+                  <span className="mr-2">{t("botChat.thread.refreshFailed", { reason: errText(thread.refreshError) })}</span>
+                  <button type="button" className="font-medium underline-offset-2 hover:underline" onClick={() => void loadThread(selected)}>
                     {t("botChat.retry")}
                   </button>
                 </Notice>
@@ -844,12 +1357,26 @@ function Workspace({
           </form>
         )}
       </section>
+
+      {/* 右：机器人资料。超宽屏常驻，其余盖在对话区上；都可以关 */}
+      {selected && (
+        <ProfilePane
+          id={profileId}
+          bot={selected}
+          state={profiles[selKey]}
+          open={profileOpen}
+          closeRef={profileCloseRef}
+          onClose={closeProfile}
+          onRetry={() => void loadProfile(selected)}
+        />
+      )}
     </div>
   );
 }
 
 export default function BotChatPage() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const { status, bots, error, refreshing, reload } = useChatBots();
 
   // 共享的机器人列表不会自己过期：每次打开本页重新拉一次（reload 引用稳定，只在挂载和换账号时触发；
@@ -901,5 +1428,7 @@ export default function BotChatPage() {
       </Card>
     );
   }
-  return <Workspace bots={bots} reloadBots={reload} botsRefreshing={refreshing} botsError={error} />;
+  const userId = user?.id ?? 0;
+  // 换账号就整个重建：上一个人的对话、草稿和已读位置都不带过来
+  return <Workspace key={userId} userId={userId} bots={bots} reloadBots={reload} botsRefreshing={refreshing} botsError={error} />;
 }

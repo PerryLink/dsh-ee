@@ -2,6 +2,7 @@
  * 机器人对话（/bot-chat）的接口层与共享状态。
  *
  * - 接口固定在 /api/runtime/chat 下，统一走 request()；
+ * - 一个机器人对当前员工只有一条连续的会话（thread）：列表带 thread_id，没有时用幂等的创建接口取得；
  * - 可用机器人列表做成模块级共享状态：侧栏入口与页面共用同一份结果和同一个在途请求；
  *   对话页每次打开会重新拉一次，页面上也能手动刷新；
  * - 错误不直接显示服务端原文（那是中文默认文案，也可能带运行细节），
@@ -13,9 +14,17 @@ import { useAuth } from "./auth";
 
 export type ChatId = number | string;
 
+export type ChatTurnStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
+
 export interface ChatBot {
   id: ChatId;
   name: string;
+  /** 这个机器人与当前员工的唯一会话；还没聊过时没有，用 createConversation（幂等）取得。 */
+  thread_id?: ChatId | null;
+  /** 最近一条可预览的文字、它所属的云任务与回复状态（都来自后端，没有就不显示）。 */
+  last_message?: string | null;
+  last_task_id?: ChatId | null;
+  last_status?: ChatTurnStatus | null;
 }
 
 export interface ChatConversation {
@@ -25,8 +34,6 @@ export interface ChatConversation {
   title: string;
   updated_at: string;
 }
-
-export type ChatTurnStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 /** 一轮对话：员工的一条消息 + 机器人的回复；id 就是云任务 id。 */
 export interface ChatTurn {
@@ -40,11 +47,28 @@ export interface ChatTurn {
 export interface ChatConversationDetail {
   conversation: ChatConversation;
   messages: ChatTurn[];
+  /** 还有更早的消息时给出：作为 before 传回去读上一页。 */
+  next_before?: ChatId | null;
 }
 
 export interface ChatArtifact {
   id: ChatId;
   name: string;
+}
+
+/** 机器人资料里的文件：带所属云任务，下载走 artifactUrl(task_id, id)。 */
+export interface ChatBotArtifact extends ChatArtifact {
+  task_id: ChatId;
+  size?: number | null;
+  created_at?: string | null;
+}
+
+/** 机器人资料：每日定时任务（UTC cron）、是否开启、云端电脑是否在运行、生成过的文件。 */
+export interface ChatBotProfile {
+  schedule: string;
+  schedule_enabled: boolean;
+  running: boolean;
+  artifacts: ChatBotArtifact[];
 }
 
 /** 单条消息的内容上限（UTF-8 字节），与后端一致。 */
@@ -56,10 +80,16 @@ const enc = (id: ChatId) => encodeURIComponent(String(id));
 
 export const chatApi = {
   bots: () => request<ChatBot[] | null>("GET", `${base}/bots`).then((x) => x ?? []),
-  conversations: () => request<ChatConversation[] | null>("GET", `${base}/conversations`).then((x) => x ?? []),
+  profile: (botId: ChatId) =>
+    request<ChatBotProfile>("GET", `${base}/bots/${enc(botId)}/profile`).then((p) => ({ ...p, schedule: p.schedule ?? "", artifacts: p.artifacts ?? [] })),
+  /** 幂等：同一个机器人总是返回同一个会话；只在列表里没有 thread_id 时用来取得它。 */
   createConversation: (botId: ChatId) => request<ChatConversation>("POST", `${base}/conversations`, { bot_id: botId }),
-  conversation: (id: ChatId) =>
-    request<ChatConversationDetail>("GET", `${base}/conversations/${enc(id)}`).then((d) => ({ ...d, messages: d.messages ?? [] })),
+  /** 最近一页消息；带 before（上一页给的 next_before）时读更早的一页。 */
+  conversation: (id: ChatId, before?: ChatId | null) =>
+    request<ChatConversationDetail>("GET", `${base}/conversations/${enc(id)}${before != null ? `?before=${enc(before)}` : ""}`).then((d) => ({
+      ...d,
+      messages: d.messages ?? [],
+    })),
   send: (id: ChatId, content: string, idempotencyKey: string) =>
     request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, { content, idempotency_key: idempotencyKey }),
   artifacts: (taskId: ChatId) => request<ChatArtifact[] | null>("GET", `${tasksBase}/${enc(taskId)}/artifacts`).then((x) => x ?? []),
@@ -73,6 +103,27 @@ export const isPendingTurn = (m: Pick<ChatTurn, "status">) => m.status === "queu
 
 export function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).length;
+}
+
+// ---------- 已读位置：只存在本机，按账号 + 机器人分开 ----------
+
+const readKey = (userId: number, botId: ChatId) => `dsh-ee:bot-chat:read:${userId}:${String(botId)}`;
+
+/** 这个账号在本机上读到了该机器人的哪一条回复（云任务 id）；没读过或存储不可用时为 null。 */
+export function getLastRead(userId: number, botId: ChatId): string | null {
+  try {
+    return localStorage.getItem(readKey(userId, botId));
+  } catch {
+    return null;
+  }
+}
+
+export function setLastRead(userId: number, botId: ChatId, taskId: ChatId) {
+  try {
+    localStorage.setItem(readKey(userId, botId), String(taskId));
+  } catch {
+    // 隐私模式等存不进去：未读点只是提示，丢了不影响对话
+  }
 }
 
 /** 幂等键：同一条内容重试时复用；非安全上下文（http 内网）没有 randomUUID 时退回随机串。 */

@@ -58,7 +58,7 @@ const (
 
 	// ---- 员工网页对话：server/internal/api/runtime_chat.go ----
 
-	// codeRuntimeChatBotUnavailable：新建对话时机器人不存在、不属于本人或未开启网页对话，404。params 无。
+	// codeRuntimeChatBotUnavailable：取或建线程、读机器人资料时机器人不存在、不属于本人或未开启网页对话，404。params 无。
 	codeRuntimeChatBotUnavailable = "runtime_chat.bot_unavailable"
 	// codeRuntimeChatBotDisabled：发消息时对话绑定的机器人或当前账号已不满足对话条件，409；历史仍可读。params 无。
 	codeRuntimeChatBotDisabled = "runtime_chat.bot_disabled"

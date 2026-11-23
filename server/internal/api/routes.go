@@ -127,6 +127,7 @@ func (s *Server) routes() []route {
 		usr("GET /api/runtime/tasks/{id}/artifacts/{artifact}", s.handleRuntimeArtifacts),
 		// 员工网页对话（runtime_chat.go）：只认网页会话里的员工本人
 		usr("GET /api/runtime/chat/bots", s.handleRuntimeChatBots),
+		usr("GET /api/runtime/chat/bots/{id}/profile", s.handleRuntimeChatBotProfile),
 		usr("GET /api/runtime/chat/conversations", s.handleRuntimeChatConversations),
 		usr("POST /api/runtime/chat/conversations", s.handleRuntimeChatCreate),
 		usr("GET /api/runtime/chat/conversations/{id}", s.handleRuntimeChatConversation),
