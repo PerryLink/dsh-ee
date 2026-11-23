@@ -25,8 +25,9 @@ import (
 // 不支持休眠 / 唤醒的 provider 和不属于任何机器人的临时任务退回“每轮新建、跑完销毁”。
 
 const (
-	runtimeWorkDir = "/tmp/dsh-ee-work"
-	runtimeHomeDir = "/tmp/dsh-ee-home"
+	runtimeWorkDir             = "/tmp/dsh-ee-work"
+	runtimeHomeDir             = "/tmp/dsh-ee-home"
+	runtimePersistentOutputDir = runtimeWorkDir + "/output"
 	// 手动操作和回收器持有租约的时长。
 	runtimeComputerOpLease  = 3 * time.Minute
 	runtimeComputerReapTick = 30 * time.Second
@@ -34,8 +35,8 @@ const (
 
 // runtimeComputerNote 在常驻电脑上加在提示词最前面，告诉 DSH 哪些文件会留到下一轮。
 const runtimeComputerNote = "You have your own persistent cloud computer. Your working directory " + runtimeWorkDir +
-	" keeps its files between turns and scheduled runs, so you can save notes and work files there and read them later. " +
-	"Files under " + runtimeOutputDir + " are delivered to the employee and cleared at the start of every turn.\n\n"
+	" keeps its files between turns and scheduled runs. Save notes and work files in this working directory (not in output) to read them later. " +
+	"The deliverables directory is " + runtimePersistentOutputDir + " (relative path: output/); files there are published to the employee's file library and cleared at the start of every turn.\n\n"
 
 // runtimeComputerWait：同一台电脑被另一个任务占用时，新任务最多等这么久。测试里会调短。
 var runtimeComputerWait = 90 * time.Second
@@ -194,6 +195,12 @@ func (s *Server) openPersistentComputer(ctx context.Context, pp runtime.Persiste
 		return nil, errors.New("the bot's cloud computer was taken over")
 	}
 	return &cloudComputer{sandbox: box, persistent: true, close: func(release bool) {
+		cleanup, cancel := bg()
+		out, err := box.Exec(cleanup, runtime.Command{Args: []string{"rm", "-rf", runtimePersistentOutputDir}, Timeout: 10 * time.Second})
+		cancel()
+		if err != nil || out.ExitCode != 0 {
+			s.log.Warn("清理机器人电脑产物失败", "bot_id", botID, "err", err, "exit_code", out.ExitCode)
+		}
 		bc, stop := bg()
 		defer stop()
 		if disk, err := computerDiskUsage(bc, box); err == nil {

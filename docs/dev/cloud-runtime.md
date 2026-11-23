@@ -36,11 +36,13 @@ dsh-ee 保存机器人定义、队列、状态事件和文件；执行在 OpenSa
 
 登录后可用 `POST /api/runtime/tasks` 提交 `{"prompt":"生成今日摘要","idempotency_key":"daily-2026-11-22","timeout_seconds":120}`。`GET /api/runtime/tasks` 列出最近任务；`GET /api/runtime/tasks/{id}` 查状态，`GET /api/runtime/tasks/{id}/events` 查状态变更，`POST /api/runtime/tasks/{id}/cancel` 取消。用 `GET /api/runtime/tasks/{id}/artifacts` 查文件，`GET /api/runtime/tasks/{id}/artifacts/{artifact}` 下载。员工只能查看自己的任务；有系统设置权限的管理员可以查看全部。
 
-任务最长 5 分钟，单次运行的令牌只在该员工权限范围内、只对指定模型的网关请求和只读 MCP 调用生效，并在退出时吊销。只收集直接写入 `/tmp/dsh-ee-output` 的普通文件（最多 8 个、每个不超过 8 MiB）；文件在 `DSH_EE_DATA_DIR/runtime-artifacts`。队列支持多个实例抢占，但部署多个实例必须共享该产物目录；试点未实现对象存储、自动保留期限、Feishu 重试、补跑以及持久 Agent 记忆。不支持写工具或 E2B。
+任务最长 5 分钟，单次运行的令牌只在该员工权限范围内、只对指定模型的网关请求和只读 MCP 调用生效，并在退出时吊销。临时电脑的工作目录和产物目录都是 `/tmp/dsh-ee-output`；常驻电脑的产物目录是工作目录下的 `output/`。DSH 的 shell 工具在 bwrap 下会把 `/tmp` 换成临时文件系统，只把工作区根挂回真实目录，所以产物目录必须在工作区内。
+
+只收集产物目录及其两层以内子目录里的普通文件（不含隐藏文件和隐藏目录；最多 8 个、每个不超过 8 MiB），子目录里的文件以相对路径命名，例如 `reports/周报.md`。超限或无效的文件会记入服务端日志。文件在 `DSH_EE_DATA_DIR/runtime-artifacts`。网页对话（`/bot-chat`）右侧的「文件库」列出这个机器人在对话和定时任务里生成的文件，可以预览和下载，只有机器人的所属员工本人看得到。队列支持多个实例抢占，但多实例必须共享该产物目录；试点未实现对象存储、自动保留期限、Feishu 重试、补跑以及持久 Agent 记忆。不支持写工具或 E2B。
 
 ## 每个机器人一台常驻云电脑
 
-OpenSandbox 下，每个机器人有自己的一台云电脑（一个常驻沙箱）：机器人的定时 / 手动任务和网页对话都在这台电脑里跑。一轮结束后电脑保持开机；空闲超过闲置超时后自动休眠（OpenSandbox `POST /sandboxes/{id}/pause`），下一次对话或定时任务时唤醒（`resume`）。工作目录 `/tmp/dsh-ee-work`（DSH 的当前目录）和 DSH 主目录 `/tmp/dsh-ee-home` 里的文件都会保留；`/tmp/dsh-ee-output` 每轮开始时清空，里面的文件照旧收成这一轮的产物。常驻沙箱创建时不带 `timeout`，由 dsh-ee 自己负责休眠和回收。
+OpenSandbox 下，每个机器人有自己的一台云电脑（一个常驻沙箱）：机器人的定时 / 手动任务和网页对话都在这台电脑里跑。一轮结束后电脑保持开机；空闲超过闲置超时后自动休眠（OpenSandbox `POST /sandboxes/{id}/pause`），下一次对话或定时任务时唤醒（`resume`）。工作目录 `/tmp/dsh-ee-work`（DSH 的当前目录）和 DSH 主目录 `/tmp/dsh-ee-home` 里的文件都会保留，工作目录下的 `output/` 除外：其中的文件收成这一轮的产物，不带入下轮。常驻沙箱创建时不带 `timeout`，由 dsh-ee 自己负责休眠和回收。
 
 凭证不跟着电脑走：电脑创建时不带任何环境变量，每轮仍签发新的短期令牌，只通过这一轮执行命令的环境变量传入，这一轮结束、释放电脑之前就吊销。若吊销失败，则等令牌失效后才能再次使用或休眠电脑。
 

@@ -143,6 +143,7 @@ func (b *fakeBox) Exec(_ context.Context, c runtime.Command) (runtime.Result, er
 	case strings.Contains(prompt, "WRITE:"):
 		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "WRITE:")+6:], "\n")
 		b.files[note] = strings.TrimSpace(text)
+		b.files[c.Env["DSH_EE_OUTPUT_DIR"]+"/reports/summary.txt"] = "report"
 		return runtime.Result{Stdout: "saved"}, nil
 	case strings.Contains(prompt, "READ"):
 		if v, ok := b.files[note]; ok {
@@ -158,7 +159,15 @@ func (b *fakeBox) WriteFile(_ context.Context, name string, data []byte) error {
 	return nil
 }
 
-func (b *fakeBox) ListFiles(context.Context, string) ([]runtime.File, error) { return nil, nil }
+func (b *fakeBox) ListFiles(_ context.Context, dir string) ([]runtime.File, error) {
+	var files []runtime.File
+	for name, data := range b.files {
+		if strings.HasPrefix(name, dir+"/") {
+			files = append(files, runtime.File{Path: name, Type: "file", Size: int64(len(data))})
+		}
+	}
+	return files, nil
+}
 
 func (b *fakeBox) ReadFile(_ context.Context, name string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(b.files[name])), nil
@@ -263,6 +272,10 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 	if first.Status != store.RuntimeSucceeded || first.Summary != "saved" {
 		t.Fatalf("first run: %+v", first)
 	}
+	files, err := c.s.store.RuntimeArtifacts(context.Background(), first.ID, c.employee)
+	if err != nil || len(files) != 1 || files[0].Name != "reports/summary.txt" {
+		t.Fatalf("first run artifacts = %+v, %v", files, err)
+	}
 	if f.creates != 1 || f.ephemeral != 0 || len(f.boxes) != 1 {
 		t.Fatalf("first run should create one persistent computer: creates=%d ephemeral=%d", f.creates, f.ephemeral)
 	}
@@ -275,6 +288,9 @@ func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
 	for _, b := range f.boxes {
 		if len(b.env) != 0 {
 			t.Fatal("persistent computer created with environment variables")
+		}
+		if _, ok := b.files[runtimePersistentOutputDir+"/reports/summary.txt"]; ok {
+			t.Fatal("collected deliverables should not count against persistent disk usage")
 		}
 	}
 
@@ -482,12 +498,25 @@ func TestLiveBotComputer(t *testing.T) {
 	}
 	c := newComputerTest(t, provider, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond, DiskLimitBytes: 64 << 20})
 	c.s.opts.Runtime.Image = "alpine:3.22"
-	c.s.opts.Runtime.Command = []string{"sh", "-c", `case "$1" in *WRITE*) echo 'quarter goal 42' > note.txt; echo saved;; *) cat note.txt;; esac`, "sh", "{prompt}"}
+	c.s.opts.Runtime.Command = []string{"sh", "-ec", `test "$DSH_EE_OUTPUT_DIR" = "$PWD/output"
+case "$1" in
+  *WRITE*) echo 'quarter goal 42' > note.txt
+           mkdir -p output/reports
+           echo 'quarterly report' > output/reports/summary.txt
+           echo saved ;;
+  *) test ! -e output/reports/summary.txt
+     cat note.txt ;;
+esac`, "sh", "{prompt}"}
 	t.Cleanup(func() {
 		_, _ = c.s.cloudComputerAction(context.Background(), c.bot.ID, computerReset, "test", nil)
 	})
-	if got := c.run("WRITE a note"); got.Status != store.RuntimeSucceeded || got.Summary != "saved" {
-		t.Fatalf("first run: %+v", got)
+	first := c.run("WRITE a note")
+	if first.Status != store.RuntimeSucceeded || first.Summary != "saved" {
+		t.Fatalf("first run: %+v", first)
+	}
+	files, err := c.s.store.RuntimeArtifacts(context.Background(), first.ID, c.employee)
+	if err != nil || len(files) != 1 || files[0].Name != "reports/summary.txt" || files[0].Size != int64(len("quarterly report\n")) {
+		t.Fatalf("first run deliverables: %+v, %v", files, err)
 	}
 	time.Sleep(5 * time.Millisecond)
 	c.s.reapCloudComputers(context.Background())

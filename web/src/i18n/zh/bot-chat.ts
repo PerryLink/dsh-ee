@@ -40,6 +40,8 @@ export const botChat = {
     replying: "正在回复",
     with: "与 {{bot}} 的对话",
     profile: "{{bot}} 的资料",
+    fullscreen: "全屏",
+    exitFullscreen: "退出全屏",
   },
   thread: {
     label: "对话记录",
@@ -67,6 +69,18 @@ export const botChat = {
     failed: "文件列表读取失败：{{reason}}",
     title: "生成的文件",
     download: "下载 {{name}}",
+    preview: "预览 {{name}}",
+  },
+  filePreview: {
+    title: "文件预览",
+    loading: "正在读取文件…",
+    failed: "文件读取失败：{{reason}}",
+    unsupported: "这种文件不能在网页里预览，请下载后查看。",
+    tooLarge: "文件太大，不能在网页里预览，请下载后查看。",
+    download: "下载",
+    close: "关闭预览",
+    source: "原文",
+    rendered: "排版",
   },
   composer: {
     label: "消息内容",
@@ -132,6 +146,9 @@ export const botChat = {
     },
     library: {
       empty: "这个机器人还没有生成过文件。",
+      hint: "对话和定时任务里生成的文件都会出现在这里，只有你自己能看到。",
+      fromChat: "对话",
+      fromTask: "定时任务",
     },
   },
   errors: {

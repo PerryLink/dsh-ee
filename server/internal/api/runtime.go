@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -206,9 +207,9 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 		}
 		defer f.Close()
 		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Name}))
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(a.Name)}))
 		w.Header().Set("Cache-Control", "private, no-store")
-		http.ServeContent(w, r, a.Name, a.CreatedAt, f)
+		http.ServeContent(w, r, path.Base(a.Name), a.CreatedAt, f)
 		return
 	}
 	s.runtimeError(w, r, store.ErrNotFound)
