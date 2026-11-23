@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Field, inputCls } from "../../components/ui";
 import { ApiError, formatTime, request } from "../../lib/api";
+import { useConfirm } from "../../lib/confirm";
 
 type Bot = {
   id: number;
@@ -22,12 +23,38 @@ type Run = {
   summary: string;
   error: string;
   created_at: string;
+  private_result?: boolean;
 };
 
 type Artifact = { id: number; name: string };
 
+/** 机器人的常驻云电脑（GET /api/admin/runtime/computers）。 */
+type Computer = {
+  bot_id: number;
+  bot_name: string;
+  owner_id: number;
+  state: "none" | "waking" | "running" | "hibernating" | "hibernated";
+  busy: boolean;
+  disk_bytes: number;
+  disk_limit_bytes: number;
+  last_used_at?: string | null;
+  hibernated_at?: string | null;
+};
+
+type Computers = {
+  persistent: boolean;
+  idle_timeout_seconds: number;
+  disk_limit_bytes: number;
+  retention_seconds: number;
+  computers: Computer[] | null;
+  next_before?: string;
+};
+
 const botsPath = "/api/admin/runtime/bots";
 const tasksPath = "/api/runtime/tasks";
+const computersPath = "/api/admin/runtime/computers";
+const computerPagePath = (before?: string) => before ? `${computersPath}?before=${encodeURIComponent(before)}` : computersPath;
+const mb = (n: number) => `${String(Math.round(n / 1048576))} MB`;
 const blank: Bot = { id: 0, owner_id: 0, run_as_id: 0, name: "", prompt: "", schedule: "0 9 * * *", enabled: true, web_chat_enabled: false };
 
 export default function RuntimeSettings() {
@@ -39,14 +66,20 @@ export default function RuntimeSettings() {
   const [error, setError] = useState("");
   const [disabled, setDisabled] = useState(false);
   const [busy, setBusy] = useState(true);
+  const [computers, setComputers] = useState<Computers | null>(null);
+  const [computerPages, setComputerPages] = useState([""]);
+  const confirm = useConfirm();
 
   const load = async () => {
-    const [nextBots, nextRuns] = await Promise.all([
+    const [nextBots, nextRuns, nextComputers] = await Promise.all([
       request<Bot[]>("GET", botsPath),
       request<Run[]>("GET", tasksPath),
+      // 旧后端没有这个接口：不影响其余部分
+      request<Computers>("GET", computerPagePath(computerPages.at(-1))).catch(() => null),
     ]);
     setBots(nextBots);
     setRuns(nextRuns);
+    setComputers(nextComputers);
     setDisabled(false);
   };
 
@@ -69,6 +102,11 @@ export default function RuntimeSettings() {
       if (err instanceof ApiError && err.status === 404) setDisabled(true);
       else throw err;
     }
+  });
+
+  const navigateComputers = (pages: string[]) => perform(async () => {
+    setComputers(await request<Computers>("GET", computerPagePath(pages.at(-1))));
+    setComputerPages(pages);
   });
 
   useEffect(() => { void refresh(); }, []);
@@ -136,6 +174,51 @@ export default function RuntimeSettings() {
           {draft.id > 0 && <Button type="button" variant="secondary" onClick={() => setDraft(blank)}>{t("runtime.new")}</Button>}
         </div>
       </form>
+      {computers && (
+        <div className="space-y-2" data-runtime-computers="">
+          <h3 className="text-sm font-semibold">{t("runtime.computers.title")}</h3>
+          <p className="text-xs leading-5 text-neutral-500">
+            {computers.persistent
+              ? t("runtime.computers.policy", {
+                idle: Math.round(computers.idle_timeout_seconds / 60),
+                disk: mb(computers.disk_limit_bytes),
+                retention: !computers.retention_seconds
+                  ? t("runtime.computers.retentionOff")
+                  : computers.retention_seconds % 86400 === 0
+                    ? t("runtime.computers.retentionDays", { days: computers.retention_seconds / 86400 })
+                    : t("runtime.computers.retentionHours", { hours: Math.round(computers.retention_seconds / 36) / 100 }),
+              })
+              : t("runtime.computers.ephemeral")}
+          </p>
+          {!computers.computers?.length && <p className="text-sm text-neutral-500">{t("runtime.computers.empty")}</p>}
+          {computers.computers?.map((c) => (
+            <div key={c.bot_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 p-2 text-sm">
+              <span className="mr-auto break-all">
+                <strong>{c.bot_name || `#${String(c.bot_id)}`}</strong>
+                <span className="text-neutral-500"> · {t(`runtime.computers.state.${c.state}`)}{c.busy ? ` · ${t("runtime.computers.busy")}` : ""} · {mb(c.disk_bytes)} / {mb(c.disk_limit_bytes)}{c.last_used_at ? ` · ${formatTime(c.last_used_at)}` : ""}</span>
+              </span>
+              <Button variant="secondary" size="sm" disabled={busy || c.busy || c.state !== "running"} onClick={() => void perform(async () => {
+                await request("POST", `${computersPath}/${String(c.bot_id)}/hibernate`);
+                await load();
+              })}>{t("runtime.computers.hibernate")}</Button>
+              <Button variant="secondary" size="sm" disabled={busy || c.busy} onClick={() => void perform(async () => {
+                if (!(await confirm({ kind: "delete", description: t("runtime.computers.reclaimConfirm", { bot: c.bot_name }) }))) return;
+                await request("DELETE", `${computersPath}/${String(c.bot_id)}`);
+                await load();
+              })}>{t("runtime.computers.reclaim")}</Button>
+            </div>
+          ))}
+          {(computerPages.length > 1 || computers.next_before) && (
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" disabled={busy || computerPages.length <= 1}
+                onClick={() => void navigateComputers(computerPages.slice(0, -1))}>{t("table.prev")}</Button>
+              <Button variant="secondary" size="sm" disabled={busy || !computers.next_before} onClick={() => {
+                if (computers.next_before) void navigateComputers([...computerPages, computers.next_before]);
+              }}>{t("table.next")}</Button>
+            </div>
+          )}
+        </div>
+      )}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">{t("runtime.runs")}</h3>
@@ -147,12 +230,13 @@ export default function RuntimeSettings() {
             <p>#{run.id} · {bots.find((bot) => bot.id === run.bot_id)?.name ?? ""} · {t(`runtime.${run.status}`)} · {formatTime(run.created_at)}</p>
             {run.summary && <p className="whitespace-pre-wrap break-words">{run.summary}</p>}
             {run.error && <p className="break-words text-neutral-500">{run.error}</p>}
-            {run.status === "succeeded" && !files[run.id] && <Button size="sm" variant="secondary" disabled={busy} onClick={() => void perform(async () => {
+            {run.private_result && <p className="text-neutral-500">{t("runtime.privateResult")}</p>}
+            {run.status === "succeeded" && !run.private_result && !files[run.id] && <Button size="sm" variant="secondary" disabled={busy} onClick={() => void perform(async () => {
               const next = await request<Artifact[]>("GET", `${tasksPath}/${run.id}/artifacts`);
               setFiles((current) => ({ ...current, [run.id]: next }));
             })}>{t("runtime.files")}</Button>}
-            {files[run.id]?.length === 0 && <p className="text-neutral-500">{t("runtime.noFiles")}</p>}
-            {files[run.id]?.map((file) => (
+            {!run.private_result && files[run.id]?.length === 0 && <p className="text-neutral-500">{t("runtime.noFiles")}</p>}
+            {!run.private_result && files[run.id]?.map((file) => (
               <a key={file.id} className="block break-all text-brand-600 underline" href={`${tasksPath}/${run.id}/artifacts/${file.id}`}>{file.name}</a>
             ))}
           </article>

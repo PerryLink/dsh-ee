@@ -294,6 +294,10 @@ func (s *Server) handleRuntimeRunBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "runtime.bot.run", strconv.FormatInt(bot.ID, 10), nil)
+	if task.PrivateResult && task.OwnerID != currentUser(r).ID {
+		// The worker may have finished before enqueue read the row back.
+		task.Summary, task.Error = "", ""
+	}
 	writeJSON(w, http.StatusAccepted, task)
 }
 

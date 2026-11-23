@@ -120,21 +120,25 @@ type RuntimeTask struct {
 	// 网页对话轮次才有；不进公开 DTO。对话轮次的 BotID 为空，机器人记在对话上。
 	ChatConversationID *int64 `json:"-"`
 	ChatContent        string `json:"-"`
+	// 与常驻工作目录接触过的任务结果只对所有者开放。
+	PrivateResult bool `json:"private_result,omitempty"`
+	// A queued retry isn't claimable while its previous computer lease is active.
+	RetryAfter *time.Time `json:"-"`
 }
 
 const runtimeTaskColumns = `id, owner_id, run_as_id, bot_id, prompt, status, attempts, COALESCE(idempotency_key,''), timeout_seconds,
-	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,'')`
+	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,''), private_result`
 
 // runtimeTaskOwned 是任务读取的归属条件（两个参数都是 ownerID）：所有者能读自己的全部任务；
-// ownerID=0 的管理员通配只覆盖普通任务，员工网页对话的轮次、回复和产物不对管理员开放。
+// ownerID=0 的管理员通配不包含网页对话和使用过常驻工作目录的任务。
 func runtimeTaskOwned(prefix string) string {
-	return `(` + prefix + `owner_id=? OR (?=0 AND ` + prefix + `chat_conversation_id IS NULL))`
+	return `(` + prefix + `owner_id=? OR (?=0 AND ` + prefix + `chat_conversation_id IS NULL AND NOT ` + prefix + `private_result))`
 }
 
 func scanRuntimeTask(row interface{ Scan(...any) error }) (*RuntimeTask, error) {
 	var t RuntimeTask
 	err := row.Scan(&t.ID, &t.OwnerID, &t.RunAsID, &t.BotID, &t.Prompt, &t.Status, &t.Attempts, &t.IdempotencyKey, &t.TimeoutSeconds,
-		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt, &t.ChatConversationID, &t.ChatContent)
+		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt, &t.ChatConversationID, &t.ChatContent, &t.PrivateResult)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -236,7 +240,7 @@ func (s *Store) RuntimeTask(ctx context.Context, id, ownerID int64) (*RuntimeTas
 
 func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-		WHERE (?=0 OR owner_id=?) AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
+		WHERE (owner_id=? OR ?=0) AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +250,9 @@ func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask,
 		t, err := scanRuntimeTask(rows)
 		if err != nil {
 			return nil, err
+		}
+		if ownerID == 0 && t.PrivateResult {
+			t.Summary, t.Error = "", ""
 		}
 		out = append(out, *t)
 	}
@@ -259,14 +266,15 @@ func (s *Store) ClaimRuntimeTask(ctx context.Context, attemptLimit int, grace ti
 	}
 	for {
 		task, err := scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
-			WHERE status=? OR (status=? AND lease_until<=? AND attempts<?) ORDER BY id LIMIT 1`, RuntimeQueued, RuntimeRunning, t, attemptLimit))
+			WHERE (status=? AND (lease_until IS NULL OR lease_until<=?)) OR (status=? AND lease_until<=? AND attempts<?)
+			ORDER BY id LIMIT 1`, RuntimeQueued, t, RuntimeRunning, t, attemptLimit))
 		if err != nil {
 			return nil, err
 		}
 		lease := t.Add(time.Duration(task.TimeoutSeconds)*time.Second + grace)
 		err = s.recordRuntimeTransition(ctx, task.ID, RuntimeRunning, t, `UPDATE runtime_tasks SET status=?, attempts=attempts+1, started_at=?, updated_at=?, lease_until=?
-			WHERE id=? AND attempts=? AND (status=? OR (status=? AND lease_until<=?))`,
-			RuntimeRunning, t, t, lease, task.ID, task.Attempts, RuntimeQueued, RuntimeRunning, t)
+			WHERE id=? AND attempts=? AND ((status=? AND (lease_until IS NULL OR lease_until<=?)) OR (status=? AND lease_until<=?))`,
+			RuntimeRunning, t, t, lease, task.ID, task.Attempts, RuntimeQueued, t, RuntimeRunning, t)
 		switch {
 		case errors.Is(err, ErrConflict):
 			continue
@@ -377,12 +385,14 @@ func (s *Store) FinishRuntimeTask(ctx context.Context, task *RuntimeTask, status
 	}
 	defer tx.Rollback()
 	t := now()
-	var finished *time.Time
-	if status != RuntimeQueued {
+	var finished, retryAfter *time.Time
+	if status == RuntimeQueued {
+		retryAfter = task.RetryAfter
+	} else {
 		finished = &t
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=NULL
-		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, task.ID, RuntimeRunning, task.Attempts, t)
+	res, err := tx.ExecContext(ctx, `UPDATE runtime_tasks SET status=?, summary=?, error=?, updated_at=?, finished_at=?, lease_until=?, private_result=private_result OR ?
+		WHERE id=? AND status=? AND attempts=? AND lease_until>?`, status, summary, message, t, finished, retryAfter, task.PrivateResult, task.ID, RuntimeRunning, task.Attempts, t)
 	if err := runtimeAffected(res, err); err != nil {
 		return err
 	}

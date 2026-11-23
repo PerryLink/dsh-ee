@@ -195,7 +195,7 @@ func TestRuntimeArtifactName(t *testing.T) {
 		runtimeOutputDir + "/bad\\name.txt": "",
 		runtimeOutputDir + "/" + "\xff.txt": "",
 	} {
-		got, ok := runtimeArtifactName(remote)
+		got, ok := runtimeArtifactName(remote, runtimeOutputDir)
 		if got != want || ok != (want != "") {
 			t.Errorf("runtimeArtifactName(%q) = %q, %v; want %q", remote, got, ok, want)
 		}

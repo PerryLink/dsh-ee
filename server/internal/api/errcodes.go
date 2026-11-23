@@ -75,6 +75,17 @@ const (
 	// codeRuntimeChatQueueFull：员工排队或运行中的云任务已达上限，429。params 无。
 	codeRuntimeChatQueueFull = "runtime_chat.queue_full"
 
+	// ---- 机器人常驻云电脑：server/internal/api/runtime_computer.go ----
+
+	// codeRuntimeComputerBusy：电脑正在跑任务或正在被另一次操作改动，手动休眠 / 重置 / 回收被拒，409。params 无。
+	codeRuntimeComputerBusy = "runtime_computer.busy"
+	// codeRuntimeComputerUnsupported：当前运行时不支持常驻电脑（provider 不支持休眠 / 唤醒或已关闭常驻），每轮都是新电脑，409。params 无。
+	codeRuntimeComputerUnsupported = "runtime_computer.unsupported"
+	// codeRuntimeComputerProviderFailed：沙箱服务执行休眠 / 删除失败，502。params 无。
+	codeRuntimeComputerProviderFailed = "runtime_computer.provider_failed"
+	// codeRuntimeComputerNotFound：管理员回收时机器人没有电脑记录，404。params 无。
+	codeRuntimeComputerNotFound = "runtime_computer.not_found"
+
 	// ---- 登录与认证：server/internal/api/auth.go ----
 
 	// codeAuthLoginRequired：没有网页会话或嵌入令牌，401。params 无。

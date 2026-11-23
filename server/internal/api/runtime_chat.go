@@ -176,7 +176,15 @@ func (s *Server) handleRuntimeChatBotProfile(w http.ResponseWriter, r *http.Requ
 		s.internalErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, profile)
+	computer, err := s.botComputerView(r.Context(), runtimeID(r, "id"))
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*store.RuntimeChatBotProfile
+		Computer runtimeComputerView `json:"computer"`
+	}{profile, computer})
 }
 
 func (s *Server) handleRuntimeChatMessage(w http.ResponseWriter, r *http.Request) {
@@ -386,7 +394,7 @@ func runtimeChatHistory(history []store.RuntimeChatTurn) []string {
 	return encoded
 }
 
-// runtimeChatRender 拼出一轮对话的完整任务提示词（执行时原样交给 DSH，见 executeCloudTask）：
+// runtimeChatRender 拼出一轮对话的任务提示词（执行时在开头加电脑工作目录说明，见 executeCloudTask）：
 // 机器人设定、对话规则、滚动记忆（有才写）、JSON 编码的最近成功轮次、最后是原样的当前消息。
 // 记忆和历史都是 JSON 字符串里的数据，并明确标成不可信的历史记录；当前消息放在最后，不参与截断。
 func runtimeChatRender(botPrompt, memory string, encoded []string, content string) string {

@@ -30,10 +30,36 @@ dsh-ee 保存机器人定义、队列、状态事件和文件；执行在 OpenSa
 
 用仓库内的 Dockerfile 构建镜像：`docker build -t dsh-ee-runtime:pilot server/internal/runtime`。将镜像推到 OpenSandbox 能访问的企业仓库，或加载到单机 OpenSandbox 的 Docker Engine。
 
-管理端 **系统设置 → 云端常驻机器人** 中创建机器人：选择有网关权限的非管理员员工（填写 ID），配置任务提示词和 UTC 每日 cron（例如 `0 1 * * *` 是北京时间每天 09:00），打开定时运行。也可立即运行并在下方刷新状态、下载文件。调度仅在服务在线时检查当前分钟，不补跑错过的时间。运行身份的月度 token 额度必须是不限（留空）或大于 0 且本月未用完：新建用户的额度默认是 0（未分配），网关会对它返回 429 `monthly_quota_exceeded`。任务开始时、分配沙箱和短期凭证之前，服务按与网关相同的规则检查该额度；未分配或已用完会直接以说明原因的终态失败结束，不重试、不创建沙箱（读库出错仍会重试）。这只是提前提示，不预留额度，网关仍会逐请求校验。测试飞书交付前，需配置飞书通知应用、员工飞书身份绑定及员工能打开的 dsh-ee 公网访问地址。
+管理端 **系统设置 → 云端常驻机器人** 中创建机器人：选择有网关权限的非管理员员工（填写 ID），配置任务提示词和 UTC 每日 cron（例如 `0 1 * * *` 是北京时间每天 09:00），打开定时运行。也可立即运行并在下方刷新状态。普通任务可下载文件；使用常驻电脑的任务只显示运行状态，结果和产物仅所有者可见。调度仅在服务在线时检查当前分钟，不补跑错过的时间。运行身份的月度 token 额度必须是不限（留空）或大于 0 且本月未用完：新建用户的额度默认是 0（未分配），网关会对它返回 429 `monthly_quota_exceeded`。任务开始时、分配沙箱和短期凭证之前，服务按与网关相同的规则检查该额度；未分配或已用完会直接以说明原因的终态失败结束，不重试、不创建沙箱（读库出错仍会重试）。这只是提前提示，不预留额度，网关仍会逐请求校验。测试飞书交付前，需配置飞书通知应用、员工飞书身份绑定及员工能打开的 dsh-ee 公网访问地址。
 
 ## 任务 API
 
-登录后可用 `POST /api/runtime/tasks` 提交 `{"prompt":"生成今日摘要","idempotency_key":"daily-2026-11-22","timeout_seconds":120}`。`GET /api/runtime/tasks` 列出最近任务；`GET /api/runtime/tasks/{id}` 查状态，`GET /api/runtime/tasks/{id}/events` 查状态变更，`POST /api/runtime/tasks/{id}/cancel` 取消。用 `GET /api/runtime/tasks/{id}/artifacts` 查文件，`GET /api/runtime/tasks/{id}/artifacts/{artifact}` 下载。员工只能查看自己的任务；有系统设置权限的管理员可以查看全部。
+登录后可用 `POST /api/runtime/tasks` 提交 `{"prompt":"生成今日摘要","idempotency_key":"daily-2026-11-22","timeout_seconds":120}`。`GET /api/runtime/tasks` 列出最近任务；`GET /api/runtime/tasks/{id}` 查状态，`GET /api/runtime/tasks/{id}/events` 查状态变更，`POST /api/runtime/tasks/{id}/cancel` 取消。用 `GET /api/runtime/tasks/{id}/artifacts` 查文件，`GET /api/runtime/tasks/{id}/artifacts/{artifact}` 下载。员工只能查看自己的任务。有系统设置权限的管理员可以查看普通任务，但网页对话和使用常驻电脑的任务结果（含回复、错误详情及产物）只对所有者开放。
 
-任务最长 5 分钟，单次运行的令牌只在该员工权限范围内、只对指定模型的网关请求和只读 MCP 调用生效，并在退出时吊销。DSH 以 `/tmp/dsh-ee-output` 为工作目录（也就是它沙箱策略里的工作区根）运行，产物要保存在这个目录里：DSH 的 shell 工具在 bwrap 下会把 `/tmp` 换成一次性的 tmpfs，只把工作区根挂回真实目录，写到别处的文件命令一结束就没了。只收集这个目录及其两层以内子目录里的普通文件（隐藏文件和隐藏目录不算；最多 8 个、每个不超过 8 MiB），子目录里的文件以相对路径命名，例如 `reports/周报.md`；被跳过的文件会在服务端日志里记一条「跳过云任务产物」并写明原因。文件在 `DSH_EE_DATA_DIR/runtime-artifacts`。网页对话（`/bot-chat`）右侧的「文件库」列出这个机器人在对话和定时任务里生成的文件，可以预览和下载，只有机器人的所属员工本人看得到。队列支持多个实例抢占，但部署多个实例必须共享该产物目录；试点未实现对象存储、自动保留期限、Feishu 重试、补跑以及持久 Agent 记忆。不支持写工具、E2B 或在同一沙箱内保留下一次运行的状态。
+任务最长 5 分钟，单次运行的令牌只在该员工权限范围内、只对指定模型的网关请求和只读 MCP 调用生效，并在退出时吊销。临时电脑的工作目录和产物目录都是 `/tmp/dsh-ee-output`；常驻电脑的产物目录是工作目录下的 `output/`。DSH 的 shell 工具在 bwrap 下会把 `/tmp` 换成临时文件系统，只把工作区根挂回真实目录，所以产物目录必须在工作区内。
+
+只收集产物目录及其两层以内子目录里的普通文件（不含隐藏文件和隐藏目录；最多 8 个、每个不超过 8 MiB），子目录里的文件以相对路径命名，例如 `reports/周报.md`。超限或无效的文件会记入服务端日志。文件在 `DSH_EE_DATA_DIR/runtime-artifacts`。网页对话（`/bot-chat`）右侧的「文件库」列出这个机器人在对话和定时任务里生成的文件，可以预览和下载，只有机器人的所属员工本人看得到。队列支持多个实例抢占，但多实例必须共享该产物目录；试点未实现对象存储、自动保留期限、Feishu 重试、补跑以及持久 Agent 记忆。不支持写工具或 E2B。
+
+## 每个机器人一台常驻云电脑
+
+OpenSandbox 下，每个机器人有自己的一台云电脑（一个常驻沙箱）：机器人的定时 / 手动任务和网页对话都在这台电脑里跑。一轮结束后电脑保持开机；空闲超过闲置超时后自动休眠（OpenSandbox `POST /sandboxes/{id}/pause`），下一次对话或定时任务时唤醒（`resume`）。工作目录 `/tmp/dsh-ee-work`（DSH 的当前目录）和 DSH 主目录 `/tmp/dsh-ee-home` 里的文件都会保留，工作目录下的 `output/` 除外：其中的文件收成这一轮的产物，不带入下轮。常驻沙箱创建时不带 `timeout`，由 dsh-ee 自己负责休眠和回收。
+
+凭证不跟着电脑走：电脑创建时不带任何环境变量，每轮仍签发新的短期令牌，只通过这一轮执行命令的环境变量传入，这一轮结束、释放电脑之前就吊销。若吊销失败，则等令牌失效后才能再次使用或休眠电脑。
+
+创建电脑前先保存创建标识；创建响应丢失或进程退出后，下一轮或空闲回收器会用它找回沙箱。更换网关主机名时，OpenSandbox 会在下一轮执行前替换该电脑的出站白名单，保留文件且不再放行旧地址。升级前请确认目标版本支持 `PUT /sandboxes/{id}/networkpolicy`；更新失败时任务不会签发新凭证，也不会删除原电脑。
+
+同一台电脑同一时间只给一个任务或一次操作用（数据库租约，多实例也成立）。电脑正被占用时，每次尝试最多等 90 秒，仍被占用就按任务重试规则处理，不会改用没有原有文件的临时电脑。不属于任何机器人的任务（`POST /api/runtime/tasks`）一直使用临时电脑。电脑在沙箱服务那边已经不存在时（被外部删除或过期），下一轮自动新建一台，原来的文件就没有了。
+
+| 环境变量 | 说明 |
+| --- | --- |
+| `DSH_EE_RUNTIME_PERSISTENT` | `on`（默认）或 `off`。`off` 时所有任务都每轮新建、跑完销毁；以前留下的电脑空闲后仍会被休眠和按保留期回收 |
+| `DSH_EE_RUNTIME_COMPUTER_IDLE` | 闲置超时，Go 时长格式，`1m` 到 `24h`，默认 `15m` |
+| `DSH_EE_RUNTIME_COMPUTER_DISK_MB` | 每台电脑工作目录加 DSH 主目录的磁盘用量阈值（MB），默认 `2048`。每轮结束时用 `du` 统计；超过后新任务直接失败（不重试），重置电脑后恢复。不是文件系统写入的硬上限 |
+| `DSH_EE_RUNTIME_COMPUTER_NATIVE_DISK_QUOTA` | `on` 时在创建电脑时也向 OpenSandbox 请求上述大小的原生磁盘配额，`off`（默认）时只检查用量阈值。需要支持 `resourceLimits.disk` 的 OpenSandbox 及宿主配置（例如支持可写层配额的 Docker 存储驱动）；Kubernetes 对应临时存储限额，超量可能驱逐 Pod。启用或更改配额后，既有电脑需重新创建才生效 |
+| `DSH_EE_RUNTIME_COMPUTER_RETENTION` | 休眠多久后自动回收（删除整台电脑），默认 `720h`（30 天），`0` 表示不自动回收 |
+
+员工在 **机器人对话** 右侧面板的 **动态 → 云端电脑** 里看到电脑的真实状态（工作中、唤醒中、运行中、正在休眠、休眠中、未开机）和磁盘用量，可以手动 **休眠** 或 **重置**（删除整台电脑和其中的文件，已经收进文件库的产物不受影响）。对应接口是 `POST /api/runtime/chat/bots/{id}/computer/hibernate` 和 `.../computer/reset`，只对机器人的所有者本人开放。管理员在 **系统设置 → 云端常驻机器人** 下方分页看到电脑的状态、占用和磁盘用量，可以休眠或回收：`GET /api/admin/runtime/computers`（若有 `next_before`，用 `?before=<next_before>` 取下一页）、`POST /api/admin/runtime/computers/{id}/hibernate`、`DELETE /api/admin/runtime/computers/{id}`。电脑正在跑任务时手动操作返回 409 `runtime_computer.busy`。
+
+Provider 接口：`runtime.PersistentProvider` 在 `Provider` 之外加了 `CreatePersistent`、`Wake`、`CheckPersistent`、`Hibernate`、`Remove`。没有实现它的 provider（或 `DSH_EE_RUNTIME_PERSISTENT=off`）退回每轮新建；员工面板显示“每轮新开”，手动操作返回 409 `runtime_computer.unsupported`。关闭常驻但仍使用支持常驻的 provider 时，管理员仍可休眠或回收已有电脑。
+
+OpenSandbox 的暂停 / 恢复取决于它的运行时后端。上线前先在目标部署上验证：创建一个沙箱写入文件，`pause` 后状态变为 `Paused`，`resume` 后文件还在。暂停失败时电脑保持开机并在下一个闲置周期重试，日志里会有“处理空闲机器人电脑失败”。
