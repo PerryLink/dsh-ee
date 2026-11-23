@@ -223,6 +223,13 @@ export default {
     team_forbidden: "This bot isn't shared with your department.",
     no_department: "Your account has no department, so you can't share the bot.",
     invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
+    upload_too_large: "हर फ़ाइल अधिकतम {{max_mb}} MB की हो सकती है।",
+    upload_unsupported: "केवल PDF, Word (.docx), Excel (.xlsx), CSV, PowerPoint (.pptx), Markdown और सादा टेक्स्ट फ़ाइलें समर्थित हैं।",
+    upload_unreadable: "इस फ़ाइल की सामग्री पढ़ी नहीं जा सकी। यह खराब, एन्क्रिप्टेड या स्कैन की गई छवि हो सकती है।",
+    upload_busy: "अभी बहुत सारी फ़ाइलें प्रोसेस हो रही हैं। थोड़ी देर बाद फिर कोशिश करें।",
+    upload_quota: "बहुत सारे अटैचमेंट अभी भेजे नहीं गए हैं (कुल {{max_mb}} MB तक)। पहले कुछ भेजें या हटाएँ।",
+    too_many_uploads: "एक संदेश में अधिकतम {{max}} अटैचमेंट हो सकते हैं।",
+    upload_unavailable: "अटैचमेंट मौजूद नहीं है या पहले ही भेजा जा चुका है। इसे फिर से अपलोड करें।",
   },
   runtime_approval: {
     invalid_mode: "अनुमोदन मोड केवल-पढ़ने, हर एक को स्वीकृत करें, स्वतः स्वीकृति या पूर्ण पहुँच में से एक होना चाहिए।",
