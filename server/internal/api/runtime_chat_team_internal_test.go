@@ -307,6 +307,25 @@ func TestRuntimeTeamChatSharing(t *testing.T) {
 	if events := decodeRuntimeChat[[]store.RuntimeTaskEvent](t, "alice reads her team turn events", alice("GET", turnTask+"/events", ""), http.StatusOK); len(events) != 1 {
 		t.Fatalf("queued team turn events: %+v", events)
 	}
+	t.Run("team visibility lookup fails closed", func(t *testing.T) {
+		if _, err := st.DB().ExecContext(ctx, "RENAME TABLE runtime_bots TO runtime_bots_unavailable"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if _, err := st.DB().ExecContext(ctx, "RENAME TABLE runtime_bots_unavailable TO runtime_bots"); err != nil {
+				t.Fatal(err)
+			}
+		})
+		for _, probe := range []struct{ method, path string }{
+			{"GET", turnTask},
+			{"GET", turnTask + "/events"},
+			{"POST", turnTask + "/cancel"},
+		} {
+			if rec := alice(probe.method, probe.path, ""); rec.Code != http.StatusInternalServerError {
+				t.Errorf("%s %s: got HTTP %d, want 500", probe.method, probe.path, rec.Code)
+			}
+		}
+	})
 	setDept(aliceID, mkt)
 	for _, probe := range []struct{ name, method, path string }{
 		{"alice reads her team turn after moving", "GET", turnTask},

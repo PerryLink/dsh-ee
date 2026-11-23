@@ -150,13 +150,12 @@ func (s *Server) runtimeTaskForViewer(ctx context.Context, id, owner int64) (*st
 	}
 	teamTask, teamErr := s.store.RuntimeTeamChatTask(ctx, id, owner)
 	switch {
-	case errors.Is(teamErr, store.ErrRuntimeChatTeamForbidden):
-		return nil, teamErr
 	case teamErr == nil:
 		return teamTask, nil
-	default:
-		// 不是团队线程（或个人线程里的一轮）：保持原来的本人视角。
+	case notFound(teamErr):
 		return task, nil
+	default:
+		return nil, teamErr
 	}
 }
 
