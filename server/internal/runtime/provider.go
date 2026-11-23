@@ -20,10 +20,15 @@ type SandboxSpec struct {
 type Sandbox interface {
 	Exec(context.Context, Command) (Result, error)
 	WriteFile(context.Context, string, []byte) error
+	// ListFiles lists the entries under a directory, descendants included up to ListDepth levels
+	// (1 is the directory's own children). Paths are absolute.
 	ListFiles(context.Context, string) ([]File, error)
 	ReadFile(context.Context, string) (io.ReadCloser, error)
 	Destroy(context.Context) error
 }
+
+// ListDepth is how many directory levels ListFiles reports below the listed directory.
+const ListDepth = 3
 
 type Command struct {
 	Args    []string

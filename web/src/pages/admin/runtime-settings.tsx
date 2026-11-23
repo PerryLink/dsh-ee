@@ -11,6 +11,8 @@ type Bot = {
   prompt: string;
   schedule: string;
   enabled: boolean;
+  /** 是否开放网页对话（只对运行身份那位员工）；与定时运行互不影响。旧后端没有这个字段。 */
+  web_chat_enabled?: boolean;
 };
 
 type Run = {
@@ -26,7 +28,7 @@ type Artifact = { id: number; name: string };
 
 const botsPath = "/api/admin/runtime/bots";
 const tasksPath = "/api/runtime/tasks";
-const blank: Bot = { id: 0, owner_id: 0, run_as_id: 0, name: "", prompt: "", schedule: "0 9 * * *", enabled: true };
+const blank: Bot = { id: 0, owner_id: 0, run_as_id: 0, name: "", prompt: "", schedule: "0 9 * * *", enabled: true, web_chat_enabled: false };
 
 export default function RuntimeSettings() {
   const { t } = useTranslation();
@@ -75,7 +77,7 @@ export default function RuntimeSettings() {
     event.preventDefault();
     void perform(async () => {
       await request<Bot>(draft.id ? "PUT" : "POST", draft.id ? `${botsPath}/${draft.id}` : botsPath, {
-        ...draft, read_only: true, delivery_target: "feishu_owner",
+        ...draft, web_chat_enabled: Boolean(draft.web_chat_enabled), read_only: true, delivery_target: "feishu_owner",
       });
       setDraft(blank);
       await load();
@@ -89,7 +91,7 @@ export default function RuntimeSettings() {
       <div className="space-y-2">
         {bots.map((bot) => (
           <div key={bot.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 p-2">
-            <strong className="mr-auto break-all text-sm">{bot.name} <span className="font-normal text-neutral-500">· {bot.schedule}</span></strong>
+            <strong className="mr-auto break-all text-sm">{bot.name} <span className="font-normal text-neutral-500">· {bot.schedule}{bot.web_chat_enabled ? ` · ${t("runtime.webChatBadge")}` : ""}</span></strong>
             <Button variant="secondary" size="sm" disabled={busy} onClick={() => setDraft(bot)}>{t("runtime.edit")}</Button>
             <Button variant="secondary" size="sm" disabled={busy} onClick={() => void perform(async () => {
               await request("POST", `${botsPath}/${bot.id}/run`);
@@ -117,6 +119,18 @@ export default function RuntimeSettings() {
           <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
           {t("runtime.enabled")}
         </label>
+        <div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.web_chat_enabled)}
+              aria-describedby="runtime-web-chat-hint"
+              onChange={(e) => setDraft({ ...draft, web_chat_enabled: e.target.checked })}
+            />
+            {t("runtime.webChat")}
+          </label>
+          <p id="runtime-web-chat-hint" className="mt-1 pl-6 text-xs leading-5 text-neutral-500">{t("runtime.webChatHint")}</p>
+        </div>
         <div className="flex gap-2">
           <Button type="submit" disabled={busy}>{t("runtime.save")}</Button>
           {draft.id > 0 && <Button type="button" variant="secondary" onClick={() => setDraft(blank)}>{t("runtime.new")}</Button>}

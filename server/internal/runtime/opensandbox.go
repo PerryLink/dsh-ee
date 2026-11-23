@@ -352,7 +352,7 @@ func (s *openSandboxInstance) WriteFile(ctx context.Context, path string, data [
 }
 
 func (s *openSandboxInstance) ListFiles(ctx context.Context, dir string) ([]File, error) {
-	query := url.Values{"path": {dir}, "depth": {"1"}}
+	query := url.Values{"path": {dir}, "depth": {strconv.Itoa(ListDepth)}}
 	body, err := s.provider.request(ctx, http.MethodGet, s.execBase+"/directories/list?"+query.Encode(), "", s.headers, nil)
 	if err != nil {
 		return nil, err

@@ -35,6 +35,7 @@ import Onboarding from "./pages/onboarding";
 import GetStarted from "./pages/get-started";
 import Report from "./pages/report";
 import ConfirmPage from "./pages/confirm";
+import BotChatPage from "./pages/bot-chat";
 import { useApi } from "./lib/use-api";
 import { useTranslation } from "react-i18next";
 import { Compass } from "lucide-react";
@@ -202,6 +203,8 @@ function AppRoutes() {
         <Route path="connections/:slug" element={<ConnectionBySlug />} />
         <Route path="request" element={<AccessRequestPage />} />
         <Route path="confirm/:id" element={<ConfirmPage />} />
+        {/* 机器人对话：固定路由；侧栏入口按后端可用性显示（components/layout.tsx） */}
+        <Route path="bot-chat" element={<BotChatPage />} />
         <Route path="knowledge/docs/:id" element={<KnowledgeDoc />} />
         {/* 开发文档 / 开发样例：固定路由，URL 不随菜单 path 变化（侧栏与工作台卡片只是入口） */}
         <Route path="docs" element={<DevDocs />} />

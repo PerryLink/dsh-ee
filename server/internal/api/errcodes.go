@@ -55,6 +55,26 @@ const (
 	codeDingTalkChatEmpty    = "dingtalk_chat.empty"
 	codeDingTalkChatMissing  = "dingtalk_chat.missing"
 	codeDingTalkChatSend     = "dingtalk_chat.send"
+
+	// ---- 员工网页对话：server/internal/api/runtime_chat.go ----
+
+	// codeRuntimeChatBotUnavailable：取或建线程、读机器人资料时机器人不存在、不属于本人或未开启网页对话，404。params 无。
+	codeRuntimeChatBotUnavailable = "runtime_chat.bot_unavailable"
+	// codeRuntimeChatBotDisabled：发消息时对话绑定的机器人或当前账号已不满足对话条件，409；历史仍可读。params 无。
+	codeRuntimeChatBotDisabled = "runtime_chat.bot_disabled"
+	// codeRuntimeChatNotFound：对话不存在或不属于本人，404。params 无。
+	codeRuntimeChatNotFound = "runtime_chat.not_found"
+	// codeRuntimeChatInvalidMessage：消息为空、超长或含非法字符，400。params：max（最大字节数）。
+	codeRuntimeChatInvalidMessage = "runtime_chat.invalid_message"
+	// codeRuntimeChatInvalidKey：幂等键缺失、超长或含非可见 ASCII 字符，400。params：max（最大字符数）。
+	codeRuntimeChatInvalidKey = "runtime_chat.invalid_key"
+	// codeRuntimeChatBusy：这段对话已有一条消息在排队或运行，409。params 无。
+	codeRuntimeChatBusy = "runtime_chat.busy"
+	// codeRuntimeChatIdempotencyConflict：同一个幂等键重放了不同的消息内容，409。params 无。
+	codeRuntimeChatIdempotencyConflict = "runtime_chat.idempotency_conflict"
+	// codeRuntimeChatQueueFull：员工排队或运行中的云任务已达上限，429。params 无。
+	codeRuntimeChatQueueFull = "runtime_chat.queue_full"
+
 	// ---- 登录与认证：server/internal/api/auth.go ----
 
 	// codeAuthLoginRequired：没有网页会话或嵌入令牌，401。params 无。

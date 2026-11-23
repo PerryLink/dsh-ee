@@ -211,4 +211,14 @@ export default {
     asset_not_found: "That capability doesn't exist.",
     review_forbidden: "You don't have permission to review this kind of capability.",
   },
+  runtime_chat: {
+    bot_unavailable: "This bot doesn't exist or doesn't have web chat enabled for you.",
+    bot_disabled: "Web chat is disabled for this bot. You can still read the history.",
+    not_found: "The conversation doesn't exist or doesn't belong to this account.",
+    invalid_message: "The message can't be empty or longer than {{max}} bytes.",
+    invalid_key: "Invalid request identifier. Send the message again.",
+    busy: "The previous message is still being processed. Wait for the reply before sending.",
+    idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
+    queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
+  },
 } satisfies Messages<typeof zh>;

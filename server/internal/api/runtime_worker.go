@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hikariming/dsh-ee/server/internal/feishu"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
@@ -28,6 +29,15 @@ const (
 	runtimeMaxFiles  = 8
 	runtimeAttempts  = 2
 )
+
+// runtimeFileRule 是对话和任务提示词里共用的交付文件说明。DSH 以 runtimeOutputDir 为工作目录启动，
+// 这个目录因此就是它沙箱策略里的工作区根。DSH 的 shell 工具在 bwrap 下按 workspace-write 运行时，
+// 会先把 /tmp 换成这条命令独占的 tmpfs，再只把工作区根 bind 回真实目录：以前工作目录是 /tmp 本身，
+// 机器人用 shell 写进 /tmp/dsh-ee-output 的文件落在一次性的 tmpfs 里，命令一结束就没了，
+// 沙箱里列目录看不到，文件库也就是空的。
+const runtimeFileRule = "Your current working directory is " + runtimeOutputDir + ". Save every requested deliverable file directly in it " +
+	"(a relative file name such as notes.md is enough, no subdirectories); files saved there are published to the employee's file library, " +
+	"and files saved anywhere else are discarded."
 
 func (s *Server) runCloudWorker(ctx context.Context) {
 	tick := time.NewTicker(time.Second)
@@ -60,7 +70,8 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 			case <-run.Done():
 				return
 			case <-tick.C:
-				t, err := s.store.RuntimeTask(run, task.ID, 0)
+				// 按所有者读：管理员通配（owner=0）看不到网页对话的轮次。
+				t, err := s.store.RuntimeTask(run, task.ID, task.OwnerID)
 				if err != nil || t.Attempts != task.Attempts || t.Status != store.RuntimeRunning {
 					cancel()
 					return
@@ -95,7 +106,8 @@ func (s *Server) runCloudClaim(ctx context.Context, task *store.RuntimeTask) {
 		return
 	}
 	s.auditSystem(finish, "runtime.task."+status, strconv.FormatInt(task.ID, 10), map[string]any{"run_as": task.RunAsID, "attempt": task.Attempts})
-	if task.BotID != nil {
+	// 网页对话轮次的 BotID 为空（机器人记在对话上），结果只在网页里看，不投递飞书。
+	if task.BotID != nil && task.ChatConversationID == nil {
 		s.deliverCloudTask(finish, task, status, summary)
 	}
 }
@@ -222,7 +234,12 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		return "", nil, err
 	}
 	defer revoke()
-	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. Write any requested deliverable files directly under " + runtimeOutputDir + " and return a short final summary of the result without a step-by-step account."
+	prompt := "Enterprise task:\n" + task.Prompt + "\n\nThe enterprise task is read-only. " + runtimeFileRule + " Return a short final summary of the result without a step-by-step account."
+	if task.ChatConversationID != nil {
+		// 网页对话的提示词在入队时已拼好（runtimeChatPlan）：要的是直接回答员工，而不是任务摘要；
+		// 当前消息必须留在最后，这里不再追加任何内容。
+		prompt = task.Prompt
+	}
 	args := make([]string, len(opts.Command))
 	for i, arg := range opts.Command {
 		switch arg {
@@ -237,7 +254,8 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	}
 	deadline, _ := ctx.Deadline()
 	var final runtime.DSHFinalOutput
-	cmd := runtime.Command{Args: args, Dir: "/tmp", Timeout: time.Until(deadline), Env: map[string]string{
+	// 工作目录必须是产物目录，见 runtimeFileRule。
+	cmd := runtime.Command{Args: args, Dir: runtimeOutputDir, Timeout: time.Until(deadline), Env: map[string]string{
 		"DSH_EE_RUNTIME_TOKEN": token, "DSH_HOME": "/tmp/dsh-ee-home", "DSH_EE_OUTPUT_DIR": runtimeOutputDir,
 	}}
 	if slices.Contains(opts.Command, "--json") {
@@ -247,7 +265,7 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if err != nil || result.ExitCode != 0 {
 		return "", nil, runtimeExecError(result, err, final.Failure(), token)
 	}
-	artifacts, err := s.collectCloudFiles(ctx, sandbox)
+	artifacts, err := s.collectCloudFiles(ctx, task, sandbox)
 	if err != nil {
 		return "", nil, err
 	}
@@ -255,7 +273,14 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 	if cmd.OnStdout != nil {
 		reply = final.Reply()
 	}
+	if task.ChatConversationID != nil {
+		return runtimeChatReply(reply, token), artifacts, nil
+	}
 	return runtimeSummary(reply, token), artifacts, nil
+}
+
+func runtimeChatReply(reply, token string) string {
+	return cleanRuntimeOutput(reply, token, runtimeChatReplyRunes-1)
 }
 
 func runtimeSummary(reply, token string) string {
@@ -285,21 +310,46 @@ func cleanRuntimeOutput(output, token string, limit int) string {
 	return feishu.Clip(text, limit)
 }
 
-func (s *Server) collectCloudFiles(ctx context.Context, sandbox runtime.Sandbox) ([]store.RuntimeArtifact, error) {
+// collectCloudFiles 把产物目录（含 runtime.ListDepth 层以内的子目录）里的普通文件存成任务产物。
+// 产物名是相对产物目录的路径（子目录里的文件带目录前缀，例如 reports/周报.md），按路径排序，最多 runtimeMaxFiles 个。
+// 被跳过的文件都记一条日志并写明原因：以前这里静默丢弃，机器人说写了文件、文件库却是空的时无从排查。
+func (s *Server) collectCloudFiles(ctx context.Context, task *store.RuntimeTask, sandbox runtime.Sandbox) ([]store.RuntimeArtifact, error) {
 	files, err := sandbox.ListFiles(ctx, runtimeOutputDir)
 	if err != nil {
 		return nil, errors.New("listing cloud task files failed")
 	}
-	artifacts := []store.RuntimeArtifact{}
+	type candidate struct{ remote, name string }
+	var picked []candidate
+	skip := func(f runtime.File, reason string) {
+		s.log.Warn("跳过云任务产物", "task_id", task.ID, "path", f.Path, "type", f.Type, "size", f.Size, "reason", reason)
+	}
 	for _, f := range files {
-		if f.Type != "file" || path.Dir(f.Path) != runtimeOutputDir || path.Clean(f.Path) != f.Path || f.Size > runtimeMaxFile ||
-			len(path.Base(f.Path)) > 255 || strings.ContainsAny(f.Path, "\x00\r\n\\") {
+		name, ok := runtimeArtifactName(f.Path)
+		switch {
+		case f.Type == "directory":
 			continue
+		case !ok:
+			skip(f, "path outside the output directory or not a plain name")
+		case f.Type != "file":
+			skip(f, "not a regular file")
+		case f.Size > runtimeMaxFile:
+			skip(f, "larger than the artifact size limit")
+		case strings.HasPrefix(name, ".") || strings.Contains(name, "/."):
+			// 隐藏文件和隐藏目录是工具自己的状态（工作目录就是产物目录），不当成交付物，也不记日志。
+		default:
+			picked = append(picked, candidate{f.Path, name})
 		}
-		if len(artifacts) >= runtimeMaxFiles {
-			break
+	}
+	slices.SortFunc(picked, func(a, b candidate) int { return strings.Compare(a.name, b.name) })
+	if len(picked) > runtimeMaxFiles {
+		for _, c := range picked[runtimeMaxFiles:] {
+			skip(runtime.File{Path: c.remote, Type: "file"}, "more than the per-task artifact limit")
 		}
-		a, err := s.saveCloudFile(ctx, sandbox, f.Path)
+		picked = picked[:runtimeMaxFiles]
+	}
+	artifacts := []store.RuntimeArtifact{}
+	for _, c := range picked {
+		a, err := s.saveCloudFile(ctx, sandbox, c.remote, c.name)
 		if err != nil {
 			s.removeCloudArtifacts(artifacts)
 			return nil, errors.New("saving cloud task file failed")
@@ -309,7 +359,18 @@ func (s *Server) collectCloudFiles(ctx context.Context, sandbox runtime.Sandbox)
 	return artifacts, nil
 }
 
-func (s *Server) saveCloudFile(ctx context.Context, sandbox runtime.Sandbox, remote string) (store.RuntimeArtifact, error) {
+// runtimeArtifactName 返回产物在产物目录里的相对路径；不在目录里、层级超过 runtime.ListDepth、
+// 不是规范路径或带控制字符 / 反斜杠的一律拒绝。
+func runtimeArtifactName(remote string) (string, bool) {
+	rel, ok := strings.CutPrefix(remote, runtimeOutputDir+"/")
+	if !ok || rel == "" || path.Clean(remote) != remote || len(rel) > 255 || strings.ContainsAny(rel, "\x00\r\n\\") ||
+		strings.Count(rel, "/") >= runtime.ListDepth || !utf8.ValidString(rel) {
+		return "", false
+	}
+	return rel, true
+}
+
+func (s *Server) saveCloudFile(ctx context.Context, sandbox runtime.Sandbox, remote, name string) (store.RuntimeArtifact, error) {
 	dir := filepath.Join(s.opts.DataDir, "runtime-artifacts")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return store.RuntimeArtifact{}, err
@@ -334,7 +395,7 @@ func (s *Server) saveCloudFile(ctx context.Context, sandbox runtime.Sandbox, rem
 		_ = os.Remove(output.Name())
 		return store.RuntimeArtifact{}, err
 	}
-	return store.RuntimeArtifact{Name: path.Base(remote), StorageKey: filepath.Base(output.Name()), Size: size}, nil
+	return store.RuntimeArtifact{Name: name, StorageKey: filepath.Base(output.Name()), Size: size}, nil
 }
 
 func (s *Server) removeCloudArtifacts(artifacts []store.RuntimeArtifact) {

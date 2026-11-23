@@ -20,46 +20,59 @@ const (
 var (
 	ErrRuntimeQueueFull = errors.New("runtime task queue is full")
 	ErrRuntimeBotBusy   = errors.New("runtime bot already has an active task")
+	// ErrRuntimeChatBusy：这段网页对话已有一轮在排队或运行。
+	ErrRuntimeChatBusy = errors.New("runtime chat conversation already has an active turn")
+	// ErrRuntimeChatBotUnavailable：对话绑定的机器人当前不满足网页对话条件。
+	ErrRuntimeChatBotUnavailable = errors.New("runtime chat bot is unavailable")
 )
 
 type RuntimeBot struct {
-	ID             int64     `json:"id"`
-	OwnerID        int64     `json:"owner_id"`
-	RunAsID        int64     `json:"run_as_id"`
-	Name           string    `json:"name"`
-	Prompt         string    `json:"prompt"`
-	Schedule       string    `json:"schedule"`
-	Enabled        bool      `json:"enabled"`
-	ReadOnly       bool      `json:"read_only"`
-	DeliveryTarget string    `json:"delivery_target"`
+	ID             int64  `json:"id"`
+	OwnerID        int64  `json:"owner_id"`
+	RunAsID        int64  `json:"run_as_id"`
+	Name           string `json:"name"`
+	Prompt         string `json:"prompt"`
+	Schedule       string `json:"schedule"`
+	Enabled        bool   `json:"enabled"`
+	ReadOnly       bool   `json:"read_only"`
+	DeliveryTarget string `json:"delivery_target"`
+	// WebChatEnabled 允许所有者本人在网页里与机器人对话；与 Enabled（定时开关）互不影响。
+	WebChatEnabled bool      `json:"web_chat_enabled"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-const runtimeBotColumns = `id, owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, created_at, updated_at`
+const runtimeBotColumns = `id, owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, web_chat_enabled, created_at, updated_at`
 
 func scanRuntimeBot(row interface{ Scan(...any) error }) (*RuntimeBot, error) {
 	var b RuntimeBot
-	err := row.Scan(&b.ID, &b.OwnerID, &b.RunAsID, &b.Name, &b.Prompt, &b.Schedule, &b.Enabled, &b.ReadOnly, &b.DeliveryTarget, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.OwnerID, &b.RunAsID, &b.Name, &b.Prompt, &b.Schedule, &b.Enabled, &b.ReadOnly, &b.DeliveryTarget, &b.WebChatEnabled, &b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return &b, err
 }
 
-func (s *Store) SaveRuntimeBot(ctx context.Context, b *RuntimeBot) error {
+// SaveRuntimeBot 新建或更新机器人。webChat 是网页对话开关的显式取值：nil 表示调用方没带这个字段，
+// 新建时按关闭写入，更新时由 UPDATE 语句原子地保留库里的现值（不先读后写，免得盖掉并发的关闭）。
+// b.WebChatEnabled 只用于读取，不参与写入。
+func (s *Store) SaveRuntimeBot(ctx context.Context, b *RuntimeBot, webChat *bool) error {
 	t := now()
 	if b.ID == 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bots (owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?)`, b.OwnerID, b.RunAsID, b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, t, t)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO runtime_bots (owner_id, run_as_id, name, prompt, schedule, enabled, read_only, delivery_target, web_chat_enabled, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)`, b.OwnerID, b.RunAsID, b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, webChat != nil && *webChat, t, t)
 		if err != nil {
 			return err
 		}
 		b.ID, err = res.LastInsertId()
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE runtime_bots SET name=?, prompt=?, schedule=?, enabled=?, read_only=?, delivery_target=?, updated_at=? WHERE id=? AND owner_id=? AND run_as_id=?`,
-		b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, t, b.ID, b.OwnerID, b.RunAsID)
+	var webChatParam sql.NullBool
+	if webChat != nil {
+		webChatParam = sql.NullBool{Bool: *webChat, Valid: true}
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_bots SET name=?, prompt=?, schedule=?, enabled=?, read_only=?, delivery_target=?, web_chat_enabled=COALESCE(?, web_chat_enabled), updated_at=? WHERE id=? AND owner_id=? AND run_as_id=?`,
+		b.Name, b.Prompt, b.Schedule, b.Enabled, b.ReadOnly, b.DeliveryTarget, webChatParam, t, b.ID, b.OwnerID, b.RunAsID)
 	return runtimeAffected(res, err)
 }
 
@@ -104,15 +117,24 @@ type RuntimeTask struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 	StartedAt      *time.Time `json:"started_at,omitempty"`
 	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	// 网页对话轮次才有；不进公开 DTO。对话轮次的 BotID 为空，机器人记在对话上。
+	ChatConversationID *int64 `json:"-"`
+	ChatContent        string `json:"-"`
 }
 
 const runtimeTaskColumns = `id, owner_id, run_as_id, bot_id, prompt, status, attempts, COALESCE(idempotency_key,''), timeout_seconds,
-	error, summary, created_at, updated_at, started_at, finished_at`
+	error, summary, created_at, updated_at, started_at, finished_at, chat_conversation_id, COALESCE(chat_content,'')`
+
+// runtimeTaskOwned 是任务读取的归属条件（两个参数都是 ownerID）：所有者能读自己的全部任务；
+// ownerID=0 的管理员通配只覆盖普通任务，员工网页对话的轮次、回复和产物不对管理员开放。
+func runtimeTaskOwned(prefix string) string {
+	return `(` + prefix + `owner_id=? OR (?=0 AND ` + prefix + `chat_conversation_id IS NULL))`
+}
 
 func scanRuntimeTask(row interface{ Scan(...any) error }) (*RuntimeTask, error) {
 	var t RuntimeTask
 	err := row.Scan(&t.ID, &t.OwnerID, &t.RunAsID, &t.BotID, &t.Prompt, &t.Status, &t.Attempts, &t.IdempotencyKey, &t.TimeoutSeconds,
-		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt)
+		&t.Error, &t.Summary, &t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.FinishedAt, &t.ChatConversationID, &t.ChatContent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -209,11 +231,12 @@ func sameRuntimeTask(a, b *RuntimeTask) bool {
 }
 
 func (s *Store) RuntimeTask(ctx context.Context, id, ownerID int64) (*RuntimeTask, error) {
-	return scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks WHERE id=? AND (?=0 OR owner_id=?)`, id, ownerID, ownerID))
+	return scanRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks WHERE id=? AND `+runtimeTaskOwned(""), id, ownerID, ownerID))
 }
 
 func (s *Store) RuntimeTasks(ctx context.Context, ownerID int64) ([]RuntimeTask, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks WHERE (?=0 OR owner_id=?) ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeTaskColumns+` FROM runtime_tasks
+		WHERE (?=0 OR owner_id=?) AND chat_conversation_id IS NULL ORDER BY id DESC LIMIT 100`, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +281,7 @@ func (s *Store) ClaimRuntimeTask(ctx context.Context, attemptLimit int, grace ti
 func (s *Store) CancelRuntimeTask(ctx context.Context, id, ownerID int64) error {
 	t := now()
 	return s.recordRuntimeTransition(ctx, id, RuntimeCanceled, t, `UPDATE runtime_tasks SET status=?, updated_at=?, finished_at=?, lease_until=NULL
-		WHERE id=? AND (?=0 OR owner_id=?) AND status IN (?,?)`, RuntimeCanceled, t, t, id, ownerID, ownerID, RuntimeQueued, RuntimeRunning)
+		WHERE id=? AND `+runtimeTaskOwned("")+` AND status IN (?,?)`, RuntimeCanceled, t, t, id, ownerID, ownerID, RuntimeQueued, RuntimeRunning)
 }
 
 func (s *Store) expireRuntimeTasks(ctx context.Context, t time.Time, attemptLimit int) error {
@@ -322,7 +345,7 @@ type RuntimeTaskEvent struct {
 
 func (s *Store) RuntimeTaskEvents(ctx context.Context, id, owner int64) ([]RuntimeTaskEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.status,e.attempt,e.created_at FROM runtime_task_events e
-		JOIN runtime_tasks t ON t.id=e.task_id WHERE t.id=? AND (?=0 OR t.owner_id=?) ORDER BY e.id`, id, owner, owner)
+		JOIN runtime_tasks t ON t.id=e.task_id WHERE t.id=? AND `+runtimeTaskOwned("t.")+` ORDER BY e.id`, id, owner, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +400,7 @@ func (s *Store) FinishRuntimeTask(ctx context.Context, task *RuntimeTask, status
 
 func (s *Store) RuntimeArtifacts(ctx context.Context, taskID, ownerID int64) ([]RuntimeArtifact, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.task_id, a.name, a.storage_key, a.size_bytes, a.created_at FROM runtime_artifacts a
-		JOIN runtime_tasks t ON t.id=a.task_id WHERE t.id=? AND (?=0 OR t.owner_id=?) ORDER BY a.id`, taskID, ownerID, ownerID)
+		JOIN runtime_tasks t ON t.id=a.task_id WHERE t.id=? AND `+runtimeTaskOwned("t.")+` ORDER BY a.id`, taskID, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}

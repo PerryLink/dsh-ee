@@ -218,4 +218,14 @@ export default {
     asset_not_found: "能力不存在",
     review_forbidden: "没有权限审核这类能力",
   },
+  runtime_chat: {
+    bot_unavailable: "这个机器人不存在或没有为你开放网页对话",
+    bot_disabled: "这个机器人的网页对话已停用，历史记录仍可查看",
+    not_found: "会话不存在或不属于当前账号",
+    invalid_message: "消息不能为空，且不能超过 {{max}} 字节",
+    invalid_key: "请求标识无效，请重新发送",
+    busy: "上一条消息还在处理中，请等待回复后再发送",
+    idempotency_conflict: "这条消息与之前的发送请求冲突，请重新发送",
+    queue_full: "你排队中的云任务已达上限，请稍后再试",
+  },
 };
