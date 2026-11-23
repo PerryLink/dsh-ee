@@ -339,6 +339,11 @@ func TestDelegationAcrossEmployeesRejected(t *testing.T) {
 	if !strings.Contains(strings.Join(toolNames, ","), "bots__send") {
 		t.Fatalf("bot runs should get the bots__ tools: %v", toolNames)
 	}
+	for _, name := range toolNames {
+		if name == "bots__create" {
+			t.Fatalf("read-only runs should not discover bots__create: %v", toolNames)
+		}
+	}
 	if !strings.Contains(listed.text(), `{"id":`+strconv.FormatInt(mine.ID, 10)+`,"name":"Organizer"}`) || strings.Contains(listed.text(), "Their bot") ||
 		strings.Contains(listed.text(), `"id":`+strconv.FormatInt(theirs.ID, 10)+`,`) {
 		t.Fatalf("bots__list must only show the employee's own bots: %s", listed.text())

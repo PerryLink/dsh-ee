@@ -37,7 +37,7 @@ const botsConn = "bots"
 // runtimeDelegationNote 在机器人的轮次里加在提示词最前面，说明 bots__ 工具的用法。
 const runtimeDelegationNote = "You can work with the employee's other cloud bots through the bots__ tools: bots__list shows them; " +
 	"bots__send hands one of them a task (kind \"task\": when it is done, its result comes back to you in a follow-up turn of this conversation) " +
-	"or a message (kind \"message\": no follow-up); bots__result checks a delegation; bots__create can create a helper bot subject to write approval. " +
+	"or a message (kind \"message\": no follow-up); bots__result checks a delegation; use bots__create for a helper bot only if the tool is available. " +
 	"Delegated work starts only after your current turn ends, because these bots share one computer and run one at a time: " +
 	"after delegating, put any files the other bot needs in " + runtimeSharedDir + ", finish your turn and tell the employee what you handed off.\n\n"
 
@@ -92,7 +92,15 @@ func (s *Server) runtimeBotCaller(ctx context.Context, pr *Principal) (*botCalle
 	return &botCaller{task: task, botID: botID, botName: b.Name}, nil
 }
 
-func botsToolDefs() []map[string]any {
+func runtimeBotToolName(name string) bool {
+	switch name {
+	case "bots__list", "bots__send", "bots__result", "bots__create":
+		return true
+	}
+	return false
+}
+
+func botsToolDefs(createAllowed bool) []map[string]any {
 	idProp := func(desc string) map[string]any { return map[string]any{"type": "integer", "description": desc} }
 	str := func(desc string, max int) map[string]any {
 		return map[string]any{"type": "string", "description": desc, "maxLength": max}
@@ -105,7 +113,7 @@ func botsToolDefs() []map[string]any {
 		return map[string]any{"name": mcpToolName(botsConn, name), "description": desc, "inputSchema": schema,
 			"annotations": map[string]any{"readOnlyHint": readOnly}}
 	}
-	return []map[string]any{
+	tools := []map[string]any{
 		tool("list", "List the employee's other cloud bots you can message or delegate to (same employee, same shared computer).", map[string]any{}, nil, true),
 		tool("send", "Hand another of the employee's bots a task or a message. It starts after your current turn ends. "+
 			"kind \"task\": its result comes back to you in a follow-up turn; kind \"message\": just informs it, no follow-up. "+
@@ -117,12 +125,15 @@ func botsToolDefs() []map[string]any {
 		tool("result", "Check the status and result of a delegation you made.", map[string]any{
 			"delegation_id": idProp("Delegation id returned by bots__send."),
 		}, []string{"delegation_id"}, true),
-		tool("create", "Create a new cloud bot for the employee (for example a temporary helper), subject to this bot's write approval mode. "+
+	}
+	if createAllowed {
+		tools = append(tools, tool("create", "Create a new cloud bot for the employee (for example a temporary helper), subject to this bot's write approval mode. "+
 			"If asked to obtain approval, call again with exactly the same arguments after the employee approves.", map[string]any{
 			"name":   str("Bot name.", 128),
 			"prompt": str("The new bot's standing instructions.", runtimeChatMaxContent),
-		}, []string{"name", "prompt"}, false),
+		}, []string{"name", "prompt"}, false))
 	}
+	return tools
 }
 
 func botsText(text string, isError bool) json.RawMessage { return mcp.TextResult(text, isError) }

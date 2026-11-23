@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// 0058 把「每个机器人一台」合并成「每个员工一台」：每位员工保留最近使用的那台，其余进回收队列。
-// 迁移的每条语句都可重跑，这里在已迁移的库上重建旧表、放进旧数据，再把 0058 整个执行一遍。
+// 0060 把「每个机器人一台」合并成「每个员工一台」，0061 在数据迁移记账后删除旧表。
+// 在已迁移的库上重建旧表、放进旧数据，验证每条迁移在记账前重试是安全的。
 func TestMigrationMergesBotComputersPerOwner(t *testing.T) {
 	s, _ := openTokenTestStoreDSN(t)
 	ctx := context.Background()
@@ -55,13 +55,17 @@ func TestMigrationMergesBotComputersPerOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	body, err := migrationFS.ReadFile("migrations/0058_runtime_owner_computers.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, stmt := range splitStatements(string(body)) {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			t.Fatalf("%v\n%s", err, stmt)
+	for _, migration := range []string{"0060_runtime_owner_computers.sql", "0061_drop_legacy_runtime_bot_computers.sql"} {
+		body, err := migrationFS.ReadFile("migrations/" + migration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			for _, stmt := range splitStatements(string(body)) {
+				if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+					t.Fatalf("%s: %v\n%s", migration, err, stmt)
+				}
+			}
 		}
 	}
 	got, err := s.RuntimeComputerOf(ctx, UserComputerOwner(alice))

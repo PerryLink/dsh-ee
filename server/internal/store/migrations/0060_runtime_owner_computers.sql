@@ -58,8 +58,6 @@ INSERT IGNORE INTO runtime_computer_orphans (sandbox_id, creation_key, bot_id, r
  WHERE (c.sandbox_id <> '' OR c.creation_key <> '')
   AND NOT EXISTS (SELECT 1 FROM runtime_computers k WHERE c.sandbox_id <> '' AND k.sandbox_id = c.sandbox_id);
 
-DROP TABLE IF EXISTS runtime_bot_computers;
-
 -- 机器人之间派任务。owner_id 是这些机器人共同的所有者（也是运行身份），只能派给他自己的机器人。
 -- 一次委派先是 pending（发起的那一轮还在跑，电脑被它占着），那一轮成功结束后才在目标机器人的线程里入队一轮
 -- （dispatched，child_task_id 指向那一轮，状态和结果直接读那一轮任务）；派不出去是 failed，发起轮失败是 canceled。
