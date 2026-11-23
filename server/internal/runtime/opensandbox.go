@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -68,20 +69,38 @@ type sandboxEndpoint struct {
 
 type openSandboxInstance struct {
 	provider       *OpenSandbox
+	id             string
 	path, execBase string
 	headers        http.Header
 }
 
+func (s *openSandboxInstance) ID() string { return s.id }
+
 func (p *OpenSandbox) Create(ctx context.Context, spec SandboxSpec) (Sandbox, error) {
-	if spec.Image == "" || spec.Timeout <= 0 {
+	if spec.Timeout <= 0 {
+		return nil, errors.New("sandbox image and timeout are required")
+	}
+	return p.create(ctx, spec, false)
+}
+
+// CreatePersistent 新建一台常驻沙箱：不带 timeout，OpenSandbox 不会按 TTL 删除它；
+// 空闲休眠和最终回收由 dsh-ee 自己负责（见 api 包的 runCloudComputerReaper）。
+func (p *OpenSandbox) CreatePersistent(ctx context.Context, spec SandboxSpec) (PersistentSandbox, error) {
+	return p.create(ctx, spec, true)
+}
+
+func (p *OpenSandbox) create(ctx context.Context, spec SandboxSpec, persistent bool) (*openSandboxInstance, error) {
+	if spec.Image == "" {
 		return nil, errors.New("sandbox image and timeout are required")
 	}
 	var status sandboxStatus
 	input := map[string]any{
 		"image":          map[string]string{"uri": spec.Image},
 		"entrypoint":     []string{"tail", "-f", "/dev/null"},
-		"timeout":        max(60, int64((spec.Timeout-1)/time.Second)+1),
 		"resourceLimits": map[string]string{"cpu": "1", "memory": "1Gi"},
+	}
+	if !persistent {
+		input["timeout"] = max(60, int64((spec.Timeout-1)/time.Second)+1)
 	}
 	if len(spec.Env) > 0 {
 		input["env"] = spec.Env
@@ -97,10 +116,10 @@ func (p *OpenSandbox) Create(ctx context.Context, spec SandboxSpec) (Sandbox, er
 	if err != nil {
 		return nil, err
 	}
-	if status.ID == "" || status.ID == "." || status.ID == ".." {
-		return nil, errors.New("OpenSandbox returned an invalid ID")
+	s, err := p.instance(status.ID)
+	if err != nil {
+		return nil, err
 	}
-	s := &openSandboxInstance{provider: p, path: "/sandboxes/" + url.PathEscape(status.ID)}
 	ready := false
 	defer func() {
 		if !ready {
@@ -109,27 +128,165 @@ func (p *OpenSandbox) Create(ctx context.Context, spec SandboxSpec) (Sandbox, er
 			_ = s.Destroy(cleanup)
 		}
 	}()
+	if err := s.connect(ctx, status.Status.State); err != nil {
+		return nil, err
+	}
+	ready = true
+	return s, nil
+}
+
+func (p *OpenSandbox) instance(id string) (*openSandboxInstance, error) {
+	if id == "" || id == "." || id == ".." {
+		return nil, errors.New("OpenSandbox returned an invalid ID")
+	}
+	return &openSandboxInstance{provider: p, id: id, path: "/sandboxes/" + url.PathEscape(id)}, nil
+}
+
+// Wake 按沙箱当前状态把它带回运行：Paused 先 resume；Pausing 等到 Paused 再 resume；
+// Pending / Resuming 等它跑起来；已经删除或进入终态返回 ErrSandboxGone。
+func (p *OpenSandbox) Wake(ctx context.Context, id string) (PersistentSandbox, error) {
+	s, err := p.instance(id)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.state(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if state == "Pausing" {
+		if state, err = s.waitWhile(ctx, "Pausing"); err != nil {
+			return nil, err
+		}
+	}
+	if state == "Paused" {
+		if err := s.post(ctx, "/resume"); err != nil {
+			return nil, err
+		}
+		state = "Resuming"
+	}
+	if err := s.connect(ctx, state); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// Hibernate 暂停沙箱（OpenSandbox pause），文件系统和内存都保留，等到状态确实是 Paused 才返回。
+func (p *OpenSandbox) Hibernate(ctx context.Context, id string) error {
+	s, err := p.instance(id)
+	if err != nil {
+		return err
+	}
+	state, err := s.state(ctx)
+	if err != nil {
+		return err
+	}
+	if state == "Resuming" || state == "Pending" {
+		if state, err = s.waitWhile(ctx, state); err != nil {
+			return err
+		}
+	}
+	if state == "Running" {
+		if err := s.post(ctx, "/pause"); err != nil {
+			return err
+		}
+		state = "Pausing"
+	}
+	if state == "Pausing" {
+		if state, err = s.waitWhile(ctx, "Pausing", "Running"); err != nil {
+			return err
+		}
+	}
+	if state != "Paused" {
+		return fmt.Errorf("OpenSandbox sandbox is %s, not Paused", state)
+	}
+	return nil
+}
+
+func (p *OpenSandbox) Remove(ctx context.Context, id string) error {
+	s, err := p.instance(id)
+	if err != nil {
+		return err
+	}
+	return s.Destroy(ctx)
+}
+
+func goneState(state string) bool {
+	return state == "Stopping" || state == "Terminated" || state == "Failed"
+}
+
+// state 读沙箱当前状态；404 和终态都当作 ErrSandboxGone。
+func (s *openSandboxInstance) state(ctx context.Context) (string, error) {
+	var status sandboxStatus
+	err := s.provider.lifecycle(ctx, http.MethodGet, s.path, nil, &status)
+	var httpErr *httpStatusError
+	if errors.As(err, &httpErr) && httpErr.status == http.StatusNotFound {
+		return "", ErrSandboxGone
+	}
+	if err != nil {
+		return "", err
+	}
+	if goneState(status.Status.State) {
+		return status.Status.State, ErrSandboxGone
+	}
+	return status.Status.State, nil
+}
+
+// waitWhile 轮询直到状态不再是 states 之一，返回新状态。
+func (s *openSandboxInstance) waitWhile(ctx context.Context, states ...string) (string, error) {
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
-	for status.Status.State != "Running" {
-		switch status.Status.State {
-		case "Pending", "Starting", "":
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-tick.C:
+		}
+		state, err := s.state(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !slices.Contains(states, state) {
+			return state, nil
+		}
+	}
+}
+
+func (s *openSandboxInstance) post(ctx context.Context, action string) error {
+	err := s.provider.lifecycle(ctx, http.MethodPost, s.path+action, nil, nil)
+	var httpErr *httpStatusError
+	if errors.As(err, &httpErr) && httpErr.status == http.StatusNotFound {
+		return ErrSandboxGone
+	}
+	return err
+}
+
+// connect 等沙箱进入 Running，取 execd 端点并等它响应 ping。
+func (s *openSandboxInstance) connect(ctx context.Context, state string) error {
+	p := s.provider
+	tick := time.NewTicker(250 * time.Millisecond)
+	defer tick.Stop()
+	for state != "Running" {
+		switch state {
+		case "Pending", "Starting", "Resuming", "":
 		default:
-			return nil, errors.New("OpenSandbox did not enter the running state")
+			if goneState(state) {
+				return ErrSandboxGone
+			}
+			return errors.New("OpenSandbox did not enter the running state")
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-tick.C:
 		}
-		status = sandboxStatus{}
-		if err := p.lifecycle(ctx, http.MethodGet, s.path, nil, &status); err != nil {
-			return nil, err
+		var err error
+		if state, err = s.state(ctx); err != nil {
+			return err
 		}
 	}
 	var endpoint sandboxEndpoint
 	if err := p.lifecycle(ctx, http.MethodGet, s.path+"/endpoints/44772", nil, &endpoint); err != nil {
-		return nil, err
+		return err
 	}
 	e := endpoint.Endpoint
 	if !strings.Contains(e, "://") {
@@ -139,7 +296,7 @@ func (p *OpenSandbox) Create(ctx context.Context, spec SandboxSpec) (Sandbox, er
 	u, err := url.Parse(e)
 	if err != nil || !validEndpoint(u) || u.RawQuery != "" ||
 		(strings.HasPrefix(p.base, "https://") && u.Scheme != "https") {
-		return nil, errors.New("OpenSandbox returned an invalid execd endpoint")
+		return errors.New("OpenSandbox returned an invalid execd endpoint")
 	}
 	s.execBase = strings.TrimRight(u.String(), "/")
 	s.headers = make(http.Header, len(endpoint.Headers))
@@ -150,20 +307,18 @@ func (p *OpenSandbox) Create(ctx context.Context, spec SandboxSpec) (Sandbox, er
 		response, err := p.request(ctx, http.MethodGet, s.execBase+"/ping", "", s.headers, nil)
 		if err == nil {
 			response.Close()
-			break
+			return nil
 		}
 		var status *httpStatusError
 		if errors.As(err, &status) && status.status >= 400 && status.status < 500 && status.status != http.StatusNotFound {
-			return nil, err
+			return err
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-tick.C:
 		}
 	}
-	ready = true
-	return s, nil
 }
 
 type httpStatusError struct {
@@ -367,3 +522,5 @@ func (s *openSandboxInstance) ReadFile(ctx context.Context, path string) (io.Rea
 	query := url.Values{"path": {path}}
 	return s.provider.request(ctx, http.MethodGet, s.execBase+"/files/download?"+query.Encode(), "", s.headers, nil)
 }
+
+var _ PersistentProvider = (*OpenSandbox)(nil)

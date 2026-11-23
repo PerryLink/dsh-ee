@@ -176,7 +176,15 @@ func (s *Server) handleRuntimeChatBotProfile(w http.ResponseWriter, r *http.Requ
 		s.internalErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, profile)
+	computer, err := s.botComputerView(r.Context(), runtimeID(r, "id"))
+	if err != nil {
+		s.internalErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*store.RuntimeChatBotProfile
+		Computer runtimeComputerView `json:"computer"`
+	}{profile, computer})
 }
 
 func (s *Server) handleRuntimeChatMessage(w http.ResponseWriter, r *http.Request) {

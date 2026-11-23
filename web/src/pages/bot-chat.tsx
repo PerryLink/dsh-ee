@@ -18,6 +18,7 @@ import { ArrowUp, Bot, CalendarClock, ChevronDown, CircleAlert, Download, FileDo
 import { Badge, Button, Card, Empty, Notice, Spinner, cx, tabCls, tabListCls } from "../components/ui";
 import { ChatMarkdown } from "../components/chat-markdown";
 import { useAuth } from "../lib/auth";
+import { useConfirm } from "../lib/confirm";
 import { formatBytes, formatDateOnly, formatDateTime, formatNumber, formatTimeOnly, resolveLang } from "../lib/format";
 import {
   CHAT_CONTENT_MAX_BYTES,
@@ -33,6 +34,7 @@ import {
   type ChatArtifact,
   type ChatBot,
   type ChatBotProfile,
+  type ChatComputer,
   type ChatError,
   type ChatErrorScope,
   type ChatId,
@@ -322,6 +324,139 @@ function Turn({ turn, bot, onReuse }: { turn: ChatTurn; bot: ChatBot; onReuse?: 
 
 // ---------- 右栏：机器人资料 ----------
 
+/**
+ * 机器人自己的云电脑：显示真实状态（工作中 / 唤醒中 / 运行中 / 正在休眠 / 休眠中 / 未开机）、磁盘用量，
+ * 可以手动休眠或重置。后端不支持常驻（或是旧后端）时按“每轮新开”显示，不给操作按钮。
+ */
+function ComputerCard({
+  botId,
+  running,
+  computer,
+  onChanged,
+}: {
+  botId: ChatId;
+  running: boolean;
+  computer: ChatComputer | null;
+  onChanged: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const confirm = useConfirm();
+  const [pending, setPending] = useState<"hibernate" | "reset" | null>(null);
+  const [error, setError] = useState("");
+  const k = "botChat.profile.activity.computer";
+
+  let label: string;
+  let desc: string;
+  let dot = "bg-neutral-300 dark:bg-white/25";
+  let pulse = false;
+  if (!computer) {
+    // 旧后端：只知道有没有任务在跑。
+    label = t(running ? "botChat.profile.activity.running" : "botChat.profile.activity.asleep");
+    desc = t(running ? "botChat.profile.activity.runningDesc" : "botChat.profile.activity.asleepDesc");
+    if (running) dot = "bg-emerald-500";
+  } else if (!computer.persistent) {
+    label = running ? t(`${k}.working`) : t(`${k}.ephemeral`);
+    desc = t(`${k}.ephemeralDesc`);
+    if (running) dot = "bg-emerald-500";
+  } else if (computer.state === "waking") {
+    [label, desc, dot, pulse] = [t(`${k}.waking`), t(`${k}.wakingDesc`), "bg-amber-500", true];
+  } else if (computer.state === "hibernating") {
+    [label, desc, dot, pulse] = [t(`${k}.hibernating`), t(`${k}.hibernatingDesc`), "bg-amber-500", true];
+  } else if (running || (computer.busy && computer.state === "running")) {
+    [label, desc, dot, pulse] = [t(`${k}.working`), t(`${k}.workingDesc`), "bg-emerald-500", true];
+  } else if (computer.state === "running") {
+    label = t(`${k}.running`);
+    desc = t(`${k}.runningDesc`, { minutes: Math.max(1, Math.round(computer.idle_timeout_seconds / 60)) });
+    dot = "bg-emerald-500";
+  } else if (computer.state === "hibernated") {
+    [label, desc, dot] = [t(`${k}.hibernated`), t(`${k}.hibernatedDesc`), "bg-sky-500"];
+  } else {
+    [label, desc] = [t(`${k}.none`), t(`${k}.noneDesc`)];
+  }
+
+  const persistent = Boolean(computer?.persistent);
+  const exists = persistent && computer != null && computer.state !== "none";
+  const idle = persistent && computer != null && !computer.busy && !running && pending == null;
+  const overLimit = exists && computer.disk_limit_bytes > 0 && computer.disk_bytes > computer.disk_limit_bytes;
+  const ratio = exists && computer.disk_limit_bytes > 0 ? Math.min(1, computer.disk_bytes / computer.disk_limit_bytes) : 0;
+
+  const act = async (action: "hibernate" | "reset") => {
+    if (action === "reset" && !(await confirm({ kind: "reset", description: t(`${k}.resetConfirm`) }))) return;
+    setPending(action);
+    setError("");
+    try {
+      await chatApi.computer(botId, action);
+    } catch (err) {
+      setError(t(`${k}.actionFailed`, { reason: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setPending(null);
+      onChanged();
+    }
+  };
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-computer="" data-computer-state={computer?.state ?? ""}>
+      <div className="flex items-start gap-2.5">
+        <Monitor size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.computerTitle")}</h3>
+            <span role="status" className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-700">
+              <span aria-hidden className={cx("h-2 w-2 rounded-full", dot, pulse && "animate-pulse")} />
+              {label}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">{desc}</p>
+          {exists && (
+            <div className="mt-2.5 space-y-1.5">
+              <div className="flex items-center justify-between gap-2 text-xs text-neutral-600">
+                <span>{t(`${k}.disk`, { used: formatBytes(computer.disk_bytes, lang), limit: formatBytes(computer.disk_limit_bytes, lang) })}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-white/10" aria-hidden>
+                <div className={cx("h-full rounded-full", overLimit ? "bg-red-500" : "bg-neutral-400 dark:bg-white/40")} style={{ width: `${String(Math.round(ratio * 100))}%` }} />
+              </div>
+              {computer.last_used_at && (
+                <p className="text-xs text-neutral-500">
+                  {t(`${k}.lastUsed`, { time: formatDateTime(computer.last_used_at, lang) })}
+                </p>
+              )}
+            </div>
+          )}
+          {overLimit && (
+            <p role="alert" className="mt-2 text-xs leading-5 text-red-600">
+              {t(`${k}.diskOver`)}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mt-2 text-xs leading-5 text-red-600">
+              {error}
+            </p>
+          )}
+          {exists && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!idle || computer.state !== "running"}
+                onClick={() => void act("hibernate")}
+                data-computer-action="hibernate"
+              >
+                {pending === "hibernate" ? t(`${k}.hibernating_`) : t(`${k}.hibernate`)}
+              </Button>
+              <Button type="button" variant="secondary" size="sm" disabled={!idle} onClick={() => void act("reset")} data-computer-action="reset">
+                {pending === "reset" ? t(`${k}.resetting`) : t(`${k}.reset`)}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+
 type ProfileTab = "activity" | "library";
 const PROFILE_TABS: ProfileTab[] = ["activity", "library"];
 
@@ -463,23 +598,7 @@ function ProfilePane({
                     {t("botChat.profile.activity.readonly")}
                   </p>
                 </section>
-                <section className="rounded-lg border border-neutral-200 p-3.5 dark:border-white/10" data-profile-computer="">
-                  <div className="flex items-start gap-2.5">
-                    <Monitor size={16} aria-hidden className="mt-0.5 shrink-0 text-neutral-500" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-[13px] font-semibold text-neutral-900">{t("botChat.profile.activity.computerTitle")}</h3>
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-700">
-                          <span aria-hidden className={cx("h-2 w-2 rounded-full", data.running ? "bg-emerald-500" : "bg-neutral-300 dark:bg-white/25")} />
-                          {t(data.running ? "botChat.profile.activity.running" : "botChat.profile.activity.asleep")}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs leading-5 text-neutral-500">
-                        {t(data.running ? "botChat.profile.activity.runningDesc" : "botChat.profile.activity.asleepDesc")}
-                      </p>
-                    </div>
-                  </div>
-                </section>
+<ComputerCard botId={bot.id} running={data.running} computer={data.computer ?? null} onChanged={onRetry} />
               </div>
             )}
             {tab === "library" &&

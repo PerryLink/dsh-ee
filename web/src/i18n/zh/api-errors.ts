@@ -228,4 +228,10 @@ export default {
     idempotency_conflict: "这条消息与之前的发送请求冲突，请重新发送",
     queue_full: "你排队中的云任务已达上限，请稍后再试",
   },
+  runtime_computer: {
+    busy: "云电脑正在工作或正在被操作，请稍后再试",
+    unsupported: "当前运行时不支持常驻云电脑，每轮任务都会使用一台新电脑",
+    provider_failed: "沙箱服务操作失败，请稍后再试",
+    not_found: "这个机器人还没有云电脑",
+  },
 };

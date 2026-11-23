@@ -221,4 +221,10 @@ export default {
     idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
     queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
   },
+  runtime_computer: {
+    busy: "The cloud computer is working or being changed right now. Try again shortly.",
+    unsupported: "This runtime doesn't keep cloud computers; every task uses a fresh one.",
+    provider_failed: "The sandbox service couldn't complete the operation. Try again later.",
+    not_found: "This bot doesn't have a cloud computer yet.",
+  },
 } satisfies Messages<typeof zhNs>;

@@ -1,0 +1,459 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hikariming/dsh-ee/server/internal/rbac"
+	"github.com/hikariming/dsh-ee/server/internal/runtime"
+	"github.com/hikariming/dsh-ee/server/internal/store"
+)
+
+// fakeComputers 是一个支持休眠 / 唤醒的假 provider：每台电脑有自己的文件系统，休眠中的电脑拒绝执行命令，
+// 所以文件能在下一轮读到，只可能是因为同一台电脑被唤醒了。
+type fakeComputers struct {
+	mu         sync.Mutex
+	boxes      map[string]*fakeBox
+	next       int
+	creates    int
+	ephemeral  int
+	wakes      int
+	hibernates int
+	disk       int64 // du 报告的 KB
+	tokens     []string
+	check      func(token string) // 每轮 DSH 运行时检查凭证
+}
+
+type fakeBox struct {
+	owner  *fakeComputers
+	id     string
+	paused bool
+	files  map[string]string
+	env    map[string]string
+}
+
+func (f *fakeComputers) newBox(env map[string]string) *fakeBox {
+	f.next++
+	b := &fakeBox{owner: f, id: "box-" + strconv.Itoa(f.next), files: map[string]string{}, env: env}
+	if f.boxes == nil {
+		f.boxes = map[string]*fakeBox{}
+	}
+	f.boxes[b.id] = b
+	return b
+}
+
+func (f *fakeComputers) Create(_ context.Context, spec runtime.SandboxSpec) (runtime.Sandbox, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ephemeral++
+	return f.newBox(spec.Env), nil
+}
+
+func (f *fakeComputers) CreatePersistent(_ context.Context, spec runtime.SandboxSpec) (runtime.PersistentSandbox, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.creates++
+	return f.newBox(spec.Env), nil
+}
+
+func (f *fakeComputers) Wake(_ context.Context, id string) (runtime.PersistentSandbox, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.boxes[id]
+	if !ok {
+		return nil, runtime.ErrSandboxGone
+	}
+	if b.paused {
+		b.paused = false
+		f.wakes++
+	}
+	return b, nil
+}
+
+func (f *fakeComputers) Hibernate(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.boxes[id]
+	if !ok {
+		return runtime.ErrSandboxGone
+	}
+	if !b.paused {
+		f.hibernates++
+	}
+	b.paused = true
+	return nil
+}
+
+func (f *fakeComputers) Remove(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.boxes, id)
+	return nil
+}
+
+func (b *fakeBox) ID() string { return b.id }
+
+func (b *fakeBox) Exec(_ context.Context, c runtime.Command) (runtime.Result, error) {
+	b.owner.mu.Lock()
+	if b.paused || b.owner.boxes[b.id] != b {
+		b.owner.mu.Unlock()
+		return runtime.Result{}, errors.New("sandbox is not running")
+	}
+	b.owner.mu.Unlock()
+	switch c.Args[0] {
+	case "rm":
+		for name := range b.files {
+			if strings.HasPrefix(name, c.Args[2]+"/") {
+				delete(b.files, name)
+			}
+		}
+		return runtime.Result{}, nil
+	case "mkdir":
+		return runtime.Result{}, nil
+	case "du":
+		return runtime.Result{Stdout: strconv.FormatInt(b.owner.disk, 10) + "\t" + c.Args[2] + "\n0\t" + c.Args[3] + "\n"}, nil
+	}
+	// 模拟 DSH：命令是 fake-dsh {prompt}；提示词里的 WRITE:<text> 写进工作目录，READ 读出来作为回复。
+	token := c.Env["DSH_EE_RUNTIME_TOKEN"]
+	b.owner.mu.Lock()
+	b.owner.tokens = append(b.owner.tokens, token)
+	check := b.owner.check
+	b.owner.mu.Unlock()
+	if check != nil {
+		check(token)
+	}
+	prompt := c.Args[len(c.Args)-1]
+	note := path.Join(c.Dir, "note.txt")
+	switch {
+	case strings.Contains(prompt, "WRITE:"):
+		text, _, _ := strings.Cut(prompt[strings.Index(prompt, "WRITE:")+6:], "\n")
+		b.files[note] = strings.TrimSpace(text)
+		return runtime.Result{Stdout: "saved"}, nil
+	case strings.Contains(prompt, "READ"):
+		if v, ok := b.files[note]; ok {
+			return runtime.Result{Stdout: "note: " + v}, nil
+		}
+		return runtime.Result{Stdout: "no note"}, nil
+	}
+	return runtime.Result{Stdout: "ok"}, nil
+}
+
+func (b *fakeBox) WriteFile(_ context.Context, name string, data []byte) error {
+	b.files[name] = string(data)
+	return nil
+}
+
+func (b *fakeBox) ListFiles(context.Context, string) ([]runtime.File, error) { return nil, nil }
+
+func (b *fakeBox) ReadFile(_ context.Context, name string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader(b.files[name])), nil
+}
+
+func (b *fakeBox) Destroy(ctx context.Context) error { return b.owner.Remove(ctx, b.id) }
+
+type computerTest struct {
+	t        *testing.T
+	s        *Server
+	bot      *store.RuntimeBot
+	employee int64
+	owner    func(string, string, string) *httptest.ResponseRecorder
+	admin    func(string, string, string) *httptest.ResponseRecorder
+}
+
+func newComputerTest(t *testing.T, provider runtime.Provider, policy runtime.ComputerPolicy) *computerTest {
+	t.Helper()
+	st := openAuthenticateTestStore(t)
+	ctx := context.Background()
+	if _, err := Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := st.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := st.GetRoleByCode(ctx, rbac.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &store.User{Username: "computer-owner", DisplayName: "Computer Owner"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserRoles(ctx, u.ID, []int64{role.ID}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, nil, Options{DataDir: t.TempDir(), Runtime: runtime.Settings{
+		Provider: provider, Image: "img", BaseURL: "https://gateway.example", Model: "company-chat",
+		Command: []string{"fake-dsh", "{prompt}"}, Computer: policy,
+	}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	on := true
+	bot := &store.RuntimeBot{OwnerID: u.ID, RunAsID: u.ID, Name: "Notes", Prompt: "placeholder", Schedule: "0 9 * * *", ReadOnly: true, DeliveryTarget: runtimeFeishuOwner}
+	if err := st.SaveRuntimeBot(ctx, bot, &on); err != nil {
+		t.Fatal(err)
+	}
+	return &computerTest{t: t, s: s, bot: bot, employee: u.ID, owner: runtimeTestClient(t, s, u.ID), admin: runtimeTestClient(t, s, admin.ID)}
+}
+
+// run 让机器人跑一轮手动任务，返回结束后的任务。
+func (c *computerTest) run(prompt string) *store.RuntimeTask {
+	c.t.Helper()
+	ctx := context.Background()
+	b := *c.bot
+	b.Prompt = prompt
+	if _, err := c.s.enqueueCloudBot(ctx, &b, ""); err != nil {
+		c.t.Fatal(err)
+	}
+	task, err := c.s.store.ClaimRuntimeTask(ctx, runtimeAttempts, 45*time.Second)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	c.s.runCloudClaim(ctx, task)
+	got, err := c.s.store.RuntimeTask(ctx, task.ID, c.employee)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return got
+}
+
+func (c *computerTest) profile() runtimeComputerView {
+	c.t.Helper()
+	rec := c.owner("GET", "/api/runtime/chat/bots/"+strconv.FormatInt(c.bot.ID, 10)+"/profile", "")
+	var out struct {
+		Computer runtimeComputerView `json:"computer"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+		c.t.Fatalf("profile: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	return out.Computer
+}
+
+func (c *computerTest) tokenValid(token string) bool {
+	_, err := c.s.resolveBearer(context.WithValue(context.Background(), runtimeTokenRouteKey{}, true), token, "")
+	return err == nil
+}
+
+func TestBotComputerSurvivesHibernateAndWake(t *testing.T) {
+	f := &fakeComputers{disk: 8}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond, DiskLimitBytes: 1 << 20})
+	f.check = func(token string) {
+		if !c.tokenValid(token) {
+			t.Error("the per-run credential must be valid while the run executes")
+		}
+	}
+	if v := c.profile(); !v.Persistent || v.State != store.RuntimeComputerNone {
+		t.Fatalf("initial computer = %+v", v)
+	}
+
+	first := c.run("WRITE:季度目标是 42")
+	if first.Status != store.RuntimeSucceeded || first.Summary != "saved" {
+		t.Fatalf("first run: %+v", first)
+	}
+	if f.creates != 1 || f.ephemeral != 0 || len(f.boxes) != 1 {
+		t.Fatalf("first run should create one persistent computer: creates=%d ephemeral=%d", f.creates, f.ephemeral)
+	}
+	if v := c.profile(); v.State != store.RuntimeComputerRunning || v.Busy || v.DiskBytes != 8<<10 {
+		t.Fatalf("computer after first run = %+v", v)
+	}
+	for _, b := range f.boxes {
+		if len(b.env) != 0 {
+			t.Fatal("persistent computer created with environment variables")
+		}
+	}
+
+	// 空闲超时后回收器把电脑休眠；休眠时上一轮的凭证已经吊销。
+	time.Sleep(5 * time.Millisecond)
+	c.s.reapCloudComputers(context.Background())
+	if f.hibernates != 1 {
+		t.Fatalf("idle computer was not hibernated (hibernates=%d)", f.hibernates)
+	}
+	if v := c.profile(); v.State != store.RuntimeComputerHibernated || v.HibernatedAt == nil {
+		t.Fatalf("computer after idle = %+v", v)
+	}
+	if c.tokenValid(f.tokens[0]) {
+		t.Fatal("a hibernated computer must not leave a valid credential behind")
+	}
+
+	second := c.run("READ the note")
+	if second.Status != store.RuntimeSucceeded || second.Summary != "note: 季度目标是 42" {
+		t.Fatalf("second run did not see the file from the first run: %+v", second)
+	}
+	if f.creates != 1 || f.wakes != 1 {
+		t.Fatalf("second run should wake the same computer: creates=%d wakes=%d", f.creates, f.wakes)
+	}
+	if len(f.tokens) != 2 || f.tokens[0] == f.tokens[1] {
+		t.Fatal("every run must get a fresh credential")
+	}
+	for _, token := range f.tokens {
+		if c.tokenValid(token) {
+			t.Fatal("credential still valid after its run finished")
+		}
+	}
+
+	// 手动休眠，再重置：重置后文件没了，下一轮是新电脑。
+	base := "/api/runtime/chat/bots/" + strconv.FormatInt(c.bot.ID, 10) + "/computer/"
+	if rec := c.owner("POST", base+"hibernate", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"hibernated"`) {
+		t.Fatalf("manual hibernate: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := c.owner("POST", base+"reset", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"none"`) {
+		t.Fatalf("reset: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if len(f.boxes) != 0 {
+		t.Fatal("reset did not remove the computer")
+	}
+	if third := c.run("READ the note"); third.Summary != "no note" || f.creates != 2 {
+		t.Fatalf("run after reset: %+v creates=%d", third, f.creates)
+	}
+	if rec := c.owner("POST", base+"reboot", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown action: HTTP %d", rec.Code)
+	}
+}
+
+func TestBotComputerBusyAndAdmin(t *testing.T) {
+	f := &fakeComputers{}
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Hour, DiskLimitBytes: 1 << 20})
+	ctx := context.Background()
+	c.run("WRITE:hello")
+
+	// 电脑被别的任务占着：手动操作返回 busy，新任务等不到就退回临时电脑。
+	if _, err := c.s.store.AcquireRuntimeBotComputer(ctx, c.bot.ID, "task:other", time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if rec := c.owner("POST", "/api/runtime/chat/bots/"+strconv.FormatInt(c.bot.ID, 10)+"/computer/hibernate", ""); rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), codeRuntimeComputerBusy) {
+		t.Fatalf("hibernate busy computer: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	wait := runtimeComputerWait
+	runtimeComputerWait = 0
+	defer func() { runtimeComputerWait = wait }()
+	if got := c.run("READ"); got.Status != store.RuntimeSucceeded || got.Summary != "no note" || f.ephemeral != 1 {
+		t.Fatalf("busy fallback: %+v ephemeral=%d", got, f.ephemeral)
+	}
+	if err := c.s.store.ReleaseRuntimeBotComputer(ctx, c.bot.ID, "task:other"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 管理员能看到并回收。
+	rec := c.admin("GET", "/api/admin/runtime/computers", "")
+	var list struct {
+		Persistent bool                   `json:"persistent"`
+		Computers  []runtimeAdminComputer `json:"computers"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || !list.Persistent || len(list.Computers) != 1 ||
+		list.Computers[0].BotID != c.bot.ID || list.Computers[0].BotName != "Notes" || list.Computers[0].State != store.RuntimeComputerRunning {
+		t.Fatalf("admin list: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := c.owner("GET", "/api/admin/runtime/computers", ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("employee reading admin list: HTTP %d", rec.Code)
+	}
+	path := "/api/admin/runtime/computers/" + strconv.FormatInt(c.bot.ID, 10)
+	if rec := c.admin("POST", path+"/hibernate", ""); rec.Code != http.StatusOK || f.hibernates != 1 {
+		t.Fatalf("admin hibernate: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := c.admin("DELETE", path, ""); rec.Code != http.StatusOK || len(f.boxes) != 0 {
+		t.Fatalf("admin reclaim: HTTP %d %s (boxes=%d)", rec.Code, rec.Body.String(), len(f.boxes))
+	}
+	if rec := c.admin("DELETE", "/api/admin/runtime/computers/999999", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("reclaim missing: HTTP %d", rec.Code)
+	}
+}
+
+func TestBotComputerDiskLimitAndRetention(t *testing.T) {
+	f := &fakeComputers{disk: 4096} // 4 MB
+	c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond, DiskLimitBytes: 1 << 20, Retention: time.Millisecond})
+	if got := c.run("WRITE:big"); got.Status != store.RuntimeSucceeded {
+		t.Fatalf("first run: %+v", got)
+	}
+	got := c.run("READ")
+	if got.Status != store.RuntimeFailed || !strings.Contains(got.Error, "disk limit") || got.Attempts != 1 {
+		t.Fatalf("over-limit run should fail terminally: %+v", got)
+	}
+	// 休眠超过保留期的电脑会被回收。
+	time.Sleep(5 * time.Millisecond)
+	c.s.reapCloudComputers(context.Background())
+	if f.hibernates != 1 {
+		t.Fatalf("hibernates = %d", f.hibernates)
+	}
+	time.Sleep(5 * time.Millisecond)
+	c.s.reapCloudComputers(context.Background())
+	if len(f.boxes) != 0 {
+		t.Fatal("computer past retention was not reclaimed")
+	}
+	if v := c.profile(); v.State != store.RuntimeComputerNone || v.DiskBytes != 0 {
+		t.Fatalf("after reclaim = %+v", v)
+	}
+	f.disk = 4
+	if got := c.run("READ"); got.Status != store.RuntimeSucceeded || f.creates != 2 {
+		t.Fatalf("run after reclaim: %+v", got)
+	}
+}
+
+// 不支持休眠 / 唤醒的 provider（或关闭了常驻）退回每轮新建、跑完销毁，面板如实显示。
+func TestBotComputerUnsupportedProviderFallsBack(t *testing.T) {
+	m := &memoryRuntime{run: func(runtime.Command) error { return nil }}
+	c := newComputerTest(t, m, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Minute})
+	if got := c.run("anything"); got.Status != store.RuntimeSucceeded || !m.destroyed {
+		t.Fatalf("fallback run: %+v destroyed=%v", got, m.destroyed)
+	}
+	if v := c.profile(); v.Persistent || v.State != store.RuntimeComputerNone {
+		t.Fatalf("profile for unsupported provider = %+v", v)
+	}
+	if _, err := c.s.store.RuntimeBotComputer(context.Background(), c.bot.ID); !notFound(err) {
+		t.Fatalf("fallback must not record a computer: %v", err)
+	}
+	if rec := c.owner("POST", "/api/runtime/chat/bots/"+strconv.FormatInt(c.bot.ID, 10)+"/computer/hibernate", ""); rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), codeRuntimeComputerUnsupported) {
+		t.Fatalf("hibernate unsupported: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+
+	f := &fakeComputers{}
+	off := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: false})
+	off.run("WRITE:x")
+	if f.creates != 0 || f.ephemeral != 1 || len(f.boxes) != 0 {
+		t.Fatalf("persistent=off must create per run: creates=%d ephemeral=%d boxes=%d", f.creates, f.ephemeral, len(f.boxes))
+	}
+}
+
+// TestLiveBotComputer 用真实的 OpenSandbox 跑完整的工作流：第一轮在电脑里写文件，回收器让它休眠，
+// 第二轮唤醒后读出同一个文件。需要 DSH_EE_TEST_OPENSANDBOX_URL / _KEY 和数据库。
+func TestLiveBotComputer(t *testing.T) {
+	base := os.Getenv("DSH_EE_TEST_OPENSANDBOX_URL")
+	if base == "" {
+		t.Skip("DSH_EE_TEST_OPENSANDBOX_URL is not set")
+	}
+	provider, err := runtime.NewOpenSandbox(base, os.Getenv("DSH_EE_TEST_OPENSANDBOX_KEY"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newComputerTest(t, provider, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Millisecond, DiskLimitBytes: 64 << 20})
+	c.s.opts.Runtime.Image = "alpine:3.22"
+	c.s.opts.Runtime.Command = []string{"sh", "-c", `case "$1" in *WRITE*) echo 'quarter goal 42' > note.txt; echo saved;; *) cat note.txt;; esac`, "sh", "{prompt}"}
+	t.Cleanup(func() {
+		_, _ = c.s.cloudComputerAction(context.Background(), c.bot.ID, computerReset, "test", nil)
+	})
+	if got := c.run("WRITE a note"); got.Status != store.RuntimeSucceeded || got.Summary != "saved" {
+		t.Fatalf("first run: %+v", got)
+	}
+	time.Sleep(5 * time.Millisecond)
+	c.s.reapCloudComputers(context.Background())
+	if v := c.profile(); v.State != store.RuntimeComputerHibernated {
+		t.Fatalf("after idle: %+v", v)
+	}
+	if got := c.run("READ the note"); got.Status != store.RuntimeSucceeded || got.Summary != "quarter goal 42" {
+		t.Fatalf("second run: %+v", got)
+	}
+	if v := c.profile(); v.State != store.RuntimeComputerRunning || v.DiskBytes <= 0 {
+		t.Fatalf("after second run: %+v", v)
+	}
+}

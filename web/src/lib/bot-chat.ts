@@ -63,11 +63,32 @@ export interface ChatBotArtifact extends ChatArtifact {
   created_at?: string | null;
 }
 
-/** 机器人资料：每日定时任务（UTC cron）、是否开启、云端电脑是否在运行、生成过的文件。 */
+/**
+ * 机器人自己的常驻云电脑。none：还没有（下一轮新建）；waking：正在新建或从休眠恢复；running：开着；
+ * hibernating：正在休眠；hibernated：已休眠（文件保留，下一轮自动唤醒）。
+ */
+export type ChatComputerState = "none" | "waking" | "running" | "hibernating" | "hibernated";
+
+export interface ChatComputer {
+  /** 为假：这个运行时每轮都用一台新电脑，没有休眠 / 唤醒。 */
+  persistent: boolean;
+  state: ChatComputerState;
+  /** 正被一个任务或操作占用。 */
+  busy: boolean;
+  disk_bytes: number;
+  disk_limit_bytes: number;
+  idle_timeout_seconds: number;
+  last_used_at?: string | null;
+  hibernated_at?: string | null;
+}
+
+/** 机器人资料：每日定时任务（UTC cron）、是否开启、是否有任务在跑、云电脑状态、生成过的文件。 */
 export interface ChatBotProfile {
   schedule: string;
   schedule_enabled: boolean;
   running: boolean;
+  /** 旧后端没有这个字段。 */
+  computer?: ChatComputer | null;
   artifacts: ChatBotArtifact[];
 }
 
@@ -93,6 +114,8 @@ export const chatApi = {
   send: (id: ChatId, content: string, idempotencyKey: string) =>
     request<ChatTurn>("POST", `${base}/conversations/${enc(id)}/messages`, { content, idempotency_key: idempotencyKey }),
   artifacts: (taskId: ChatId) => request<ChatArtifact[] | null>("GET", `${tasksBase}/${enc(taskId)}/artifacts`).then((x) => x ?? []),
+  /** 立即休眠（文件保留）或重置（删除整台电脑和其中的文件）。 */
+  computer: (botId: ChatId, action: "hibernate" | "reset") => request<ChatComputer>("POST", `${base}/bots/${enc(botId)}/computer/${action}`),
   /** 产物下载地址：只在员工点击时访问，页面不会自动下载。 */
   artifactUrl: (taskId: ChatId, artifactId: ChatId) => `${tasksBase}/${enc(taskId)}/artifacts/${enc(artifactId)}`,
 };
