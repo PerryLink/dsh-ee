@@ -24,7 +24,7 @@ func TestPackageSourcePublication(t *testing.T) {
 	revision := parent + "/revisions/abc"
 	put := func(file, hash string, owner int64, required, archives []string) error {
 		f := PackageSourceFile{Path: revision + "/files/" + file, BlobKey: hash, Size: 5, UploaderID: owner}
-		return st.SavePackageSourceFile(ctx, source.ID, "lib/_/_", revision, parent, f, false, required, archives)
+		return st.SavePackageSourceFile(ctx, source.ID, "lib/_/_", revision, parent, f, false, "", required, archives)
 	}
 	must := func(err error, want error) {
 		t.Helper()

@@ -97,6 +97,17 @@ func TestPackageSources(t *testing.T) {
 	}
 	request("GET", files, "", reader, nil, 200)
 	request("GET", files+"/conanfile.py", "", reader, nil, 200)
+	const binaryFiles = recipe + "/revisions/abc/packages/0123/revisions/def/files"
+	request("PUT", binaryFiles+"/conan_package.tgz", "gzip", writer, nil, 201)
+	request("PUT", binaryFiles+"/conaninfo.txt", "info", writer, nil, 201)
+	request("PUT", binaryFiles+"/conanmanifest.txt", "1\n", writer, nil, 201)
+	request("PUT", binaryFiles+"/conan_package.txz", "xz", writer, nil, 201)
+	content, _ = request("GET", binaryFiles, "", reader, nil, 200)
+	if strings.Contains(content, "conan_package.tgz") || !strings.Contains(content, "conan_package.txz") {
+		t.Fatalf("expected only the replacement archive: %q", content)
+	}
+	request("GET", binaryFiles+"/conan_package.tgz", "", reader, nil, 404)
+	request("GET", binaryFiles+"/conan_package.txz", "", reader, nil, 200)
 	code, body = admin.do("GET", sources+"/raw/files/artifacts", nil, nil)
 	expect(t, "list artifacts", code, 200, body)
 	if !strings.Contains(string(body), "releases/File.html") {

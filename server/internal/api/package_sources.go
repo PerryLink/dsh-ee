@@ -298,7 +298,7 @@ func (s *Server) putPackageFile(w http.ResponseWriter, r *http.Request, p *Princ
 		}
 	}
 	err = s.store.SavePackageSourceFile(r.Context(), src.ID, namespace, conan.Revision, conan.Parent,
-		store.PackageSourceFile{Path: name, BlobKey: digest.Key, Size: digest.Size, UploaderID: p.User.ID}, mutable, required, archives)
+		store.PackageSourceFile{Path: name, BlobKey: digest.Key, Size: digest.Size, UploaderID: p.User.ID}, mutable, conan.Archive, required, archives)
 	if err != nil {
 		s.packageSourceErr(w, r, err)
 		return

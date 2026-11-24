@@ -80,7 +80,7 @@ func (s *Store) ListPackageSources(ctx context.Context) ([]PackageSource, error)
 }
 
 // SavePackageSourceFile serializes writes to a Conan recipe namespace, or to one Raw path.
-func (s *Store) SavePackageSourceFile(ctx context.Context, sourceID int64, namespace, revision, parent string, f PackageSourceFile, mutable bool, required, archives []string) error {
+func (s *Store) SavePackageSourceFile(ctx context.Context, sourceID int64, namespace, revision, parent string, f PackageSourceFile, mutable bool, archive string, required, archives []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -112,6 +112,13 @@ func (s *Store) SavePackageSourceFile(ctx context.Context, sourceID int64, names
 		}
 	default:
 		return err
+	}
+	if archive != "" {
+		prefix := revision + "/files/" + archive
+		if _, err := tx.ExecContext(ctx, "DELETE FROM package_source_files WHERE source_id=? AND path>=? AND path<? AND path<>?",
+			sourceID, prefix+".", prefix+"/", f.Path); err != nil {
+			return err
+		}
 	}
 	if required != nil {
 		for _, file := range required {

@@ -19,6 +19,7 @@ type ConanPath struct {
 	Parent    string
 	Revision  string
 	File      string
+	Archive   string
 	Namespace string
 	Binary    bool
 }
@@ -76,7 +77,8 @@ func ParseConanPath(s []string) (v ConanPath, ok bool) {
 		return v, true
 	}
 	if conanArchive.MatchString(v.File) {
-		return v, v.Binary == strings.HasPrefix(v.File, "conan_package.")
+		v.Archive, _, _ = strings.Cut(v.File, ".")
+		return v, v.Binary == (v.Archive == "conan_package")
 	}
 	return v, v.File == "conanmanifest.txt" || v.Binary && v.File == "conaninfo.txt" || !v.Binary && v.File == "conanfile.py"
 }
