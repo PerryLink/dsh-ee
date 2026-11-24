@@ -232,6 +232,19 @@ export interface ApiKey {
 
 // ---- npm 源与能力 ----
 
+export interface PackageSource {
+  name: string;
+  protocol: "conan" | "raw";
+  mode: "hosted" | "proxy";
+  upstream_url?: string;
+}
+
+export interface PackageArtifact {
+  path: string;
+  size: number;
+  updated_at: string;
+}
+
 /** 自动检查的一项：key 与 params 交给 i18n 渲染（registry.scan.*）。 */
 export interface ScanItem {
   key: string;
@@ -2276,6 +2289,14 @@ export const api = {
   tarballUrl: (name: string, version: string) => `/api/admin/tarball?name=${encName(name)}&version=${encodeURIComponent(version)}`,
 
   registryOverview: () => request<RegistryOverview>("GET", "/api/admin/registry"),
+  packageSources: () => request<PackageSource[]>("GET", "/api/admin/registry/sources"),
+  createPackageSource: (source: PackageSource) => request<PackageSource>("POST", "/api/admin/registry/sources", source),
+  updatePackageSource: (source: PackageSource, upstream_url: string) =>
+    request<PackageSource>("PATCH", `/api/admin/registry/sources/${source.protocol}/${encodeURIComponent(source.name)}`, { upstream_url }),
+  packageArtifacts: (source: PackageSource, after: string) =>
+    request<{ items: PackageArtifact[]; next: string }>(
+      "GET", `/api/admin/registry/sources/${source.protocol}/${encodeURIComponent(source.name)}/artifacts?after=${encodeURIComponent(after)}`,
+    ),
   checkRegistry: () =>
     request<{ ok: boolean; latency_ms?: number; status?: number; message?: string; upstream?: string }>("POST", "/api/admin/registry/check"),
 

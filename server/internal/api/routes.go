@@ -484,6 +484,10 @@ func (s *Server) routes() []route {
 		// npm 源与上游预载
 		prm("GET /api/admin/registry", s.handleRegistryOverview, rbac.RegistryManage, rbac.UpstreamManage, rbac.DashboardView),
 		prm("POST /api/admin/registry/check", s.handleRegistryCheck, rbac.RegistryManage),
+		prm("GET /api/admin/registry/sources", s.handleListPackageSources, rbac.RegistryManage),
+		prm("POST /api/admin/registry/sources", s.handleCreatePackageSource, rbac.RegistryManage),
+		prm("PATCH /api/admin/registry/sources/{protocol}/{source}", s.handleUpdatePackageSource, rbac.RegistryManage),
+		prm("GET /api/admin/registry/sources/{protocol}/{source}/artifacts", s.handlePackageArtifacts, rbac.RegistryManage),
 		prm("GET /api/admin/npm-tokens", s.handleAllNpmTokens, rbac.RegistryManage),
 		prm("DELETE /api/admin/npm-tokens/{id}", s.handleRevokeNpmToken, rbac.RegistryManage),
 		prm("GET /api/admin/upstream/feed", s.handleUpstreamFeed, rbac.UpstreamManage),
@@ -496,6 +500,8 @@ func (s *Server) routes() []route {
 
 		// npm 协议与 DSH 插件索引
 		pub("/npm/", s.handleNpm),
+		pub("/conan/", s.handleConanSource),
+		pub("/raw/", s.handleRawSource),
 		pub("GET /index/dsh-index.json", s.handleDshIndex),
 		pub("GET /setup.sh", s.handleSetupSh),
 		pub("GET /setup.ps1", s.handleSetupPs1),

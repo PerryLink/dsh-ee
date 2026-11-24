@@ -200,6 +200,7 @@ type Server struct {
 	trustedProxies []netip.Prefix
 	upstream       *http.Client
 	registry       *registry.Service
+	packageProxy   *registry.PackageProxy
 	settings       settingsCache
 	// 能力目录变化的通知（DSH 的 MCP 长连接据此刷新工具）
 	hub hubBroker
@@ -312,6 +313,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()
 	s.registry = s.newRegistry()
+	s.packageProxy = registry.NewPackageProxy()
 	s.routeTable = s.routes()
 	s.agentTools = buildAgentTools(s.routeTable)
 	return s
@@ -402,7 +404,7 @@ func (s *Server) Handler() http.Handler {
 	// securityHeaders 在最外层，harnessAPI 直接写出的响应同样带文档安全头。
 	// 每令牌限流（DSH_EE_RATE_LIMIT）放在 cors 里面，429 也带 CORS 头，浏览器能读到 Retry-After；
 	// requestID 在最外层，日志与响应用同一个请求号。
-	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(runtimeTokenRoute(mux)))))))
+	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(runtimeTokenRoute(packageSourcePaths(mux))))))))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {

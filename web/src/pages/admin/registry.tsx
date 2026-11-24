@@ -11,6 +11,7 @@ import { Badge, Button, Card, CardHeader, CopyBox, cx, Field, inputBase, inputCl
 import { Trans, useTranslation } from "react-i18next";
 import { PageLink } from "../../lib/menus";
 import DependencyMirrorsCard from "./dependency-mirrors";
+import PackageSourcesCard from "./package-sources";
 
 const upstreamLabel: Record<Settings["upstream"]["registry"], string> = {
   npmmirror: "registry.npmmirror.com",
@@ -92,6 +93,8 @@ export default function AdminRegistry() {
           </Button>
         }
       />
+
+      <PackageSourcesCard />
 
       <LoadState loading={overview.loading && !overview.data} error={overview.error} onRetry={overview.reload}>
         <StatStrip cols={4}>
