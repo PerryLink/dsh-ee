@@ -240,6 +240,16 @@ func packageAttachment(w http.ResponseWriter, file string) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
+func packageProxyAttachment(w http.ResponseWriter, file string, resp *http.Response) {
+	packageAttachment(w, file)
+	if resp.StatusCode == http.StatusPartialContent {
+		mediaType, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		if err == nil && mediaType == "multipart/byteranges" && params["boundary"] != "" {
+			w.Header().Set("Content-Type", mime.FormatMediaType(mediaType, map[string]string{"boundary": params["boundary"]}))
+		}
+	}
+}
+
 func (s *Server) getPackageFile(w http.ResponseWriter, r *http.Request, src store.PackageSource, name string) {
 	if s.registry == nil {
 		writeErr(w, http.StatusServiceUnavailable, "Package storage is not initialized")
@@ -334,7 +344,7 @@ func (s *Server) proxyPackage(w http.ResponseWriter, r *http.Request, src store.
 		return
 	}
 	if attachment {
-		packageAttachment(w, segments[len(segments)-1])
+		packageProxyAttachment(w, segments[len(segments)-1], resp)
 	} else {
 		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	}
