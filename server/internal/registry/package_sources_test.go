@@ -31,6 +31,19 @@ func TestPackageSourcePaths(t *testing.T) {
 }
 
 func TestConanPathAndPublication(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		want          bool
+	}{
+		{strings.Repeat("a", 101), "1.0", true},
+		{strings.Repeat("a", 102), "1.0", false},
+		{strings.Repeat("a", 101), strings.Repeat("1", 98), true},
+		{strings.Repeat("a", 101), strings.Repeat("1", 99), false},
+	} {
+		if _, ok := ParseConanPath([]string{"v2", "conans", tc.name, tc.version, "_", "_", "latest"}); ok != tc.want {
+			t.Errorf("name length %d, version length %d: accepted = %t, want %t", len(tc.name), len(tc.version), ok, tc.want)
+		}
+	}
 	route, ok := ParseConanPath(strings.Split("v2/conans/lib/1.0/_/_/revisions/abc/packages/0123/revisions/def/files/conan_package.tgz", "/"))
 	if !ok || !route.Binary || route.Operation != "file" || route.Namespace != "lib/_/_" || route.File != "conan_package.tgz" ||
 		route.Parent != "conans/lib/1.0/_/_/revisions/abc/packages/0123" {

@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var conanComponent = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_+.-]{0,50}$`)
+var conanComponent = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_+.-]{0,100}$`)
 var conanDigest = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
 var conanArchive = regexp.MustCompile(`^conan_(export|sources|package)\.(tgz|txz|tzst|tar\.gz|tar\.xz|tar\.zst)$`)
 
@@ -44,6 +44,9 @@ func ParseConanPath(s []string) (v ConanPath, ok bool) {
 		}
 	}
 	v.Parent = strings.Join(s[1:6], "/")
+	if len(ConanReference(v.Parent)) > 200 {
+		return v, false
+	}
 	v.Namespace = strings.Join([]string{s[2], s[4], s[5]}, "/")
 	rest := s[6:]
 	if len(rest) >= 4 && rest[0] == "revisions" && conanDigest.MatchString(rest[1]) && rest[2] == "packages" && conanDigest.MatchString(rest[3]) {
