@@ -133,7 +133,10 @@ func ConanReference(parent string) string {
 	}
 	ref := parts[1] + "/" + parts[2]
 	if parts[3] != "_" || parts[4] != "_" {
-		ref += "@" + parts[3] + "/" + parts[4]
+		ref += "@" + parts[3]
+		if parts[4] != "_" {
+			ref += "/" + parts[4]
+		}
 	}
 	return ref
 }

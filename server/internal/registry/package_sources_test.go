@@ -44,6 +44,15 @@ func TestConanPathAndPublication(t *testing.T) {
 			t.Errorf("name length %d, version length %d: accepted = %t, want %t", len(tc.name), len(tc.version), ok, tc.want)
 		}
 	}
+	longName, user := strings.Repeat("a", 101), "team"
+	for _, n := range []int{199, 200, 201} {
+		version := strings.Repeat("1", n-len(longName)-len(user)-2)
+		ref := longName + "/" + version + "@" + user
+		route, ok := ParseConanPath([]string{"v2", "conans", longName, version, user, "_", "latest"})
+		if ok != (n <= 200) || ok && ConanReference(route.Parent) != ref {
+			t.Errorf("reference length %d with no channel: accepted = %t, reference = %q", n, ok, ConanReference(route.Parent))
+		}
+	}
 	route, ok := ParseConanPath(strings.Split("v2/conans/lib/1.0/_/_/revisions/abc/packages/0123/revisions/def/files/conan_package.tgz", "/"))
 	if !ok || !route.Binary || route.Operation != "file" || route.Namespace != "lib/_/_" || route.File != "conan_package.tgz" ||
 		route.Parent != "conans/lib/1.0/_/_/revisions/abc/packages/0123" {
