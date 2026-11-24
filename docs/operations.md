@@ -16,6 +16,10 @@
 | HTTPS | dsh-ee 只提供 HTTP；TLS 在反向代理/负载均衡终止 | `deploy/README.md`「HTTPS 与访问地址」 |
 | 外网 | 不必须。上游模型、npm 回源、DSH 分发、dshfind 目录都可能需要外网；隔离网用离线包导入 | `server/README.md`「npm 源」 |
 
+### Conan 与 Raw 制品源
+
+管理后台「分发与源 → npm 源」可配置独立的 Conan 2 和 Raw 托管源与只读代理；部署的反向代理需将 `/conan/` 和 `/raw/` 转发到 dsh-ee，并按需要调整请求体大小和超时。Raw 代理只连接公网 HTTP(S) 上游，Conan 代理指向 ConanCenter；均不会持久化代理制品。托管制品保存在数据库对应的数据目录中，备份和多实例共享存储时与 npm tarball 一起处理。命令和令牌权限见 [服务端 README](../server/README.md#conan-与-raw-源)。
+
 ### 员工 DSH 依赖镜像（Python / Java）
 
 在管理后台「npm 源」底部配置 PyPI / Maven 镜像地址，例如 `https://nexus.corp/repository/pypi-group/simple`、`https://nexus.corp/repository/maven-public/`，按需填写用户名和密码 / 令牌，再显式保存。密码加密存库，设置接口不回显；留空保持原密码，清空地址并保存会移除该项和凭据。

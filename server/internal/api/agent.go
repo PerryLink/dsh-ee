@@ -213,6 +213,8 @@ var agentExcluded = map[string]string{
 	"GET /dl/connect/{file}":                    "接入插件 tarball 下载，不适合给模型",
 	"/mcp":                                      "MCP 协议入口",
 	"/npm/":                                     "npm 协议入口",
+	"/conan/":                                   "Conan 协议入口",
+	"/raw/":                                     "Raw 制品协议入口",
 	"GET /index/dsh-index.json":                 "DSH 插件索引协议入口",
 	"GET /setup.sh":                             "安装脚本",
 	"GET /setup.ps1":                            "安装脚本",
@@ -391,6 +393,7 @@ func init() {
 		"GET /api/admin/packages", "GET /api/admin/packages/{name...}", "PATCH /api/admin/packages/{name...}",
 		"GET /api/admin/review", "POST /api/admin/review", "GET /api/admin/tarball",
 		"GET /api/admin/registry", "POST /api/admin/registry/check", "GET /api/admin/npm-tokens", "DELETE /api/admin/npm-tokens/{id}",
+		"GET /api/admin/registry/sources", "POST /api/admin/registry/sources", "PATCH /api/admin/registry/sources/{protocol}/{source}", "GET /api/admin/registry/sources/{protocol}/{source}/artifacts",
 		"GET /api/admin/upstream/feed", "POST /api/admin/upstream/sync", "GET /api/admin/upstream/jobs", "GET /api/admin/upstream/jobs/{id}", "POST /api/admin/upstream/check-updates",
 	} {
 		agentPending[p] = "管理侧工具，阶段 C 开放"
