@@ -146,13 +146,13 @@ func packageSourcePaths(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) packagePrincipal(w http.ResponseWriter, r *http.Request, token string, publish, login bool) *Principal {
+func (s *Server) packagePrincipal(w http.ResponseWriter, r *http.Request, token string, read, publish, login bool) *Principal {
 	if strings.HasPrefix(token, "ee_at_") {
 		p, err := s.resolveBearer(r.Context(), token, s.clientIP(r), r.Header.Get("X-DshEE-Client"), r.Header.Get("X-DshEE-Host"))
 		if err == nil {
 			canRead := p.Access.Has(rbac.RegistryUse) && p.Scopes.Has(rbac.ScopeRegistryRead)
 			canPublish := p.Access.Has(rbac.RegistryPublish) && p.Scopes.Has(rbac.ScopeRegistryPublish)
-			if (!publish && canRead) || (publish && canPublish) || (login && canPublish) {
+			if (read && canRead) || (publish && canPublish) {
 				return p
 			}
 			writeErr(w, http.StatusForbidden, "Token has insufficient registry permissions")
@@ -213,7 +213,7 @@ func (s *Server) handleRawSource(w http.ResponseWriter, r *http.Request) {
 	if s.demoSiteNpmWrite(w, r) {
 		return
 	}
-	p := s.packagePrincipal(w, r, packageBearer(r), r.Method == http.MethodPut, false)
+	p := s.packagePrincipal(w, r, packageBearer(r), r.Method != http.MethodPut, r.Method == http.MethodPut, false)
 	if p == nil {
 		return
 	}

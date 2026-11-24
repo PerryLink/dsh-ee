@@ -54,7 +54,7 @@ func (s *Server) handleConanSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, token, _ := r.BasicAuth()
-		if s.packagePrincipal(w, r, token, false, true) != nil {
+		if s.packagePrincipal(w, r, token, true, true, true) != nil {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = io.WriteString(w, token)
 		}
@@ -63,7 +63,9 @@ func (s *Server) handleConanSource(w http.ResponseWriter, r *http.Request) {
 	if s.demoSiteNpmWrite(w, r) {
 		return
 	}
-	p := s.packagePrincipal(w, r, packageBearer(r), r.Method == http.MethodPut, false)
+	upload := r.Method == http.MethodPut
+	uploadPreflight := src.Mode == "hosted" && (route.Operation == "credentials" || route.Operation == "revisions")
+	p := s.packagePrincipal(w, r, packageBearer(r), !upload, upload || uploadPreflight, false)
 	if p == nil {
 		return
 	}

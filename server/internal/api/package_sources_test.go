@@ -41,6 +41,7 @@ func TestPackageSources(t *testing.T) {
 		return decodeAs[map[string]any](t, body)["token"].(string)
 	}
 	writer, reader := mint("registry:read", "registry:publish"), mint("registry:read")
+	publisher := mint("registry:publish")
 	request := func(method, path, contents, token string, headers map[string]string, want int) (string, http.Header) {
 		t.Helper()
 		req, err := http.NewRequest(method, ts.URL+path, strings.NewReader(contents))
@@ -85,6 +86,8 @@ func TestPackageSources(t *testing.T) {
 	}
 	const recipe = "/conan/cpp/v2/conans/lib/1.0/_/_"
 	const files = recipe + "/revisions/abc/files"
+	request("GET", "/conan/cpp/v2/users/check_credentials", "", publisher, nil, 200)
+	request("GET", recipe+"/revisions", "", publisher, nil, 404)
 	request("PUT", files+"/conanfile.py", "recipe", writer, map[string]string{"X-Checksum-Sha1": "bad"}, 400)
 	request("PUT", files+"/conanfile.py", "recipe", writer, nil, 201)
 	request("GET", recipe+"/latest", "", reader, nil, 404)
@@ -97,10 +100,14 @@ func TestPackageSources(t *testing.T) {
 	}
 	request("GET", files, "", reader, nil, 200)
 	request("GET", files+"/conanfile.py", "", reader, nil, 200)
+	request("GET", recipe+"/revisions", "", publisher, nil, 200)
+	request("GET", files+"/conanfile.py", "", publisher, nil, 403)
+	request("GET", "/conan/center/v2/users/check_credentials", "", publisher, nil, 403)
 	const binaryFiles = recipe + "/revisions/abc/packages/0123/revisions/def/files"
 	request("PUT", binaryFiles+"/conan_package.tgz", "gzip", writer, nil, 201)
 	request("PUT", binaryFiles+"/conaninfo.txt", "info", writer, nil, 201)
 	request("PUT", binaryFiles+"/conanmanifest.txt", "1\n", writer, nil, 201)
+	request("GET", recipe+"/revisions/abc/packages/0123/revisions", "", publisher, nil, 200)
 	request("PUT", binaryFiles+"/conan_package.txz", "xz", writer, nil, 201)
 	content, _ = request("GET", binaryFiles, "", reader, nil, 200)
 	if strings.Contains(content, "conan_package.tgz") || !strings.Contains(content, "conan_package.txz") {
