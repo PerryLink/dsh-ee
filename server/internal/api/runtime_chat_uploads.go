@@ -100,6 +100,10 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		writeErrCode(w, http.StatusRequestEntityTooLarge, codeRuntimeChatUploadTooLarge, map[string]any{"max_mb": runtimeChatUploadMax >> 20},
 			fmt.Sprintf("单个文件不能超过 %d MB", runtimeChatUploadMax>>20))
 	}
+	tooManyPending := func() {
+		writeErrCode(w, http.StatusTooManyRequests, codeRuntimeChatUploadQuota, map[string]any{"max_mb": runtimeChatUploadPendingMax >> 20},
+			"还没发出的附件太多了，先发出或删掉一些再上传")
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, runtimeChatUploadMax+1<<20)
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -130,14 +134,15 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 	name := runtimeChatUploadFileName(header.Filename)
 	// 先清过期的，免得一天前扔下的附件一直占着额度
 	s.pruneRuntimeChatUploads(r.Context())
+	// 预检只看原件大小（正文要转换完才知道多大），先拦掉明显超限的，省掉一次转换；
+	// 真正的配额检查在写库事务里原子完成（CreateRuntimeChatUploadWithQuota）。
 	pending, err := s.store.RuntimeChatPendingUploadBytes(r.Context(), owner)
 	if err != nil {
 		s.internalErr(w, r, err)
 		return
 	}
 	if pending+int64(len(data)) > runtimeChatUploadPendingMax {
-		writeErrCode(w, http.StatusTooManyRequests, codeRuntimeChatUploadQuota, map[string]any{"max_mb": runtimeChatUploadPendingMax >> 20},
-			"还没发出的附件太多了，先发出或删掉一些再上传")
+		tooManyPending()
 		return
 	}
 	release, ok := beginKBConvert()
@@ -177,8 +182,14 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		s.internalErr(w, r, err)
 		return
 	}
-	if err := s.store.CreateRuntimeChatUpload(r.Context(), u); err != nil {
+	if err := s.store.CreateRuntimeChatUploadWithQuota(r.Context(), u, runtimeChatUploadPendingMax); err != nil {
 		s.removeRuntimeChatUpload(*u)
+		// 预检只按原件大小算；转换出的正文也算额度，所以「预检放行、写库时才超」是可能的，
+		// 这时照样回前端认识的配额错误码，并把已经写下的两个文件删掉。
+		if errors.Is(err, store.ErrRuntimeChatUploadQuota) {
+			tooManyPending()
+			return
+		}
 		s.internalErr(w, r, err)
 		return
 	}

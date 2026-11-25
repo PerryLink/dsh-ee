@@ -18,6 +18,9 @@ const RuntimeChatUploadsPerMessage = 5
 // ErrRuntimeChatUploadUnavailable 表示消息引用的附件不存在、不属于本人这条对话，或已经随别的消息发出。
 var ErrRuntimeChatUploadUnavailable = errors.New("runtime chat upload unavailable")
 
+// ErrRuntimeChatUploadQuota 表示这位员工还没发出的附件（原件 + 正文）合计会超过上限，没有写库。
+var ErrRuntimeChatUploadQuota = errors.New("runtime chat upload quota exceeded")
+
 // RuntimeChatUpload 是一个附件。StorageKey 是 DSH_EE_DATA_DIR/runtime-chat-uploads 下的文件名前缀：
 // <key> 是原文件，<key>.md 是转出的正文。
 type RuntimeChatUpload struct {
@@ -49,16 +52,75 @@ func scanRuntimeChatUploads(rows *sql.Rows) ([]RuntimeChatUpload, error) {
 	return out, rows.Err()
 }
 
-// CreateRuntimeChatUpload 记下一个还没发出的附件。调用方先确认对话对这位员工可见。
-func (s *Store) CreateRuntimeChatUpload(ctx context.Context, u *RuntimeChatUpload) error {
+// sqlExecer 是 *sql.DB 与 *sql.Tx 共有的写入口。
+type sqlExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// insertRuntimeChatUpload 写下一行附件记录（不查配额），回填 ID 和创建时间。
+func insertRuntimeChatUpload(ctx context.Context, exec sqlExecer, u *RuntimeChatUpload) error {
 	u.CreatedAt = now()
-	r, err := s.db.ExecContext(ctx, `INSERT INTO runtime_chat_uploads (owner_id, conversation_id, task_id, name, size, format, pages, text_bytes, storage_key, created_at)
+	r, err := exec.ExecContext(ctx, `INSERT INTO runtime_chat_uploads (owner_id, conversation_id, task_id, name, size, format, pages, text_bytes, storage_key, created_at)
 		VALUES (?,?,NULL,?,?,?,?,?,?,?)`, u.OwnerID, u.ConversationID, u.Name, u.Size, u.Format, u.Pages, u.TextBytes, u.StorageKey, u.CreatedAt)
 	if err != nil {
 		return err
 	}
 	u.ID, err = r.LastInsertId()
 	return err
+}
+
+// CreateRuntimeChatUpload 记下一个还没发出的附件，不查配额。调用方先确认对话对这位员工可见；
+// 网页对话的上传接口要按待发总量限流，走 CreateRuntimeChatUploadWithQuota。
+func (s *Store) CreateRuntimeChatUpload(ctx context.Context, u *RuntimeChatUpload) error {
+	return insertRuntimeChatUpload(ctx, s.db, u)
+}
+
+// CreateRuntimeChatUploadWithQuota 记下一个还没发出的附件，并在同一个事务里核对配额：
+// 先锁住所有者的 users 行，让同一员工的并发上传排队，再读最新的待发合计，超过 pendingMax 时
+// 返回 ErrRuntimeChatUploadQuota，一行都不写。pendingMax 是本人所有还没发出的附件（原件 + 正文）
+// 合计的上限；调用方先删掉过期的附件再调，过期件才不会白占额度。
+//
+// 读合计必须用加锁读：TiDB 的悲观事务里普通 SELECT 读的是事务开始时的快照，等锁期间别人提交的
+// 附件看不到，那样「查到没超、各自插一条」的并发超额又会回来。锁 users 行是为了让并发上传串行化
+// （附件行只锁得住已经存在的，挡不住并发 INSERT 出来的新行）。
+func (s *Store) CreateRuntimeChatUploadWithQuota(ctx context.Context, u *RuntimeChatUpload, pendingMax int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var owner int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=? FOR UPDATE`, u.OwnerID).Scan(&owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT size, text_bytes FROM runtime_chat_uploads WHERE owner_id=? AND task_id IS NULL FOR UPDATE`, u.OwnerID)
+	if err != nil {
+		return err
+	}
+	var pending int64
+	for rows.Next() {
+		var size, textBytes int64
+		if err := rows.Scan(&size, &textBytes); err != nil {
+			rows.Close()
+			return err
+		}
+		pending += size + textBytes
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if pending+u.Size+u.TextBytes > pendingMax {
+		return ErrRuntimeChatUploadQuota
+	}
+	if err := insertRuntimeChatUpload(ctx, tx, u); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RuntimeChatPendingUploadBytes 是本人所有还没发出的附件（原件 + 正文）合计的字节数。

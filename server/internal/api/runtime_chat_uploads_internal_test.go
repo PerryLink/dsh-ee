@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -186,5 +187,39 @@ func TestRuntimeChatUploadFileName(t *testing.T) {
 		if got := runtimeChatUploadFileName(in); got != want {
 			t.Errorf("runtimeChatUploadFileName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// 预检只看原件大小（转换后的正文要到转换完才知道），真正的配额检查在写库事务里原子完成：
+// 已有待发附件占到「上限 - 1 字节」时，传 1 字节的文件预检正好放行，转换出的正文让原子检查超限。
+// 这时仍返回前端认识的 runtime_chat.upload_quota，而且已经写下的原件和 .md 副本都要删掉。
+func TestRuntimeChatUploadQuotaCheckedAtomically(t *testing.T) {
+	c, employee, admin := newRuntimeChatTest(t)
+	ownerID, owner := employee("quota-owner")
+	on := true
+	const chat = "/api/runtime/chat"
+	bot := decodeRuntimeChat[store.RuntimeBot](t, "create bot", admin("POST", runtimeBotsTestPath, runtimeChatBotBody(t, ownerID, "Reader", false, &on)), http.StatusOK)
+	thread := decodeRuntimeChat[store.RuntimeChatConversation](t, "open thread", owner("POST", chat+"/conversations", fmt.Sprintf(`{"bot_id":%d}`, bot.ID)), http.StatusOK)
+	path := fmt.Sprintf("%s/conversations/%d/uploads", chat, thread.ID)
+	ctx := context.Background()
+	// 预检口径是「已有待发合计 + 原件大小」：让它正好等于上限，预检放行；正文的 1 字节才让写库时超限。
+	if _, err := c.s.store.DB().ExecContext(ctx, `INSERT INTO runtime_chat_uploads (owner_id, conversation_id, task_id, name, size, format, text_bytes, storage_key, created_at)
+		VALUES (?,?,NULL,'hoard.txt',?,'txt',0,'hoard',?)`, ownerID, thread.ID, runtimeChatUploadPendingMax-1, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	upload := runtimeUploadClient(t, c.s, ownerID)
+	expectRuntimeChatCode(t, "quota checked after convert", upload(path, "one-byte.txt", []byte("x")), http.StatusTooManyRequests, codeRuntimeChatUploadQuota)
+	// 库里没有多出记录
+	var n int
+	if err := c.s.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_chat_uploads WHERE owner_id=?`, ownerID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("被配额拒绝的上传不应写库：count=%d err=%v", n, err)
+	}
+	// 盘上也没有孤儿文件（原件和 .md 副本都删掉了）
+	entries, err := os.ReadDir(filepath.Join(c.s.opts.DataDir, runtimeChatUploadsDir))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("被配额拒绝的上传留下了文件：%v", entries)
 	}
 }
