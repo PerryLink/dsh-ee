@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/dingtalk"
+	"github.com/hikariming/dsh-ee/server/internal/netguard"
 )
 
 // Config 是管理员在系统设置里填的内容。ClientSecret 不参与 JSON，由调用方加密保存。
@@ -225,11 +226,22 @@ type cached[T any] struct {
 
 const cacheFor = 10 * time.Minute
 
+// NewClient 用给定的 HTTP client 建 OIDC 客户端；nil 时用默认 client。
+//
+// OIDC 的发现、换令牌、拉 JWKS、userinfo 都由管理员配置的 issuer 触发，而重定向目标是
+// IdP 当场给的：换令牌的 POST body 带 client secret，跟到别的主机等于把企业凭证送出去。
+// 所以这里统一补上「只跟随同来源重定向」的限制（issuer 尾斜杠/路径规范化这类同源 302
+// 照常跟随）。不修改调用方传入的 client：复制一份再补，避免影响共享 client 的其它请求；
+// 调用方显式设置了自己的 CheckRedirect 时保留。
 func NewClient(hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &Client{HTTP: hc, disc: map[string]cached[*Provider]{}, keys: map[string]cached[map[string]crypto.PublicKey]{}}
+	c := *hc
+	if c.CheckRedirect == nil {
+		c.CheckRedirect = netguard.SameOriginRedirect
+	}
+	return &Client{HTTP: &c, disc: map[string]cached[*Provider]{}, keys: map[string]cached[map[string]crypto.PublicKey]{}}
 }
 
 func (c *Client) getJSON(ctx context.Context, u string, dst any) error {
