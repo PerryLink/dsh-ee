@@ -77,5 +77,6 @@ export default {
     approved: "Approved sharing for “{{title}}”",
     rejected: "Declined sharing for “{{title}}”",
     hint: "Once approved, everyone in the new scope sees it in DSH right away. The reason for declining is shown to the owner.",
+    legacyHint: "This sharing request predates the upgrade and lacks the timestamp needed for review. The upgrade backfills it automatically — refresh to review. If this persists, check that the latest database migration has run.",
   },
 } satisfies Messages<typeof zh>;

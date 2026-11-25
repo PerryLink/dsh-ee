@@ -81,3 +81,55 @@ func TestScopeResolveStaleRequestConflict(t *testing.T) {
 		t.Fatalf("没有在审申请：%v %v", ok, err)
 	}
 }
+
+// 升级前遗留的范围申请没有 scope_requested_at：回填前带任何令牌都不能消费它（安全语义不变，
+// 不是「没有标识就放宽」）；迁移用 updated_at 回填后，申请人当时那份申请的标识才能审批一次。
+// 回填后的令牌仍按快照严格校验：差 1 毫秒或零值都冲突。
+func TestScopeResolveLegacyRequestAfterBackfill(t *testing.T) {
+	st := openTokenTestStore(t)
+	ctx := context.Background()
+	a := scopeTestAsset(t, st, "legacy-scope-approve", Scope{Users: []int64{1}})
+	requestedAt := time.Date(2026, 11, 1, 9, 30, 0, 500_000_000, time.UTC)
+	setLegacyScopeRequest(t, st, a.ID, `{"departments":["销售部"]}`, requestedAt)
+
+	// 回填前：库里没有标识，任何令牌都冲突（不能借此绕过快照校验）
+	if ok, err := st.ResolveAssetScope(ctx, a.ID, true, "", requestedAt); !errors.Is(err, ErrConflict) || ok {
+		t.Fatalf("回填前应冲突，得到 ok=%v err=%v", ok, err)
+	}
+
+	replayMigration(t, st, legacyScopeBackfillMigration)
+	cur, err := st.GetAsset(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.ScopeRequestedAt == nil || !cur.ScopeRequestedAt.Equal(requestedAt) {
+		t.Fatalf("回填后应能用 updated_at 作为快照标识：got %v want %v", cur.ScopeRequestedAt, requestedAt)
+	}
+
+	// 伪造 / 旧令牌仍冲突：差 1 毫秒和零值都不能通过
+	if ok, err := st.ResolveAssetScope(ctx, a.ID, true, "", cur.ScopeRequestedAt.Add(time.Millisecond)); !errors.Is(err, ErrConflict) || ok {
+		t.Fatalf("回填后伪造令牌应冲突，得到 ok=%v err=%v", ok, err)
+	}
+	if ok, err := st.ResolveAssetScope(ctx, a.ID, true, "", time.Time{}); !errors.Is(err, ErrConflict) || ok {
+		t.Fatalf("零值令牌应冲突，得到 ok=%v err=%v", ok, err)
+	}
+
+	// 用回填的令牌审批：成功，申请被消费、新范围生效
+	if ok, err := st.ResolveAssetScope(ctx, a.ID, true, "", *cur.ScopeRequestedAt); err != nil || !ok {
+		t.Fatalf("回填的令牌应能审批：%v %v", ok, err)
+	}
+	after, err := st.GetAsset(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PendingScope != nil || after.ScopeRequestedAt != nil {
+		t.Fatalf("审批后应清空申请：pending=%+v at=%+v", after.PendingScope, after.ScopeRequestedAt)
+	}
+	if len(after.Scope.Departments) != 1 || after.Scope.Departments[0] != "销售部" {
+		t.Fatalf("审批后新范围应生效：%+v", after.Scope)
+	}
+	// 申请提交后当前范围里已有的用户不能被旧快照覆盖掉（和正常审批同一套合并逻辑）
+	if len(after.Scope.Users) != 1 || after.Scope.Users[0] != 1 {
+		t.Fatalf("审批后应保留当前范围里已有的用户：%+v", after.Scope.Users)
+	}
+}

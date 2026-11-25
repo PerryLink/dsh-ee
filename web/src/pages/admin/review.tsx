@@ -189,13 +189,15 @@ function ScopeReview({ q }: { q: ReturnType<typeof useApi<ScopeReviewItem[]>> })
   const [reason, setReason] = useState("");
   const queue = q.data ?? [];
   const current = queue.find((v) => v.asset.id === selected) ?? queue[0];
+  // 审批要带评审时看到的那份申请的 scope_requested_at。升级前遗留的申请没有这个快照标识
+  // （迁移会用 updated_at 回填）：回填前/迁移没跑时不渲染审批按钮，避免点了必然 400/409。
+  const token = current ? (current.asset.scope_requested_at ?? current.created_at) : null;
+  const legacy = !!current && !token;
 
   const decide = async (approve: boolean) => {
-    if (!current) return;
+    if (!current || !token) return;
     // 带上评审时看到的申请快照：期间负责人换成新申请时服务端返回 409，不会误批没看过的范围。
-    const r = await run(() =>
-      api.reviewScope({ asset_id: current.asset.id, scope_requested_at: current.asset.scope_requested_at ?? current.created_at ?? "", action: approve ? "approve" : "reject", note: reason.trim() }),
-    );
+    const r = await run(() => api.reviewScope({ asset_id: current.asset.id, scope_requested_at: token, action: approve ? "approve" : "reject", note: reason.trim() }));
     if (!r.ok) return notify(r.error);
     notify(t(approve ? "scopeReview.approved" : "scopeReview.rejected", { title: current.spec.title }));
     setSelected(null);
@@ -253,17 +255,23 @@ function ScopeReview({ q }: { q: ReturnType<typeof useApi<ScopeReviewItem[]>> })
               <h3 className="mb-2 text-sm font-semibold text-neutral-900">{t("reviewAssets.previous")}</h3>
               <SpecView spec={current.spec} />
               <p className="mt-4 text-xs text-neutral-500">{t("scopeReview.hint")}</p>
-              <div className="mt-4">
-                <textarea className={cx(inputCls, "h-20 py-2")} placeholder={t("review.commentPlaceholder")} value={reason} onChange={(e) => setReason(e.target.value)} />
-                <div className="mt-3 flex gap-2">
-                  <Button disabled={busy} onClick={() => decide(true)}>
-                    {t("review.approve")}
-                  </Button>
-                  <Button variant="danger" disabled={busy || !reason.trim()} onClick={() => decide(false)}>
-                    {t("review.reject")}
-                  </Button>
+              {legacy ? (
+                <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
+                  {t("scopeReview.legacyHint")}
+                </p>
+              ) : (
+                <div className="mt-4">
+                  <textarea className={cx(inputCls, "h-20 py-2")} placeholder={t("review.commentPlaceholder")} value={reason} onChange={(e) => setReason(e.target.value)} />
+                  <div className="mt-3 flex gap-2">
+                    <Button disabled={busy} onClick={() => decide(true)}>
+                      {t("review.approve")}
+                    </Button>
+                    <Button variant="danger" disabled={busy || !reason.trim()} onClick={() => decide(false)}>
+                      {t("review.reject")}
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              )}
             </Card>
           )}
         </div>
