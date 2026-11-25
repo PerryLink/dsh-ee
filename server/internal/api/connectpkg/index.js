@@ -7239,9 +7239,7 @@ function createLocalMcp(ctx, config, options = {}) {
     }
     return service && typeof service.register === "function" && typeof service.list === "function" ? service : void 0;
   };
-  const names = async () => {
-    const service = manager();
-    if (!service) return /* @__PURE__ */ new Set();
+  const names = async (service) => {
     try {
       const list = await service.list();
       return new Set(list.map((item) => item.name));
@@ -7249,60 +7247,113 @@ function createLocalMcp(ctx, config, options = {}) {
       return /* @__PURE__ */ new Set();
     }
   };
-  const register = (extension) => {
-    const service = manager();
-    if (!service) return;
+  const register = (extension, service) => {
     if (disposers.has(extension.id)) return;
     const dispose = service.register(extension.serverName, localMcpEntry(config, extension, { npmrc, platform }));
-    disposers.set(extension.id, () => {
-      try {
-        dispose();
-      } catch {
+    disposers.set(extension.id, {
+      manager: service,
+      dispose: () => {
+        try {
+          dispose();
+        } catch {
+        }
       }
     });
   };
   const unregister = (id) => {
-    const dispose = disposers.get(id);
-    if (!dispose) return;
-    dispose();
+    const registration = disposers.get(id);
+    if (!registration) return;
     disposers.delete(id);
+    registration.dispose();
+  };
+  const dropRegistrations = () => {
+    for (const registration of disposers.values()) registration.dispose();
+    disposers.clear();
   };
   const describe = (extension, state) => `  ${extension.id}  ${extension.package}${extension.version ? `@${extension.version}` : ""}  serverName=${extension.serverName}  ${state}`;
+  let stopped = false;
+  let ensuring;
+  let managerHook = false;
+  const registerMissing = async () => {
+    const empty = () => ({ registered: [], skipped: [] });
+    if (stopped) return empty();
+    const service = manager();
+    if (!service) return empty();
+    for (const [id, registration] of [...disposers]) {
+      if (registration.manager === service) continue;
+      disposers.delete(id);
+      registration.dispose();
+    }
+    const extensions = readLocalExtensions(store);
+    const missing = extensions.filter((extension) => !disposers.has(extension.id));
+    if (!missing.length) return empty();
+    const taken = await names(service);
+    if (stopped) return empty();
+    const registered = [];
+    const skipped = [];
+    for (const extension of missing) {
+      if (taken.has(extension.serverName)) {
+        skipped.push({ name: extension.id, reason: t("localMcp.duplicateService", { name: extension.serverName }) });
+        continue;
+      }
+      try {
+        register(extension, service);
+        taken.add(extension.serverName);
+        registered.push(extension.id);
+      } catch (error) {
+        skipped.push({ name: extension.id, reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { registered, skipped };
+  };
+  const ensure = () => {
+    if (ensuring) return ensuring;
+    const current = registerMissing().finally(() => {
+      if (ensuring === current) ensuring = void 0;
+    });
+    ensuring = current;
+    return current;
+  };
+  const hookManager = () => {
+    if (managerHook || stopped) return;
+    const inject2 = ctx.inject;
+    if (typeof inject2 !== "function") return;
+    try {
+      inject2.call(ctx, ["mcpManager"], (scope) => {
+        try {
+          scope.effect(() => () => dropRegistrations());
+        } catch {
+        }
+        void ensure().catch(() => void 0);
+      });
+      managerHook = true;
+    } catch {
+    }
+  };
   return {
     get available() {
       return manager() !== void 0;
     },
+    ensure,
     async start() {
-      const service = manager();
-      if (!service) return { registered: [], skipped: [] };
-      const extensions = readLocalExtensions(store);
-      const taken = await names();
-      const registered = [];
-      const skipped = [];
-      for (const extension of extensions) {
-        if (taken.has(extension.serverName)) {
-          skipped.push({ name: extension.id, reason: t("localMcp.duplicateService", { name: extension.serverName }) });
-          continue;
-        }
-        try {
-          register(extension);
-          taken.add(extension.serverName);
-          registered.push(extension.id);
-        } catch (error) {
-          skipped.push({ name: extension.id, reason: error instanceof Error ? error.message : String(error) });
-        }
-      }
-      return { registered, skipped };
+      stopped = false;
+      const result = await ensure();
+      hookManager();
+      return result;
     },
     stop() {
-      for (const dispose of disposers.values()) dispose();
-      disposers.clear();
+      stopped = true;
+      dropRegistrations();
     },
     async refresh() {
-      for (const id of [...disposers.keys()]) unregister(id);
-      return this.start();
+      stopped = false;
+      dropRegistrations();
+      const result = await ensure();
+      hookManager();
+      return result;
     },
-    list() {
+    async list() {
+      await ensure().catch(() => void 0);
       const extensions = readLocalExtensions(store);
       const hint = this.available ? "" : t("localMcp.noManagerHint");
       if (!extensions.length) {
@@ -7321,6 +7372,7 @@ function createLocalMcp(ctx, config, options = {}) {
       return { kind: "success", text: t("localMcp.listHeader", { count: extensions.length, lines: lines.join("\n"), hint }) };
     },
     async add(parsed) {
+      await ensure().catch(() => void 0);
       const spec = parsePackageSpec(parsed.target);
       if ("error" in spec) return { kind: "error", text: spec.error };
       const id = parsed.id ?? deriveExtensionId(spec.package);
@@ -7343,13 +7395,14 @@ function createLocalMcp(ctx, config, options = {}) {
       if (!sameId && samePackage) {
         return { kind: "error", text: t("localMcp.packageBound", { id: samePackage.id }) };
       }
-      if (!this.available) {
+      const service = manager();
+      if (!service) {
         return {
           kind: "error",
           text: t("localMcp.noManagerAdd", { snippet: localMcpSnippet(config, extension, npmrc) })
         };
       }
-      const taken = await names();
+      const taken = await names(service);
       const ours = sameId !== void 0 && disposers.has(sameId.id);
       if (!ours && taken.has(extension.serverName)) {
         return { kind: "error", text: t("localMcp.serviceConflict", { name: extension.serverName, spec: `${extension.package}${extension.version ? `@${extension.version}` : ""}`, scope: id.split("/")[0] }) };
@@ -7362,7 +7415,7 @@ function createLocalMcp(ctx, config, options = {}) {
       }
       try {
         unregister(extension.id);
-        register(extension);
+        register(extension, service);
       } catch (error) {
         return { kind: "error", text: t("localMcp.registerFailed", { error: error instanceof Error ? error.message : String(error) }) };
       }

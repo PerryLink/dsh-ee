@@ -5,8 +5,9 @@
  * DSH 0.2.2 没有 `mcpServers` 配置文件，也没有让插件改 profile 配置的接口；官方给插件用的是
  * `ctx.mcpManager.register(name, entry)`（@deepseek-ai/dsh-mcp-manager，Web/Desktop 组合默认挂载）：
  * 注册只在这个插件存活期间有效，插件每次启动重新注册。这里把「员工确认过的本机扩展」记在
- * `$DSH_HOME/dsh-ee/local-mcp.json`，启动时按记录重新注册；没有 mcpManager 时退回可复制的
- * `@deepseek-ai/dsh-mcp-client` 配置片段。
+ * `$DSH_HOME/dsh-ee/local-mcp.json`，启动时按记录重新注册；mcpManager 冷启动时可能晚于插件就绪，
+ * 启动时取不到就用 cordis 的运行时 `ctx.inject` 等它出现再补注册（不写模块级 inject：旧 DSH 会因此
+ * 卡在 pending，见 #231），没有 mcpManager 时退回可复制的 `@deepseek-ai/dsh-mcp-client` 配置片段。
  *
  * 约束（和接入插件的其他本机操作一致）：
  *   - 只动这台电脑：不调 dsh-ee 的写接口、不改服务端、不写 DSH 的 profile 配置文件；
@@ -225,16 +226,25 @@ export function parseLocalCommand(rawInput: string | undefined): LocalCommandArg
   return args;
 }
 
+/** 一次补注册的结果：本次新注册的扩展 id，与被跳过的记录（同名服务已存在 / 管理器报错）。 */
+export interface LocalMcpRegistration {
+  registered: string[];
+  skipped: Array<{ name: string; reason: string }>;
+}
+
 export interface LocalMcpHandle {
   /** 这台 DSH 有没有 MCP 管理接口（dsh-mcp-manager）。 */
   readonly available: boolean;
-  /** 按记录重新注册（插件启动时调用一次）；没有 mcpManager 时什么也不做。 */
-  start: () => Promise<{ registered: string[]; skipped: Array<{ name: string; reason: string }> }>;
+  /** 按记录注册（插件启动时调用一次）；没有 mcpManager 时返回空，随后它出现会自动补。 */
+  start: () => Promise<LocalMcpRegistration>;
+  /** 幂等补注册：只补还没注册的确认记录（管理器晚到位时由运行时注入触发，没有注入的宿主由 list/add 兜底）。 */
+  ensure: () => Promise<LocalMcpRegistration>;
   /** 员工改了 dsh-ee 地址之后，按新的地址重新注册一遍（env 里的 DSH_EE_URL 要跟着变）。 */
-  refresh: () => Promise<{ registered: string[]; skipped: Array<{ name: string; reason: string }> }>;
-  /** 插件卸载时注销本次注册。 */
+  refresh: () => Promise<LocalMcpRegistration>;
+  /** 插件卸载时注销本次注册，并停掉之后的自动补注册。 */
   stop: () => void;
-  list: () => LocalMcpResult;
+  /** 先补齐缺失的自动注册，再列出记录与状态。 */
+  list: () => Promise<LocalMcpResult>;
   add: (parsed: LocalCommandArgs) => Promise<LocalMcpResult>;
   remove: (parsed: LocalCommandArgs) => Promise<LocalMcpResult>;
   snippet: (parsed: LocalCommandArgs) => LocalMcpResult;
@@ -248,16 +258,19 @@ export function createLocalMcp(ctx: DshContext, config: PluginConfig, options: {
   const store = options.store ?? localMcpStorePath();
   const npmrc = options.npmrc ?? npmrcPath(ctx);
   const platform = options.platform ?? process.platform;
-  const disposers = new Map<string, () => void>();
+  /** 一条注册的注销句柄；记住挂在哪个管理器上，管理器换实现时按身份丢弃。 */
+  interface Registration {
+    dispose: () => void;
+    manager: LocalMcpManager;
+  }
+  const disposers = new Map<string, Registration>();
   const manager = (): LocalMcpManager | undefined => {
     // mcpManager 不在 inject 里（旧版 DSH 会因此卡住整个插件），这里按需取；取不到或宿主抛错都当没有
     let service: any;
     try { service = ctx.get("mcpManager"); } catch { return undefined; }
     return service && typeof service.register === "function" && typeof service.list === "function" ? service as LocalMcpManager : undefined;
   };
-  const names = async (): Promise<Set<string>> => {
-    const service = manager();
-    if (!service) return new Set();
+  const names = async (service: LocalMcpManager): Promise<Set<string>> => {
     try {
       const list = await service.list();
       return new Set(list.map((item) => item.name));
@@ -265,67 +278,140 @@ export function createLocalMcp(ctx: DshContext, config: PluginConfig, options: {
       return new Set();
     }
   };
-  const register = (extension: LocalExtension): void => {
-    const service = manager();
-    if (!service) return;
+  const register = (extension: LocalExtension, service: LocalMcpManager): void => {
     if (disposers.has(extension.id)) return;
     const dispose = service.register(extension.serverName, localMcpEntry(config, extension, { npmrc, platform }));
-    disposers.set(extension.id, () => {
-      try {
-        dispose();
-      } catch {
-        // 管理器先卸载时再调用 disposer 会抛错；插件卸载过程不该被打断
-      }
+    disposers.set(extension.id, {
+      manager: service,
+      dispose: () => {
+        try {
+          dispose();
+        } catch {
+          // 管理器先卸载时再调用 disposer 会抛错；插件卸载过程不该被打断
+        }
+      },
     });
   };
   const unregister = (id: string): void => {
-    const dispose = disposers.get(id);
-    if (!dispose) return;
-    dispose();
+    const registration = disposers.get(id);
+    if (!registration) return;
     disposers.delete(id);
+    registration.dispose();
+  };
+  /** 注销本句柄记下的全部注册（stop、管理器换实现、插件卸载时用）。 */
+  const dropRegistrations = (): void => {
+    for (const registration of disposers.values()) registration.dispose();
+    disposers.clear();
   };
   const describe = (extension: LocalExtension, state: string): string =>
     `  ${extension.id}  ${extension.package}${extension.version ? `@${extension.version}` : ""}  serverName=${extension.serverName}  ${state}`;
+
+  // mcpManager 可能晚于插件就绪（DSH 冷启动）：启动时取不到不能就此放弃，等它出现后补注册。
+  let stopped = false;
+  let ensuring: Promise<LocalMcpRegistration> | undefined;
+  let managerHook = false;
+
+  const registerMissing = async (): Promise<LocalMcpRegistration> => {
+    const empty = (): LocalMcpRegistration => ({ registered: [], skipped: [] });
+    if (stopped) return empty();
+    const service = manager();
+    if (!service) return empty();
+    // 管理器换了实现（例如它自己被重载）：旧注册项已随旧管理器失效，丢掉引用后重新补
+    for (const [id, registration] of [...disposers]) {
+      if (registration.manager === service) continue;
+      disposers.delete(id);
+      registration.dispose();
+    }
+    const extensions = readLocalExtensions(store);
+    const missing = extensions.filter((extension) => !disposers.has(extension.id));
+    if (!missing.length) return empty();
+    // 只注册员工确认过的记录；已有同名服务（员工自己配的、别的插件注册的）一律不覆盖
+    const taken = await names(service);
+    if (stopped) return empty();
+    const registered: string[] = [];
+    const skipped: Array<{ name: string; reason: string }> = [];
+    for (const extension of missing) {
+      if (taken.has(extension.serverName)) {
+        skipped.push({ name: extension.id, reason: t("localMcp.duplicateService", { name: extension.serverName }) });
+        continue;
+      }
+      try {
+        register(extension, service);
+        taken.add(extension.serverName);
+        registered.push(extension.id);
+      } catch (error) {
+        skipped.push({ name: extension.id, reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { registered, skipped };
+  };
+
+  /** 幂等补注册：同一时刻只跑一次；管理器不可用 / 宿主报错都只当这次没补。 */
+  const ensure = (): Promise<LocalMcpRegistration> => {
+    if (ensuring) return ensuring;
+    const current = registerMissing().finally(() => {
+      if (ensuring === current) ensuring = undefined;
+    });
+    ensuring = current;
+    return current;
+  };
+
+  /**
+   * 等 mcpManager 出现后补注册。cordis 的运行时 ctx.inject 只在依赖就绪后才执行回调，
+   * 不会像模块级 inject 那样把整个插件卡在 pending（#231 的教训），所以旧版 DSH 上也能挂。
+   * 宿主没有运行时注入（很老的 DSH）时不挂 hook：由 list/add/refresh 惰性补。
+   */
+  const hookManager = (): void => {
+    if (managerHook || stopped) return;
+    const inject = (ctx as any).inject;
+    if (typeof inject !== "function") return;
+    try {
+      inject.call(ctx, ["mcpManager"], (scope: DshContext) => {
+        // 管理器卸载或换实现：本句柄在旧管理器上的注册随之失效，清掉引用；新管理器出现后会重新补
+        try {
+          scope.effect(() => () => dropRegistrations());
+        } catch {
+          // 拿不到 effect 就不挂清理；下次补注册会按管理器身份丢弃旧引用
+        }
+        void ensure().catch(() => undefined);
+      });
+      managerHook = true;
+    } catch {
+      // 宿主拒绝运行时注入：退回首次使用（list/add）前补注册
+    }
+  };
 
   return {
     get available() {
       return manager() !== undefined;
     },
 
+    ensure,
+
     async start() {
-      const service = manager();
-      if (!service) return { registered: [], skipped: [] };
-      const extensions = readLocalExtensions(store);
-      const taken = await names();
-      const registered: string[] = [];
-      const skipped: Array<{ name: string; reason: string }> = [];
-      for (const extension of extensions) {
-        if (taken.has(extension.serverName)) {
-          skipped.push({ name: extension.id, reason: t("localMcp.duplicateService", { name: extension.serverName }) });
-          continue;
-        }
-        try {
-          register(extension);
-          taken.add(extension.serverName);
-          registered.push(extension.id);
-        } catch (error) {
-          skipped.push({ name: extension.id, reason: error instanceof Error ? error.message : String(error) });
-        }
-      }
-      return { registered, skipped };
+      stopped = false;
+      const result = await ensure();
+      // 管理器这时还没就绪的话，挂上运行时注入等它出现（不阻塞插件加载）
+      hookManager();
+      return result;
     },
 
     stop() {
-      for (const dispose of disposers.values()) dispose();
-      disposers.clear();
+      stopped = true;
+      dropRegistrations();
     },
 
     async refresh() {
-      for (const id of [...disposers.keys()]) unregister(id);
-      return this.start();
+      stopped = false;
+      dropRegistrations();
+      const result = await ensure();
+      hookManager();
+      return result;
     },
 
-    list() {
+    async list() {
+      // 补注册是幂等的；管理器晚到位而宿主又没有运行时注入时，至少在首次使用前补齐
+      await ensure().catch(() => undefined);
       const extensions = readLocalExtensions(store);
       const hint = this.available ? "" : t("localMcp.noManagerHint");
       if (!extensions.length) {
@@ -346,6 +432,8 @@ export function createLocalMcp(ctx: DshContext, config: PluginConfig, options: {
     },
 
     async add(parsed) {
+      // 先把记录里缺的注册补齐，避免“记录已存在但本会话没注册”被 alreadyAdded 挡住
+      await ensure().catch(() => undefined);
       const spec = parsePackageSpec(parsed.target);
       if ("error" in spec) return { kind: "error", text: spec.error };
       const id = parsed.id ?? deriveExtensionId(spec.package);
@@ -368,13 +456,14 @@ export function createLocalMcp(ctx: DshContext, config: PluginConfig, options: {
       if (!sameId && samePackage) {
         return { kind: "error", text: t("localMcp.packageBound", { id: samePackage!.id }) };
       }
-      if (!this.available) {
+      const service = manager();
+      if (!service) {
         return {
           kind: "error",
           text: t("localMcp.noManagerAdd", { snippet: localMcpSnippet(config, extension, npmrc) }),
         };
       }
-      const taken = await names();
+      const taken = await names(service);
       // 更新同一扩展的版本时，服务名是我们自己注册的，不算冲突
       const ours = sameId !== undefined && disposers.has(sameId.id);
       if (!ours && taken.has(extension.serverName)) {
@@ -388,7 +477,7 @@ export function createLocalMcp(ctx: DshContext, config: PluginConfig, options: {
       }
       try {
         unregister(extension.id);
-        register(extension);
+        register(extension, service);
       } catch (error) {
         return { kind: "error", text: t("localMcp.registerFailed", { error: error instanceof Error ? error.message : String(error) }) };
       }

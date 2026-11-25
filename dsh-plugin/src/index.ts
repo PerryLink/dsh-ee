@@ -158,7 +158,8 @@ export function apply(ctx: DshContext, input: Partial<PluginConfig>): void {
     await bridge.start();
     feishuChat.start();
     dingTalkChat.start();
-    // 按员工确认过的记录恢复本机扩展的 MCP 注册；没有 mcpManager 的 DSH 上什么也不做
+    // 按员工确认过的记录恢复本机扩展的 MCP 注册；mcpManager 冷启动时可能还没就绪，start 返回空后
+    // 由运行时 ctx.inject 等它出现再补注册（旧 DSH 没有这个服务则什么也不做）
     await localMcp.start().catch(() => undefined);
     return () => {
       void feishuChat.stop();
