@@ -100,6 +100,15 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		writeErrCode(w, http.StatusRequestEntityTooLarge, codeRuntimeChatUploadTooLarge, map[string]any{"max_mb": runtimeChatUploadMax >> 20},
 			fmt.Sprintf("单个文件不能超过 %d MB", runtimeChatUploadMax>>20))
 	}
+	// 先占转换名额，再读请求体：不先占的话，几十个 50 MB 上传会同时被解析、整份读进内存，
+	// 转换闸门（2 个）挡不住内存先被吃光。和知识库上传（handleKBUpload）一个做法：
+	// 超限立刻 429、不排队；defer 保证解析失败、配额超限、转换失败等所有提前返回都还回名额。
+	release, ok := beginKBConvert()
+	if !ok {
+		writeErrCode(w, http.StatusTooManyRequests, codeRuntimeChatUploadBusy, nil, "同时在转换的文件太多，请稍后再试")
+		return
+	}
+	defer release()
 	r.Body = http.MaxBytesReader(w, r.Body, runtimeChatUploadMax+1<<20)
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -140,13 +149,7 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 			"还没发出的附件太多了，先发出或删掉一些再上传")
 		return
 	}
-	release, ok := beginKBConvert()
-	if !ok {
-		writeErrCode(w, http.StatusTooManyRequests, codeRuntimeChatUploadBusy, nil, "同时在转换的文件太多，请稍后再试")
-		return
-	}
 	conv, err := convertKB(r.Context(), name, data, kb.Options{})
-	release()
 	if err != nil {
 		if errors.Is(err, kb.ErrUnsupported) || !slices.Contains(kb.Formats, strings.ToLower(path.Ext(name))) {
 			writeErrCode(w, http.StatusBadRequest, codeRuntimeChatUploadUnsupported, nil, err.Error())

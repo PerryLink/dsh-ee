@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -186,5 +187,99 @@ func TestRuntimeChatUploadFileName(t *testing.T) {
 		if got := runtimeChatUploadFileName(in); got != want {
 			t.Errorf("runtimeChatUploadFileName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// countReadBody 记录 handler 从请求体里实际读了多少字节。
+type countReadBody struct {
+	r io.Reader
+	n int64
+}
+
+func (b *countReadBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.n += int64(n)
+	return n, err
+}
+
+func (b *countReadBody) Close() error { return nil }
+
+// 转换名额满了要立刻 429，不能先把请求体（最大 50 MB）解析进内存再拒绝：几十个并发上传
+// 同时读 body 就能把内存打爆，转换闸门等于没设。修前这里 body 会被整份读完（读字节数 > 0），
+// 修后必须在读 body 之前就挡住，且任何提前返回都不能把名额漏掉。
+func TestRuntimeChatUploadChecksBusyBeforeReadingBody(t *testing.T) {
+	c, employee, admin := newRuntimeChatTest(t)
+	ownerID, owner := employee("upload-gate-owner")
+	on := true
+	bot := decodeRuntimeChat[store.RuntimeBot](t, "create bot", admin("POST", runtimeBotsTestPath, runtimeChatBotBody(t, ownerID, "Reader", false, &on)), http.StatusOK)
+	thread := decodeRuntimeChat[store.RuntimeChatConversation](t, "open thread", owner("POST", "/api/runtime/chat/conversations", fmt.Sprintf(`{"bot_id":%d}`, bot.ID)), http.StatusOK)
+	path := fmt.Sprintf("/api/runtime/chat/conversations/%d/uploads", thread.ID)
+	// 上传接口的 multipart 请求要自己造（测试客户端只会发 JSON）。
+	token := secret.Token()
+	if err := c.s.store.CreateSession(context.Background(), secret.Hash(token), ownerID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	h := c.s.Handler()
+	upload := func(data []byte) *http.Request {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, err := mw.CreateFormFile("file", "big.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fw.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest("POST", path, &body)
+		r.Header.Set("Content-Type", mw.FormDataContentType())
+		return r
+	}
+	withSession := func(r *http.Request) {
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	}
+
+	// 先手动塞满转换名额，模拟另外两个大文件正在转换。
+	var held []func()
+	t.Cleanup(func() {
+		for _, release := range held {
+			release()
+		}
+	})
+	for i := 0; i < maxConcurrentKBConverts; i++ {
+		release, ok := beginKBConvert()
+		if !ok {
+			t.Fatalf("第 %d 个转换名额应该能占到（上限 %d）", i+1, maxConcurrentKBConverts)
+		}
+		held = append(held, release)
+	}
+
+	// 请求体用计数 Reader：名额已满时 handler 一个字节都不该读。
+	seed := bytes.Repeat([]byte("a"), 4<<20)
+	probe := upload(seed)
+	counting := &countReadBody{r: probe.Body}
+	probe.Body = counting
+	withSession(probe)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, probe)
+	expectRuntimeChatCode(t, "gate full before body read", rec, http.StatusTooManyRequests, codeRuntimeChatUploadBusy)
+	if counting.n != 0 {
+		t.Fatalf("转换名额已满时不应该读请求体，实际读了 %d 字节", counting.n)
+	}
+
+	// 名额还回去之后闸门必须干净：正常上传成功，转换结束名额全部释放。
+	for _, release := range held {
+		release()
+	}
+	held = nil
+	ok := upload([]byte("hi"))
+	withSession(ok)
+	okRec := httptest.NewRecorder()
+	h.ServeHTTP(okRec, ok)
+	decodeRuntimeChat[store.RuntimeChatUpload](t, "upload after release", okRec, http.StatusCreated)
+	if got := len(kbConvertSlots); got != 0 {
+		t.Fatalf("上传结束后转换名额没有全部释放：%d/%d 还被占着", got, maxConcurrentKBConverts)
 	}
 }
