@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"mime"
@@ -45,8 +44,10 @@ func (s *Server) handleListPackageSources(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleCreatePackageSource(w http.ResponseWriter, r *http.Request) {
 	var src store.PackageSource
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&src); err != nil {
-		writeErr(w, http.StatusBadRequest, "Invalid package source")
+	// 包源管理写接口和其他写接口一样走 readJSON：只接受 application/json，配合
+	// SameSite=Lax 的会话 cookie 挡住同站 CSRF；原有的 8 KiB 请求体上限保留。
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if !readJSON(w, r, &src) {
 		return
 	}
 	if err := registry.ValidatePackageSource(&src); err != nil {
@@ -85,8 +86,9 @@ func (s *Server) handleUpdatePackageSource(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		URL string `json:"upstream_url"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "Invalid package source")
+	// 同 handleCreatePackageSource：readJSON 校验 Content-Type，8 KiB 上限保留。
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if !readJSON(w, r, &body) {
 		return
 	}
 	src.UpstreamURL = body.URL

@@ -121,3 +121,32 @@ func TestPackageSources(t *testing.T) {
 		t.Fatalf("artifact missing: %s", body)
 	}
 }
+
+// TestPackageSourcesRequireJSONContentType：包源管理接口和其他写接口一样必须走
+// readJSON，只接受 application/json。text/plain 是浏览器的「简单请求」——不发
+// CORS 预检就能带着 SameSite=Lax 的会话 cookie 打过来，所以入口处必须 415 拒绝；
+// 否则跨站页面可以静默创建包源（CSRF）。
+func TestPackageSourcesRequireJSONContentType(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := api.Bootstrap(context.Background(), st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	ts := newRegistryServer(t, st, newFakeRegistry(t))
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "log in", code, 200, body)
+	const sources = "/api/admin/registry/sources"
+	code, body = admin.do("POST", sources, map[string]string{"protocol": "raw", "name": "remote", "mode": "proxy", "upstream_url": "http://127.0.0.1:1234"}, nil)
+	expect(t, "application/json 创建包源", code, http.StatusCreated, body)
+	code, body = admin.do("POST", sources, map[string]string{"protocol": "raw", "name": "csrf", "mode": "hosted"}, map[string]string{"Content-Type": "text/plain"})
+	expect(t, "text/plain 创建包源应被拒（CSRF 防护）", code, http.StatusUnsupportedMediaType, body)
+	code, body = admin.do("GET", sources, nil, nil)
+	expect(t, "list sources", code, 200, body)
+	if strings.Contains(string(body), "\"csrf\"") {
+		t.Fatalf("text/plain 请求不应创建包源：%s", body)
+	}
+	code, body = admin.do("PATCH", sources+"/raw/remote", map[string]string{"upstream_url": "http://127.0.0.1:5678"}, map[string]string{"Content-Type": "text/plain"})
+	expect(t, "text/plain 更新包源应被拒（CSRF 防护）", code, http.StatusUnsupportedMediaType, body)
+	code, body = admin.do("PATCH", sources+"/raw/remote", map[string]string{"upstream_url": "http://127.0.0.1:5678"}, nil)
+	expect(t, "application/json 更新包源", code, http.StatusOK, body)
+}
