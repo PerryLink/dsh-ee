@@ -64,4 +64,10 @@ OpenSandbox 下，每位员工有一台云电脑（一个常驻沙箱，「我�
 
 Provider 接口：`runtime.PersistentProvider` 在 `Provider` 之外加了 `CreatePersistent`、`Wake`、`CheckPersistent`、`Hibernate`、`Remove`。没有实现它的 provider（或 `DSH_EE_RUNTIME_PERSISTENT=off`）退回每轮新建；员工面板显示“每轮新开”，手动操作返回 409 `runtime_computer.unsupported`。关闭常驻但仍使用支持常驻的 provider 时，管理员仍可休眠或回收已有电脑。
 
+## 关闭或移除试点前先回收云资源
+
+云电脑的休眠、按保留期回收，以及迁移遗留沙箱的清理，都由 dsh-ee 的后台回收器执行；回收器只在配置了 `DSH_EE_RUNTIME_PROVIDER` 时启动。直接删掉 `DSH_EE_RUNTIME_*`（或把实例切到演示模式）就下线试点时，**还没回收的 OpenSandbox 沙箱不会被自动休眠或删除，会持续计费**。
+
+正确顺序：先把 `DSH_EE_RUNTIME_COMPUTER_RETENTION` 调小等回收（或让管理员在「系统设置 → 云端常驻机器人」里逐个休眠/回收），确认 `runtime_computers` 与 `runtime_computer_orphans` 已清空，再移除 provider 配置。直接移除时，启动日志会打一条 Warn 提示仍有 N 台云电脑 / M 条待回收记录；这些沙箱需要回到 OpenSandbox 侧手工清理。
+
 OpenSandbox 的暂停 / 恢复取决于它的运行时后端。上线前先在目标部署上验证：创建一个沙箱写入文件，`pause` 后状态变为 `Paused`，`resume` 后文件还在。暂停失败时电脑保持开机并在下一个闲置周期重试，日志里会有“处理空闲云电脑失败”。

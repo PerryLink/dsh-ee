@@ -82,6 +82,9 @@ func run(log *slog.Logger) error {
 	// 可能已被发往新地址，读取侧无法判定所以不阻断。启动时提示一次（管理端列表也会
 	// 标出），管理员重填一次 key 即补上绑定 origin。只告警，不阻塞启动。
 	warnProvidersMissingKeyOrigin(ctx, st, log)
+	// 云 runtime 试点被关掉 / 配置被移除，但库里还有云电脑或待回收沙箱：没有 provider 时回收器不启动，
+	// 这些 OpenSandbox 沙箱不会自动休眠或回收，会持续计费。启动时提示一次，只告警、不阻断启动。
+	warnCloudRuntimeWithoutProvider(ctx, st, log, cfg.Runtime.Provider == nil)
 	// 多实例后台任务租约：周期任务每轮先抢一条数据库租约，只有 leader 实例执行。
 	// 默认开启，单实例也安全；优雅停机时释放，进程崩溃时靠 TTL 到期让其他实例接管。
 	leases := lease.New(st, lease.OwnerID(cfg.Addr), cfg.BackgroundLease, cfg.BackgroundLeaseTTL, log)

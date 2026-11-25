@@ -269,3 +269,15 @@ func (s *Store) RuntimeComputerBotCount(ctx context.Context, userID int64) (int,
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_bots WHERE owner_id=? AND run_as_id=owner_id`, userID).Scan(&n)
 	return n, err
 }
+
+// CountCloudRuntimeFootprint 返回库里的云电脑行数与待回收沙箱行数（启动告警用：判断是否还有
+// 需要 provider 才能回收的云资源）。
+func (s *Store) CountCloudRuntimeFootprint(ctx context.Context) (computers, orphans int, err error) {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_computers`).Scan(&computers); err != nil {
+		return 0, 0, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_computer_orphans`).Scan(&orphans); err != nil {
+		return 0, 0, err
+	}
+	return computers, orphans, nil
+}
