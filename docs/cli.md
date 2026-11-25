@@ -18,6 +18,7 @@ dsh-ee config export|plan|test|apply|changes|explain|simulate
 dsh-ee admin recover                                      应急恢复账号（在服务器上连库）
 dsh-ee package check <文件.tgz>   [PR #122，合并后生效]   发布前预检（连服务端）
 dsh-ee doctor                     [PR #122，合并后生效]   发布链路只读诊断（连服务端）
+dsh-ee blob-gc [--delete]                                离线清理未引用 blob（连数据库；flags 见 §1.6）
 ```
 
 说明：
@@ -99,6 +100,17 @@ dsh-ee doctor                     [PR #122，合并后生效]   发布链路只�
 
 退出码：0 成功；1 读配置/连库/迁移/生成失败；2 用法错误。
 
+### 1.6 离线清理 blob（`blob-gc`）
+
+| 命令 | 作用 | 主要参数 | 退出码 |
+|---|---|---|---|
+| `dsh-ee blob-gc [--delete] [--force] [--min-age 24h]` | 离线列出/删除 `blobs/` 里没有被 npm 版本、包源制品、知识库原件引用的 tarball；只连数据库，不连服务 | `--delete` 才真正删除；`--force` 越过「库与数据目录疑似不配对」的闸门；`--min-age` 跳过最近修改的文件（默认 24h，`0` 关闭） | 0 成功（含预览、跳过太新文件）；1 配对闸门拒绝或运行错误；2 用法/配置错误；3 `--delete` 时有文件删除失败（其余候选继续删） |
+
+- 必须显式设置 `DSH_EE_DSN` 和 `DSH_EE_DATA_DIR`；后者必须是**绝对路径**（相对路径会被拒绝，除非 `--force`）。运行前停止所有写入进程。
+- **危险动作**：默认只列出目标，`--delete` 才删。删除前会打印目标目录（绝对路径）、数据库引用数、扫描数、未引用候选数，并跑两道配对闸门：数据库里没有任何 blob 引用、或抽样的引用 blob 大多不在数据目录里，都会拒绝删除（exit 1 并提示 `--force`）。只有确认 DSN 与数据目录属于同一套实例时才可用 `--force`。
+- `--min-age`（默认 24h）跳过最近修改过的文件，缓解「blob 先落盘、数据库行后提交」期间的新文件被误删；删除结束后打印「成功 / 失败 / 跳过」汇总，单个文件失败不会中止整趟。
+- 完整流程与场景见 [operations.md](./operations.md) §6.5。
+
 ## 2. 配置来源
 
 ### 2.1 `package check` / `doctor`（PR #122，合并后生效）
@@ -133,10 +145,10 @@ dsh-ee doctor                     [PR #122，合并后生效]   发布链路只�
 
 | 码 | 含义 | 出现在 |
 |---|---|---|
-| 0 | 成功 | 全部命令；`check` 无错误、`test` 全过、`plan/test` 通过、`package check` 通过、`doctor` 无 fail |
-| 1 | 检查发现问题，或服务端/运行期错误 | `extension check/test/report/pack`、`config plan/test/apply/…`、`admin recover`、`package check`（包问题）、`doctor`（有 fail） |
-| 2 | 用法或本地配置错误 | 全部命令（参数、文件不存在、缺地址/令牌、目录不是目录…） |
-| 3 | 调用服务失败 | 仅 `package check`：网络错误、401/403、服务端 5xx |
+| 0 | 成功 | 全部命令；`check` 无错误、`test` 全过、`plan/test` 通过、`package check` 通过、`doctor` 无 fail、`blob-gc` 预览或删除全部成功（含按 `--min-age` 跳过） |
+| 1 | 检查发现问题，或服务端/运行期错误 | `extension check/test/report/pack`、`config plan/test/apply/…`、`admin recover`、`package check`（包问题）、`doctor`（有 fail）、`blob-gc`（库与数据目录疑似不配对而拒绝删除，或运行错误） |
+| 2 | 用法或本地配置错误 | 全部命令（参数、文件不存在、缺地址/令牌、目录不是目录…）；`blob-gc` 还含缺 `DSH_EE_DATA_DIR`、数据目录不是绝对路径 |
+| 3 | 调用服务失败 | `package check`：网络错误、401/403、服务端 5xx；`blob-gc --delete`：有文件删除失败（其余候选已继续处理） |
 
 脚本里建议：
 
@@ -173,6 +185,10 @@ dsh-ee config apply access.yaml --note "新增项目字段"
 npm pack
 dsh-ee doctor
 dsh-ee package check ./my-plugin-1.2.3.tgz --json
+
+# 离线清理未引用 blob（先预览，确认后再 --delete；见 operations.md §6.5）
+dsh-ee blob-gc
+dsh-ee blob-gc --delete
 
 # 应急
 dsh-ee admin recover
