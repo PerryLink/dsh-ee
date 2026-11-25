@@ -8,8 +8,9 @@ import type { DshRelease, DshTarget } from "../../lib/types";
 import { Badge, Button, Card, PageHeader, ToggleRow, Notice, Empty } from "../../components/ui";
 import { LoadState } from "../../components/api-ui";
 import { PageLink } from "../../lib/menus";
+import { ImportReleaseDialog } from "./distribution-import";
 
-function ReleaseTable({ target, title, rows, busy, act }: { target: DshTarget; title: string; rows: DshRelease[]; busy: number; act: (id: number, action: "mirror" | "recommend" | "delete") => void }) {
+function ReleaseTable({ target, title, rows, busy, highlighted, act }: { target: DshTarget; title: string; rows: DshRelease[]; busy: number; highlighted: number; act: (id: number, action: "mirror" | "recommend" | "delete") => void }) {
   const { t } = useTranslation();
   return (
     <Card className="overflow-hidden">
@@ -29,10 +30,11 @@ function ReleaseTable({ target, title, rows, busy, act }: { target: DshTarget; t
             {rows.filter((r) => r.target === target).map((r) => {
               const progress = r.size > 0 ? Math.min(100, ((r.downloaded ?? 0) / r.size) * 100) : 0;
               return (
-                <tr key={r.id}>
+                <tr key={r.id} id={`release-${r.id}`} className={highlighted === r.id ? "bg-emerald-50 ring-2 ring-inset ring-emerald-300" : "transition-colors"}>
                   <td className="px-5 py-3">
                     <div className="font-mono font-medium text-neutral-800">{r.version} · {r.kind}</div>
                     {r.recommended && <Badge tone="brand">{t("download.recommended")}</Badge>}
+                    {r.source === "import" && <Badge tone="slate">{t("distributionAdmin.imported")}</Badge>}
                     {r.error && <div className="mt-1 max-w-md text-xs text-red-600">{r.error}</div>}
                   </td>
                   <td className="px-5 py-3 text-neutral-500">{formatTime(r.released_at)}</td>
@@ -45,7 +47,7 @@ function ReleaseTable({ target, title, rows, busy, act }: { target: DshTarget; t
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex flex-wrap gap-2">
-                      {((r.state ?? "available") === "available" || (r.state ?? "available") === "failed" || r.state === "removed") && (
+                      {r.source !== "import" && ((r.state ?? "available") === "available" || (r.state ?? "available") === "failed" || r.state === "removed") && (
                         <Button size="sm" variant="secondary" disabled={busy === r.id} onClick={() => act(r.id, "mirror")}>{t("distributionAdmin.mirror")}</Button>
                       )}
                       {(r.state ?? "available") === "mirrored" && !r.recommended && (
@@ -74,8 +76,18 @@ export default function AdminDistribution() {
   const { settings, updateSettings, notify } = useStore();
   const { data, loading, error, reload } = useApi(api.adminDshReleases);
   const [busy, setBusy] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const [importNotice, setImportNotice] = useState("");
   const rows = data ?? [];
   const downloading = rows.some((r) => (r.state ?? "available") === "downloading");
+
+  useEffect(() => {
+    if (!highlighted || !data?.some((r) => r.id === highlighted)) return;
+    document.getElementById(`release-${highlighted}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timer = setTimeout(() => setHighlighted(0), 6000);
+    return () => clearTimeout(timer);
+  }, [highlighted, data]);
 
   useEffect(() => {
     if (!downloading) return;
@@ -103,13 +115,15 @@ export default function AdminDistribution() {
       <PageHeader
         title={t("distributionAdmin.title")}
         desc={t("distributionAdmin.desc")}
-        actions={<Button variant="secondary" onClick={async () => { await api.checkDshReleases(); notify(t("distributionAdmin.checkStarted")); }}><RefreshCw size={14} /> {t("distributionAdmin.checkOfficial")}</Button>}
+        actions={<><Button onClick={() => setImportOpen(true)}><PackageOpen size={14} />{t("distributionAdmin.importOffline")}</Button><Button variant="secondary" onClick={async () => { await api.checkDshReleases(); notify(t("distributionAdmin.checkStarted")); }}><RefreshCw size={14} /> {t("distributionAdmin.checkOfficial")}</Button></>}
       />
       {!settings.distribution.enabled && (
         <Notice tone="warn" className="mb-6">
           <Trans i18nKey="distributionAdmin.disabledNote" components={{ link: <PageLink page="admin-settings" suffix="#settings-distribution" className="mx-1 font-medium underline underline-offset-2" /> }} />
+          <PageLink page="admin-settings" suffix="#settings-distribution" className="mt-2 block w-fit rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium">{t("distributionAdmin.enableDistribution")}</PageLink>
         </Notice>
       )}
+      {importNotice && <Notice className="mb-6">{importNotice}</Notice>}
       <Card className="mb-6 grid gap-5 p-5 md:grid-cols-3">
         <label className="text-sm">
           <span className="mb-1 block font-medium text-neutral-800">{t("distributionAdmin.autoSync")}</span>
@@ -145,11 +159,19 @@ export default function AdminDistribution() {
       </Card>
       <LoadState loading={loading && !data} error={error} onRetry={reload}>
         <div className="space-y-6">
-          <ReleaseTable target="mac-arm64" title={t("distributionAdmin.arm64")} rows={rows} busy={busy} act={run} />
-          <ReleaseTable target="mac-x64" title={t("distributionAdmin.x64")} rows={rows} busy={busy} act={run} />
-          <ReleaseTable target="win-x64" title={t("distributionAdmin.windows")} rows={rows} busy={busy} act={run} />
+          <ReleaseTable target="mac-arm64" title={t("distributionAdmin.arm64")} rows={rows} busy={busy} highlighted={highlighted} act={run} />
+          <ReleaseTable target="mac-x64" title={t("distributionAdmin.x64")} rows={rows} busy={busy} highlighted={highlighted} act={run} />
+          <ReleaseTable target="win-x64" title={t("distributionAdmin.windows")} rows={rows} busy={busy} highlighted={highlighted} act={run} />
         </div>
       </LoadState>
+      {importOpen && <ImportReleaseDialog releases={rows} onClose={() => setImportOpen(false)} onSuccess={(release) => {
+        setImportOpen(false);
+        const message = t("distributionAdmin.importSuccess", { platform: t(`download.target.${release.target}`), version: release.version });
+        setImportNotice(message);
+        notify(message);
+        setHighlighted(release.id);
+        void reload();
+      }} />}
     </div>
   );
 }

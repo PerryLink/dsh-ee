@@ -90,6 +90,7 @@ const (
 	auditConnectPublish         = "connect.publish"
 	auditDshReleaseMirrorFailed = "dsh_release.mirror_failed"
 	auditDshReleaseCheck        = "dsh_release.check"
+	auditDshReleaseImport       = "dsh_release.import"
 	auditDshReleaseMirror       = "dsh_release.mirror"
 	auditDshReleaseRecommend    = "dsh_release.recommend"
 	auditDshReleaseDelete       = "dsh_release.delete"

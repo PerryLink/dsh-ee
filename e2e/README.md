@@ -29,6 +29,10 @@ ADMIN_PW=...
 
 `E2E_BASE` 决定监听端口（默认 `http://127.0.0.1:8080`）。测试结束后会停止服务端并删除临时数据目录；如果本机有 `mysql` 客户端，也会 drop 测试库（`E2E_KEEP_DB=1` 可保留）。
 
+## Conan 与 Raw 源演示（44）
+
+默认测试用中文界面创建两个托管源，通过 curl 验证 Raw 上传、下载、Range 与制品列表。设置 `CONAN_BIN=/path/to/conan` 后，还会以独立生产者、消费者缓存执行真实的 Conan 2 发布和安装；设置 `E2E_PACKAGE_PROXY=1` 额外验证两个公网代理（需要外网）。使用嵌入前端的服务端运行 `node run.mjs 44-package-sources`。在 Linux 上安装中文字体和 Playwright 的 FFmpeg 后，设置 `E2E_RECORD=1` 将 WebM 和截图保存到 `E2E_SHOTS`。
+
 ## 飞书机器人对话本地演示（40）
 
 `40-feishu-bot-chat.mjs` 不需要真实飞书租户或 DSH 二进制。它在本机启动带 OIDC、通讯录和回复捕获的假飞书，浏览器操作管理开关、飞书登录与聊天预览；通过 `tsx` 加载真正的 `BotChatRelay`（飞书模式）、`HttpClient`、`McpBridge` 与 `registerApproval`。只有 DSH 宿主和模型是确定性模拟，模型经员工的 DSH 类型令牌、真实审批钩子与桥接器调用 `/mcp` 的 `ee_feishu`，不关闭服务端写操作确认，也不直接伪造聊天回复。

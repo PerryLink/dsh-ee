@@ -62,7 +62,7 @@ export default function DevicePage() {
                     <div><dt className="text-neutral-500">{t("device.version")}</dt><dd className="mt-1">{data.client_version || "—"}</dd></div>
                     <div><dt className="text-neutral-500">{t("device.ip")}</dt><dd className="mt-1 font-mono">{data.client_ip || "—"}</dd></div>
                   </dl>
-                  <div><h3 className="mb-2 text-sm font-semibold text-neutral-900">{t("device.scopes")}</h3><div className="flex flex-wrap gap-2">{data.scopes.map((scope) => <Badge key={scope}>{t(`tokens.scopes.${scope}`)}</Badge>)}</div></div>
+                  <div><h3 className="mb-2 text-sm font-semibold text-neutral-900">{t("device.scopes")}</h3><div className="flex flex-wrap gap-2">{data.scopes.map((scope) => <Badge key={scope}>{t(`tokens.scopes.${scope}`, { nsSeparator: false })}</Badge>)}</div></div>
                   {data.replace_existing && <Notice tone="warn">{t("device.replaceNote")}</Notice>}
                   <div className="flex flex-wrap justify-end gap-2 border-t border-neutral-100 pt-5"><Button variant="secondary" disabled={busy} onClick={() => decide(false)}>{t("device.deny")}</Button><Button disabled={busy} onClick={() => decide(true)}>{t("device.approve")}</Button></div>
                 </div>

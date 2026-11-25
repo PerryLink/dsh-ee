@@ -760,3 +760,52 @@ select:not([multiple]) {
   animation: nav-flash 2.4s ease-out;
   border-radius: 0.75rem;
 }
+
+/* ---------- 机器人对话（/bot-chat）的过渡 ----------
+ * 全部只在用户没有要求减少动态时生效：prefers-reduced-motion: reduce 下这些类名什么都不做，
+ * 元素直接以最终状态出现（面板开合、换机器人、新消息都是瞬时的）。
+ */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes bc-rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes bc-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes bc-panel-in {
+    from { opacity: 0; transform: translateX(14px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes bc-panel-out {
+    from { opacity: 1; transform: none; }
+    to { opacity: 0; transform: translateX(14px); }
+  }
+  @keyframes bc-pop {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: none; }
+  }
+  /* 小鲸鱼回复中：上下轻轻浮动、略微摆尾；水花一下一下地冒 */
+  @keyframes bc-swim {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    25% { transform: translateY(-1.2px) rotate(-3deg); }
+    75% { transform: translateY(0.8px) rotate(2deg); }
+  }
+  @keyframes bc-spout {
+    0%, 100% { opacity: 0.35; transform: translateY(1px) scaleY(0.7); }
+    50% { opacity: 1; transform: none; }
+  }
+  @keyframes bc-ring {
+    0% { opacity: 0.55; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1.35); }
+  }
+  .bc-rise { animation: bc-rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .bc-fade { animation: bc-fade 200ms ease-out both; }
+  .bc-panel-in { animation: bc-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .bc-panel-out { animation: bc-panel-out 160ms ease-in both; }
+  .bc-pop { animation: bc-pop 180ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .bc-swim { transform-origin: 50% 60%; animation: bc-swim 2.4s ease-in-out infinite; }
+  .bc-spout { transform-origin: 50% 100%; transform-box: fill-box; animation: bc-spout 1.2s ease-in-out infinite; }
+  .bc-ring { animation: bc-ring 1.6s ease-out infinite; }
+}

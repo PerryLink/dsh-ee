@@ -121,7 +121,7 @@ export default function MyTokens() {
             </div>
             <p className="-mt-2 text-xs leading-5 text-neutral-600">{t(`tokens.clientKindHints.${clientKind}`)}</p>
             <div className="flex flex-wrap gap-4 text-sm">
-              {scopeChoices.map((scope) => <label key={scope} className="flex items-center gap-1.5"><input type="checkbox" checked={scopes.includes(scope)} onChange={(e) => setScopes((cur) => e.target.checked ? [...cur, scope] : cur.filter((x) => x !== scope))} />{t(`tokens.scopes.${scope}`)}</label>)}
+              {scopeChoices.map((scope) => <label key={scope} className="flex items-center gap-1.5"><input type="checkbox" checked={scopes.includes(scope)} onChange={(e) => setScopes((cur) => e.target.checked ? [...cur, scope] : cur.filter((x) => x !== scope))} />{t(`tokens.scopes.${scope}`, { nsSeparator: false })}</label>)}
             </div>
             <ErrorNote>{formError}</ErrorNote>
             <Button type="submit" disabled={busy || !name.trim() || scopes.length === 0}>{t("tokens.create")}</Button>
@@ -158,7 +158,7 @@ export default function MyTokens() {
                     <td className="px-5 py-3"><div className="text-neutral-900">{token.name}</div><div className="font-mono text-xs text-neutral-600">{token.prefix}…</div>{token.client_name && <div className="text-xs text-neutral-600">{token.client_name}</div>}</td>
                     <td className="px-5 py-3 text-neutral-600">{t(`tokens.sources.${token.source}`)}</td>
                     <td className="px-5 py-3"><Badge tone={token.client_kind === "dsh" ? "brand" : "slate"}>{t(`tokens.clientKinds.${token.client_kind ?? "third_party"}`)}</Badge></td>
-                    <td className="max-w-72 px-5 py-3 text-xs text-neutral-600">{token.scopes.map((scope) => t(`tokens.scopes.${scope}`)).join(" · ") || "—"}</td>
+                    <td className="max-w-72 px-5 py-3 text-xs text-neutral-600">{token.scopes.map((scope) => t(`tokens.scopes.${scope}`, { nsSeparator: false })).join(" · ") || "—"}</td>
                     <td className="px-5 py-3 text-right tabular-nums">{formatTokens(token.month_used)}{token.monthly_token_limit !== null && ` / ${formatTokens(token.monthly_token_limit)}`}</td>
                     <td className="px-5 py-3 text-right tabular-nums text-neutral-600">{formatTime(token.last_used_at)}</td>
                     <td className="px-5 py-3"><Badge tone={state === "active" ? "green" : state === "expired" ? "amber" : "slate"}>{t(`tokens.states.${state}`)}</Badge></td>

@@ -1,18 +1,21 @@
 /** 下载 DSH、接入指南、分享能力。 */
 export default {
   download: {
+    copySha512: "复制完整 SHA-512",
     download: "下载",
     disabled: "管理员未开启 DSH 桌面版分发，请联系 IT 获取安装包。",
     title: "下载 DSH Desktop",
-    desc: "从企业内网下载官方桌面版。安装包已由 dsh-ee 按官方清单校验 sha512。",
+    desc: "从企业内网下载管理员提供的 DSH 桌面版安装包；请查看各文件的校验状态。",
     recommended: "企业推荐",
     stepDownload: "① 下载 DSH Desktop",
     unzip: "下载后解压 zip，把 DeepSeek Harness 拖进「应用程序」。",
     chooseChip: "Safari 无法自动判断芯片时，请点  → 关于本机 → 芯片查看，再选择对应安装包。",
     target: { "mac-arm64": "Apple 芯片", "mac-x64": "Intel", "win-x64": "Windows（x64）" },
     empty: "管理员还没有同步可下载的版本。",
-    hashNote: "安装包的 sha512 已与官方清单核对；页面同时提供哈希，便于下载后自行复核。",
+    hashNote: "各安装包的校验来源与状态见上方标注。SHA-512 可用于下载后自行复核。",
     officialVerified: "已通过官方 sha512 校验",
+    importVerified: "已通过 sha512 校验（管理员提供）",
+    importUnverified: "未使用提供的校验值验证；SHA-512 由 dsh-ee 在导入时计算",
     unverifiedDmg: "未经官方哈希校验；sha512 由 dsh-ee 下载时计算",
     winInstall: "双击 exe 安装即可；首次运行若提示「已保护你的电脑」，点「更多信息 → 仍要运行」。",
     winQuitDesc: "装好后先打开一次再完全退出：任务栏图标右键 → 退出。",

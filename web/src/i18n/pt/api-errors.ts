@@ -3,6 +3,15 @@ import type zhNs from "../zh/api-errors";
 import type { Messages } from "../types";
 
 export default {
+  release: {
+    checksum_format: "Formato SHA-512 inválido. Cole apenas o valor sha512 completo.",
+    checksum_mismatch: "SHA-512 não confere. Confira o nome e a versão do arquivo no manifesto.",
+    invalid: "Invalid platform, version or installer filename.",
+    busy: "This platform is busy or the filename belongs to another version.",
+    checksum: "Invalid SHA-512 or checksum mismatch.",
+    body: "The package is empty, too large, or the upload was interrupted.",
+    imported: "Offline packages cannot be mirrored. Import the package again.",
+  },
   upstream: {
     auth_failed: "Falha na autenticação do repositório de origem. Verifique o token, usuário, senha e permissões.",
   },
@@ -201,5 +210,37 @@ export default {
     version_not_found: "That version doesn't exist.",
     asset_not_found: "That capability doesn't exist.",
     review_forbidden: "You don't have permission to review this kind of capability.",
+  },
+  runtime_chat: {
+    bot_unavailable: "This bot doesn't exist or doesn't have web chat enabled for you.",
+    bot_disabled: "Web chat is disabled for this bot. You can still read the history.",
+    not_found: "The conversation doesn't exist or doesn't belong to this account.",
+    invalid_message: "The message can't be empty or longer than {{max}} bytes.",
+    invalid_key: "Invalid request identifier. Send the message again.",
+    busy: "The previous message is still being processed. Wait for the reply before sending.",
+    idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
+    queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
+    team_forbidden: "This bot isn't shared with your department.",
+    no_department: "Your account has no department, so you can't share the bot.",
+    invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
+    upload_too_large: "Cada arquivo pode ter no máximo {{max_mb}} MB.",
+    upload_unsupported: "Somente arquivos PDF, Word (.docx), Excel (.xlsx), CSV, PowerPoint (.pptx), Markdown e texto simples são aceitos.",
+    upload_unreadable: "Não foi possível ler o conteúdo deste arquivo. Ele pode estar corrompido, criptografado ou ser uma imagem digitalizada.",
+    upload_busy: "Há arquivos demais sendo processados agora. Tente novamente em instantes.",
+    upload_quota: "Há anexos não enviados demais (até {{max_mb}} MB no total). Envie ou remova alguns primeiro.",
+    too_many_uploads: "Uma mensagem pode levar no máximo {{max}} anexos.",
+    upload_unavailable: "O anexo não existe ou já foi enviado. Envie-o novamente.",
+  },
+  runtime_approval: {
+    invalid_mode: "O modo de aprovação deve ser somente leitura, aprovar cada uma, aprovação automática ou acesso total.",
+    invalid_rules: "Regras de aprovação automática inválidas: sem * isolado, sem espaços ou barras e no máximo {{max}} regras.",
+    risk_unconfirmed: "Confirme os riscos antes de ativar o acesso total.",
+    locked: "Seu administrador não permite que você altere o modo de aprovação deste bot.",
+  },
+  runtime_computer: {
+    busy: "The cloud computer is working or being changed right now. Try again shortly.",
+    unsupported: "This runtime doesn't keep cloud computers; every task uses a fresh one.",
+    provider_failed: "The sandbox service couldn't complete the operation. Try again later.",
+    not_found: "That cloud computer doesn't exist (it may already have been reclaimed).",
   },
 } satisfies Messages<typeof zhNs>;

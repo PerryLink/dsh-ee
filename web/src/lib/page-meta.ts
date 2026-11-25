@@ -10,6 +10,7 @@ export interface PageMeta {
   /** 菜单里没有这个页面时，站内链接回退到这个路由。 */
   defaultPath: string;
   description: string;
+  keywords?: string[];
 }
 
 const META = {
@@ -21,7 +22,7 @@ const META = {
   build: { title: "我的应用", defaultPath: "/build", description: "我做的应用：自己用、分享、审核状态" },
   templates: { title: "从样板复制", defaultPath: "/build/templates", description: "从样板和公司已发布的应用复制一个改" },
   materials: { title: "原料", defaultPath: "/build/materials", description: "做应用能用的知识库、连接、技能与提示词" },
-  "dsh-download": { title: "下载 DSH", defaultPath: "/dsh", description: "DSH 核心与桌面版下载" },
+  "dsh-download": { title: "下载 DSH", defaultPath: "/dsh", description: "DSH 核心与桌面版下载", keywords: ["DSH", "下载", "download", "desktop", "installer"] },
   setup: { title: "接入指南", defaultPath: "/setup", description: "一条命令接入企业源" },
   publish: { title: "分享插件", defaultPath: "/publish", description: "上传插件或申请引入社区插件" },
   "dev-docs": { title: "开发文档", defaultPath: "/docs", description: "dsh-ee 视角的开发入口：插件、扩展、权限与发布" },
@@ -42,7 +43,7 @@ const META = {
   "admin-review": { title: "待审核", defaultPath: "/admin/review", description: "审核队列" },
   "admin-registry": { title: "npm 源", defaultPath: "/admin/registry", description: "路由规则、上游、访问令牌" },
   "admin-upstream": { title: "上游预载", defaultPath: "/admin/upstream", description: "在线同步与离线导入" },
-  "admin-distribution": { title: "DSH 分发", defaultPath: "/admin/distribution", description: "DSH 本体分发" },
+  "admin-distribution": { title: "DSH 分发", defaultPath: "/admin/distribution", description: "DSH 本体分发", keywords: ["上传 DSH 安装包", "离线包", "离线导入", "upload", "offline", "installer"] },
   "admin-brand": { title: "品牌与外观", defaultPath: "/admin/brand", description: "DSH 里的企业名称、logo、首屏标题与配色" },
   "admin-auth": { title: "登录方式", defaultPath: "/admin/auth", description: "LDAP / AD 与企业统一登录（OIDC）" },
   "admin-expert-center": { title: "专家与连接器策略", defaultPath: "/admin/expert-center", description: "专家 · 技能 · 连接器的分类、精选、禁用策略与权限查询" },

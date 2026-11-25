@@ -2,6 +2,36 @@ import type zh from "../zh/registry";
 import type { Messages } from "../types";
 
 export default {
+  packageSources: {
+    title: "Conan and Raw sources",
+    description: "Create hosted sources or use read-only proxy URLs directly in Conan, scripts, and middleware.",
+    add: "Add source",
+    cancel: "Cancel",
+    protocol: "Type",
+    mode: "Mode",
+    hosted: "Hosted",
+    proxy: "Read-only proxy",
+    name: "Source name",
+    upstream: "Upstream HTTP(S) URL",
+    conanCenter: "This source fetches packages from ConanCenter (center2.conan.io).",
+    create: "Create source",
+    empty: "No Conan or Raw sources yet.",
+    select: "Select source",
+    saved: "Upstream URL saved",
+    save: "Save",
+    endpoint: "Source URL",
+    tokenHint: "Set DSH_EE_TOKEN to a unified access token. Downloads require registry:read; uploads require registry:publish.",
+    instructions: "Usage commands",
+    proxyArtifacts: "Proxy files are not cached, so there is no local artifact list.",
+    artifacts: "Artifacts",
+    refresh: "Refresh list",
+    path: "File path",
+    size: "Size",
+    updated: "Updated",
+    noFiles: "No artifacts yet. Refresh this list after uploading.",
+    previous: "Previous",
+    next: "Next",
+  },
   registry: {
     settingsSaveFailed: "Settings were not saved: {{msg}}",
     scan: {

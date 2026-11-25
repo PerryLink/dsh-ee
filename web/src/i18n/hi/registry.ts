@@ -3,6 +3,36 @@ import type zhNs from "../zh/registry";
 import type { Messages } from "../types";
 
 export default {
+  packageSources: {
+    title: "Conan और Raw स्रोत",
+    description: "होस्ट किए गए स्रोत बनाएं या Conan, स्क्रिप्ट और मिडलवेयर में सीधे केवल-पढ़ने वाले प्रॉक्सी URL का उपयोग करें।",
+    add: "स्रोत जोड़ें",
+    cancel: "रद्द करें",
+    protocol: "प्रकार",
+    mode: "मोड",
+    hosted: "होस्ट किया गया",
+    proxy: "केवल-पढ़ने वाला प्रॉक्सी",
+    name: "स्रोत का नाम",
+    upstream: "अपस्ट्रीम HTTP(S) URL",
+    conanCenter: "यह स्रोत ConanCenter (center2.conan.io) से पैकेज लाता है।",
+    create: "स्रोत बनाएं",
+    empty: "अभी कोई Conan या Raw स्रोत नहीं है।",
+    select: "स्रोत चुनें",
+    saved: "अपस्ट्रीम URL सहेजा गया",
+    save: "सहेजें",
+    endpoint: "स्रोत URL",
+    tokenHint: "DSH_EE_TOKEN में एकीकृत एक्सेस टोकन सेट करें। डाउनलोड के लिए registry:read और अपलोड के लिए registry:publish चाहिए।",
+    instructions: "उपयोग के कमांड",
+    proxyArtifacts: "प्रॉक्सी फ़ाइलें कैश नहीं करता, इसलिए स्थानीय आर्टिफ़ैक्ट सूची नहीं है।",
+    artifacts: "आर्टिफ़ैक्ट",
+    refresh: "सूची रीफ़्रेश करें",
+    path: "फ़ाइल पथ",
+    size: "आकार",
+    updated: "अपडेट का समय",
+    noFiles: "अभी कोई आर्टिफ़ैक्ट नहीं है। अपलोड के बाद सूची रीफ़्रेश करें।",
+    previous: "पिछला",
+    next: "अगला",
+  },
   "registry": {
     "settingsSaveFailed": "सेटिंग्स सहेजी नहीं गईं: {{msg}}",
     "scan": {
