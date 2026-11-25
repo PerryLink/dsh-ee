@@ -8,7 +8,7 @@
 
 | 组件 | 版本 | 依据 |
 |---|---|---|
-| Go | **1.27.3**（`server/go.mod` 的 `go` 指令；可用更新的 1.27.x） | `server/go.mod` |
+| Go | **1.27.4**（`server/go.mod` 的 `go` 指令；可用更新的 1.27.x） | `server/go.mod`、`Dockerfile` |
 | Node.js | **22**（CI 的 web/server/e2e 与 OceanBase 任务用 22） | `.github/workflows/ci.yml`、`oceanbase.yml` |
 | pnpm | **12.15.0**（`web/package.json` 的 `packageManager`，用 `corepack enable` 启用） | `web/package.json` |
 | 数据库 | **TiDB v8.5.8**（日常/CI）或 **OceanBase 4.3.5-lts MySQL 模式**（每周任务） | `.github/workflows/ci.yml`、`oceanbase.yml` |
@@ -73,7 +73,7 @@ Vite 把下面这些前缀代理到 **`http://127.0.0.1:8080`**（`web/vite.conf
 
 | 命令 | 做什么 | 产物 |
 |---|---|---|
-| `make plugin` | `dsh-plugin`：`npm ci` + `npm test` + `npm run build` | 生成 `server/internal/api/connectpkg/index.js`、`client.js`（两个文件都入库；CI 的 `web` job 会检查 `index.js` 有无未提交改动） |
+| `make plugin` | `dsh-plugin`：`npm ci` + `npm test` + `npm run build` | 生成 `server/internal/api/connectpkg/index.js`、`client.js`（两个文件都入库；CI 的 `web` job 会检查两者有无未提交改动） |
 | `make web` | `web`：`pnpm install --frozen-lockfile` + `pnpm build`（= `tsc && vite build`） | `web/dist` |
 | `make embed` | 先 `web` + `plugin`，再把 `web/dist` 同步进 `server/internal/webui/build` | 嵌入目录 |
 | `make build` | `embed` + `CGO_ENABLED=0` 构建单文件服务端 | `dist/dsh-ee`（版本来自 `git describe --tags --always --dirty`） |
@@ -174,7 +174,7 @@ node scripts/check-docs.mjs
 
 | job | 触发 | 内容 |
 |---|---|---|
-| `web` | push / PR | Node 22 + corepack pnpm：`web` 的 install/build；`dsh-plugin` 的 install/test/build 并 `git diff --exit-code server/internal/api/connectpkg/index.js`；端侧 SDK/模板/Claude Code 适配器；上传 `web-dist` |
+| `web` | push / PR | Node 22 + corepack pnpm：`web` 的 install/build；`dsh-plugin` 的 install/test/build 并 `git diff --exit-code` 校验 `connectpkg/index.js`、`client.js`；端侧 SDK/模板/Claude Code 适配器；上传 `web-dist` |
 | `server` | push / PR | TiDB 8.5.8 服务容器；`go vet ./...` + `go test -count=1 ./...`（带 `DSH_EE_TEST_DSN`）；独立 module 的 vet/build |
 | `e2e` | push / PR，`needs: web` | 下载 `web-dist` → 构建单文件服务端 → `E2E_MANAGED=1` 跑 `e2e/run.mjs`；失败上传 `e2e-shots` |
 | `docker` | push / PR | 用占位 `.env` 校验三份 compose 与 `install.sh`；构建镜像；`docker run --rm dsh-ee:ci version` 必须等于 CI 版本号 |
