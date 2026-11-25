@@ -25,9 +25,11 @@ type memoryRuntime struct {
 	run       func(runtime.Command) error
 	final     string // 非空时替换 JSON 模式下默认的最终回复 "pilot summary"
 	destroyed bool
+	spec      runtime.SandboxSpec // 最后一次 Create 收到的 spec
 }
 
-func (m *memoryRuntime) Create(context.Context, runtime.SandboxSpec) (runtime.Sandbox, error) {
+func (m *memoryRuntime) Create(_ context.Context, spec runtime.SandboxSpec) (runtime.Sandbox, error) {
+	m.spec = spec
 	m.files = map[string]string{}
 	return m, nil
 }

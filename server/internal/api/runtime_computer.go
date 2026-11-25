@@ -193,6 +193,11 @@ func (s *Server) openCloudComputer(ctx context.Context, task *store.RuntimeTask,
 			return s.openPersistentComputer(ctx, pp, task, owner, botID, spec)
 		}
 	}
+	// 非持久 fallback 没有常驻电脑那一步的配额下发（openPersistentComputer 自己按 policy 下发）；
+	// 调用方没带配额时按同一开关补上，避免临时沙箱绕过原生磁盘配额。
+	if policy := s.opts.Runtime.Computer; policy.NativeDiskQuota && spec.DiskQuotaBytes == 0 {
+		spec.DiskQuotaBytes = policy.DiskLimitBytes
+	}
 	sandbox, err := s.opts.Runtime.Provider.Create(ctx, spec)
 	if err != nil {
 		return nil, errors.New("creating cloud sandbox failed")

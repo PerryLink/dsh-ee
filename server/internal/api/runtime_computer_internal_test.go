@@ -34,7 +34,8 @@ type fakeComputers struct {
 	wakes              int
 	hibernates         int
 	disk               int64 // du 报告的 KB
-	diskQuota          int64
+	diskQuota          int64 // CreatePersistent 收到的原生磁盘配额
+	ephemeralQuota     int64 // Create（临时沙箱）收到的原生磁盘配额
 	tokens             []string
 	dirs               []string           // 每轮 DSH 的当前目录和 DSH_HOME（"dir|home"）
 	check              func(token string) // 每轮 DSH 运行时检查凭证
@@ -76,6 +77,7 @@ func (f *fakeComputers) Create(_ context.Context, spec runtime.SandboxSpec) (run
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ephemeral++
+	f.ephemeralQuota = spec.DiskQuotaBytes
 	return f.newBox(spec.Env), nil
 }
 
@@ -569,6 +571,68 @@ func TestBotComputerRetainsLeaseUntilCredentialExpires(t *testing.T) {
 	if _, err := c.s.cloudComputerAction(ctx, c.computerID(), computerHibernate, "test", nil); !errors.Is(err, store.ErrRuntimeComputerBusy) || f.hibernates != 0 {
 		t.Fatalf("hibernation must wait for the credential to expire: %v", err)
 	}
+}
+
+// 临时沙箱（PERSISTENT=off、provider 不支持常驻、不属于机器人的任务）同样要下发原生磁盘配额，
+// 否则临时任务可以写满沙箱宿主的 ephemeral storage。常驻电脑仍由 openPersistentComputer 按 policy
+// 单独下发，行为和以前一致。
+func TestBotComputerEphemeralDiskQuota(t *testing.T) {
+	const limit = 64 << 20
+	t.Run("persistent off", func(t *testing.T) {
+		f := &fakeComputers{}
+		c := newComputerTest(t, f, runtime.ComputerPolicy{DiskLimitBytes: limit, NativeDiskQuota: true})
+		if got := c.run("READ the note"); got.Status != store.RuntimeSucceeded {
+			t.Fatalf("run: %+v", got)
+		}
+		if f.ephemeral != 1 || f.creates != 0 || f.ephemeralQuota != limit {
+			t.Fatalf("ephemeral quota = %d, want %d (ephemeral=%d creates=%d)", f.ephemeralQuota, limit, f.ephemeral, f.creates)
+		}
+	})
+	t.Run("persistent off without native quota", func(t *testing.T) {
+		f := &fakeComputers{}
+		c := newComputerTest(t, f, runtime.ComputerPolicy{DiskLimitBytes: limit})
+		if got := c.run("READ the note"); got.Status != store.RuntimeSucceeded {
+			t.Fatalf("run: %+v", got)
+		}
+		if f.ephemeral != 1 || f.ephemeralQuota != 0 {
+			t.Fatalf("ephemeral quota = %d, want 0 (ephemeral=%d)", f.ephemeralQuota, f.ephemeral)
+		}
+	})
+	t.Run("provider without persistence", func(t *testing.T) {
+		m := &memoryRuntime{run: func(runtime.Command) error { return nil }}
+		c := newComputerTest(t, m, runtime.ComputerPolicy{DiskLimitBytes: limit, NativeDiskQuota: true})
+		if got := c.run("READ the note"); got.Status != store.RuntimeSucceeded {
+			t.Fatalf("run: %+v", got)
+		}
+		if m.spec.DiskQuotaBytes != limit {
+			t.Fatalf("ephemeral quota = %d, want %d", m.spec.DiskQuotaBytes, limit)
+		}
+	})
+	t.Run("caller spec without quota", func(t *testing.T) {
+		f := &fakeComputers{}
+		c := newComputerTest(t, f, runtime.ComputerPolicy{DiskLimitBytes: limit, NativeDiskQuota: true})
+		task := &store.RuntimeTask{ID: 1, OwnerID: c.employee, RunAsID: c.employee, TimeoutSeconds: 300}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		computer, err := c.s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: "img", Timeout: time.Minute, AllowedHosts: []string{"gateway.example"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		computer.close(true)
+		if f.ephemeralQuota != limit {
+			t.Fatalf("ephemeral fallback quota = %d, want %d", f.ephemeralQuota, limit)
+		}
+	})
+	t.Run("persistent unchanged", func(t *testing.T) {
+		f := &fakeComputers{}
+		c := newComputerTest(t, f, runtime.ComputerPolicy{Persistent: true, IdleTimeout: time.Hour, DiskLimitBytes: limit, NativeDiskQuota: true})
+		if got := c.run("READ"); got.Status != store.RuntimeSucceeded {
+			t.Fatalf("run: %+v", got)
+		}
+		if f.creates != 1 || f.ephemeral != 0 || f.diskQuota != limit || f.ephemeralQuota != 0 {
+			t.Fatalf("persistent quota = %d, ephemeral quota = %d (creates=%d ephemeral=%d)", f.diskQuota, f.ephemeralQuota, f.creates, f.ephemeral)
+		}
+	})
 }
 
 func TestBotComputerWorkerRetriesLostCreateResponse(t *testing.T) {

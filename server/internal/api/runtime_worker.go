@@ -223,7 +223,15 @@ func (s *Server) executeCloudTask(ctx context.Context, task *store.RuntimeTask) 
 		return "", nil, err
 	}
 	timeout := time.Duration(task.TimeoutSeconds) * time.Second
-	computer, err := s.openCloudComputer(ctx, task, runtime.SandboxSpec{Image: opts.Image, Timeout: timeout + 30*time.Second, AllowedHosts: []string{gateway.Hostname()}})
+	// 临时沙箱也要下发原生磁盘配额，否则临时任务可以在宿主上写满 ephemeral storage，
+	// 共享 OpenSandbox 集群时还会挤占其它租户。没开启时保持 0，只靠常驻电脑每轮结束后的用量阈值。
+	// 这个 spec 也会传给 openCloudComputer 的常驻路径：那里只取 Image / AllowedHosts，配额仍由
+	// openPersistentComputer 按 policy 单独下发，不会重复或覆盖。
+	spec := runtime.SandboxSpec{Image: opts.Image, Timeout: timeout + 30*time.Second, AllowedHosts: []string{gateway.Hostname()}}
+	if opts.Computer.NativeDiskQuota {
+		spec.DiskQuotaBytes = opts.Computer.DiskLimitBytes
+	}
+	computer, err := s.openCloudComputer(ctx, task, spec)
 	if err != nil {
 		return "", nil, err
 	}
