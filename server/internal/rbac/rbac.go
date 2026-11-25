@@ -36,6 +36,7 @@ const (
 	RegistryManage     = "registry.manage"
 	UpstreamManage     = "upstream.manage"
 	DistributionManage = "distribution.manage"
+	RuntimeManage      = "runtime.manage"
 	SettingsManage     = "settings.manage"
 
 	// 扩展字段和访问规则（docs/access-control.md）
@@ -79,6 +80,7 @@ var Catalog = []Permission{
 	{RegistryManage, "管理 npm 源", "能力与分发", "路由规则、上游与访问令牌", nil},
 	{UpstreamManage, "管理上游预载", "能力与分发", "在线同步与离线导入", nil},
 	{DistributionManage, "管理 DSH 分发", "能力与分发", "DSH 本体与桌面版的分发", nil},
+	{RuntimeManage, "管理云机器人与云电脑", "能力与分发", "云机器人、云电脑与运行记录", nil},
 	{SettingsManage, "管理系统设置", "能力与分发", "评分、收录策略、上游、LDAP 登录等全局设置", nil},
 	{FieldsManage, "管理字段和访问规则", "用户与权限", "给文档、知识库、用户加扩展字段，设置按字段控制访问的规则，改用于访问控制的字段值", nil},
 	{ExtensionsDevelop, "开发扩展", "能力与分发", "拿到写扩展用的技能和命令说明（dsh-ee-extension-dev）", nil},

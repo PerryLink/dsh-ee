@@ -138,14 +138,17 @@ func (s *Server) routes() []route {
 		usr("DELETE /api/runtime/chat/uploads/{id}", s.handleRuntimeChatUploadDelete),
 		usr("PUT /api/runtime/chat/bots/{id}/share", s.handleRuntimeChatShare),
 		usr("POST /api/runtime/chat/bots/{id}/computer/{action}", s.handleRuntimeChatComputer),
-		prm("GET /api/admin/runtime/bots", s.handleRuntimeBots, rbac.SettingsManage),
-		prm("POST /api/admin/runtime/bots", s.handleRuntimeSaveBot, rbac.SettingsManage),
-		prm("PUT /api/admin/runtime/bots/{id}", s.handleRuntimeSaveBot, rbac.SettingsManage),
-		prm("POST /api/admin/runtime/bots/{id}/run", s.handleRuntimeRunBot, rbac.SettingsManage),
-		prm("PUT /api/admin/runtime/bots/{id}/share", s.handleRuntimeShareBot, rbac.SettingsManage),
-		prm("GET /api/admin/runtime/computers", s.handleRuntimeComputers, rbac.SettingsManage),
-		prm("POST /api/admin/runtime/computers/{id}/hibernate", s.handleRuntimeComputerAdmin, rbac.SettingsManage),
-		prm("DELETE /api/admin/runtime/computers/{id}", s.handleRuntimeComputerAdmin, rbac.SettingsManage),
+		// 云机器人 / 云电脑管理：settings.manage 是历史行为（这些接口原先只认它），
+		// runtime.manage 是新拆出的专用权限点；两者任一即可，旧角色不受影响。
+		// 只给 runtime.manage 的角色不再需要全局设置权限就能管云机器人、云电脑与运行记录。
+		prm("GET /api/admin/runtime/bots", s.handleRuntimeBots, rbac.SettingsManage, rbac.RuntimeManage),
+		prm("POST /api/admin/runtime/bots", s.handleRuntimeSaveBot, rbac.SettingsManage, rbac.RuntimeManage),
+		prm("PUT /api/admin/runtime/bots/{id}", s.handleRuntimeSaveBot, rbac.SettingsManage, rbac.RuntimeManage),
+		prm("POST /api/admin/runtime/bots/{id}/run", s.handleRuntimeRunBot, rbac.SettingsManage, rbac.RuntimeManage),
+		prm("PUT /api/admin/runtime/bots/{id}/share", s.handleRuntimeShareBot, rbac.SettingsManage, rbac.RuntimeManage),
+		prm("GET /api/admin/runtime/computers", s.handleRuntimeComputers, rbac.SettingsManage, rbac.RuntimeManage),
+		prm("POST /api/admin/runtime/computers/{id}/hibernate", s.handleRuntimeComputerAdmin, rbac.SettingsManage, rbac.RuntimeManage),
+		prm("DELETE /api/admin/runtime/computers/{id}", s.handleRuntimeComputerAdmin, rbac.SettingsManage, rbac.RuntimeManage),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
 		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
 		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),
