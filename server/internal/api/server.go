@@ -460,6 +460,10 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
+// Unwrap 让 http.NewResponseController 能穿透这一层拿到真正的连接：
+// /raw/、/conan/ 上传的请求体读时限依赖 SetReadDeadline。
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // ---- JSON 工具 ----
 
 type apiError struct {

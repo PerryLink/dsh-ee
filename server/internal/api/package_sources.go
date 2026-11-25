@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -16,6 +18,50 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/registry"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
+
+// packageUploadReadDeadline 是一次 /raw/、/conan/ PUT 读取请求体的总时限。
+// 慢速 chunked 上传能一直占着连接和半写的 temp 文件；没有读时限时，只持有
+// registry:publish 令牌的人开一批连接就能把上传通道拖死。2 分钟对应 512 MiB
+// 上限约 4.3 MiB/s 的速率，普通内网足够。包级变量便于测试缩短。
+var packageUploadReadDeadline = 2 * time.Minute
+
+// beginPackageBodyReadDeadline 给当前请求的底层连接设上请求体读时限，返回清除函数。
+// 中间件链上包了 statusRecorder / securityHeadersWriter 两层 ResponseWriter，必须经
+// http.ResponseController 穿透到真正的连接才能 SetReadDeadline；底层不支持时（例如
+// 测试直接调 handler 用的 httptest.ResponseRecorder）返回 no-op，不影响正常上传。
+// 只有请求体完整读完后才能调用返回的清除函数，理由见 discardPackageUploadBody。
+func beginPackageBodyReadDeadline(w http.ResponseWriter) func() {
+	rc := http.NewResponseController(w)
+	if err := rc.SetReadDeadline(time.Now().Add(packageUploadReadDeadline)); err != nil {
+		return func() {}
+	}
+	return func() { _ = rc.SetReadDeadline(time.Time{}) }
+}
+
+// discardPackageUploadBody 在请求体没读完就要返回错误时调用。
+//
+// net/http 在写响应时会为复用连接排空剩余请求体（最多 256 KiB，见 server.go 的
+// maxPostHandlerReadBytes）：这一步读的就是客户端连接，慢速/半开的 PUT 会重新阻塞，
+// 连错误响应都发不出去（实测读时限到期的 408 会一直卡到客户端断开）。这里把读时限
+// 设为已过期并显式关闭请求体，排空立即失败，net/http 随后关闭连接而不是继续等。
+func discardPackageUploadBody(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength == 0 {
+		return // 没有请求体可排空，保持 keep-alive
+	}
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now())
+	_ = r.Body.Close()
+	w.Header().Set("Connection", "close")
+}
+
+// packageBodyReadTimedOut 判断读请求体失败是否由上面的读时限触发：
+// 连接到期返回 os.ErrDeadlineExceeded（i/o timeout），http 的 body 会原样透传。
+func packageBodyReadTimedOut(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
 
 func (s *Server) packageSourceErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
@@ -272,7 +318,19 @@ func (s *Server) getPackageFile(w http.ResponseWriter, r *http.Request, src stor
 }
 
 func (s *Server) putPackageFile(w http.ResponseWriter, r *http.Request, p *Principal, src store.PackageSource, name, namespace string, conan registry.ConanPath, mutable bool) {
+	// 慢速 chunked PUT 会一直占着连接和半写的 temp 文件：与 npm publish / 网页上传共用
+	// 同一个 2 名额闸门，名额满直接 429（不排队等），拿到名额后再给请求体读加总时限。
+	release, ok := beginPackageUpload()
+	if !ok {
+		// 名额满时请求体还没读：别让 net/http 写 429 时再去排空它。
+		discardPackageUploadBody(w, r)
+		w.Header().Set("Retry-After", "1")
+		writeErr(w, http.StatusTooManyRequests, "Too many concurrent package uploads; retry shortly")
+		return
+	}
+	defer release()
 	if s.registry == nil {
+		discardPackageUploadBody(w, r)
 		writeErr(w, http.StatusServiceUnavailable, "Package storage is not initialized")
 		return
 	}
@@ -281,14 +339,26 @@ func (s *Server) putPackageFile(w http.ResponseWriter, r *http.Request, p *Princ
 		limit = 4 << 20
 	}
 	if r.ContentLength > limit {
+		// 声明长度已超限时不必读请求体。这里不用 discard：声明长度必然大于 256 KiB
+		//（最小的 conanmanifest 上限也有 4 MiB），net/http 自己会放弃排空并关闭连接。
 		writeErr(w, http.StatusRequestEntityTooLarge, "Artifact exceeds the upload size limit")
 		return
 	}
+	// 读请求体前设总时限：慢速/半开的 PUT 最多占用连接这么久。只有完整读完才能清除；
+	// 读失败时连清理都不能做，见 discardPackageUploadBody。
+	clearBodyDeadline := beginPackageBodyReadDeadline(w)
 	digest, err := s.registry.Blobs().Put(r.Body, limit)
 	if err != nil {
+		discardPackageUploadBody(w, r)
+		if packageBodyReadTimedOut(err) {
+			writeErr(w, http.StatusRequestTimeout, "Artifact upload timed out; resend the file faster or retry")
+			return
+		}
 		s.packageSourceErr(w, r, err)
 		return
 	}
+	// 请求体已经完整读完：清掉读时限，避免影响 keep-alive 上的后续请求。
+	clearBodyDeadline()
 	if expected := r.Header.Get("X-Checksum-Sha1"); expected != "" && !strings.EqualFold(expected, digest.Shasum) {
 		writeErr(w, http.StatusBadRequest, "Artifact checksum mismatch")
 		return
