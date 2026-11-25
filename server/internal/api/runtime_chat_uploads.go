@@ -111,9 +111,9 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "请用 multipart/form-data 的 file 字段上传文件")
 		return
 	}
+	// 临时文件由认证之后的 withMultipartCleanup 统一清；handler 里别再自己 defer RemoveAll：
+	// 它注册在 file.Close 后面，会先于 Close 执行，Windows 上文件还开着就删不掉。
 	defer file.Close()
-	// FormFile 解析的是 requireUser 换过 context 的请求副本，net/http 只清理原请求的临时文件
-	defer r.MultipartForm.RemoveAll()
 	if header.Size > runtimeChatUploadMax {
 		tooLarge()
 		return

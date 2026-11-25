@@ -50,15 +50,20 @@ func (r route) handler(s *Server) http.Handler {
 	return r.inner(s)
 }
 
-// inner 是认证之后的处理链：权限点校验加处理函数。Agent 工具调用直接走这里。
+// inner 是认证之后的处理链：权限点校验、multipart 临时文件清理加处理函数。Agent 工具调用直接走这里。
 func (r route) inner(s *Server) http.Handler {
-	if s.opts.DemoSite != nil && demoSiteBlocked[r.pattern] {
-		return http.HandlerFunc(demoSiteRefuse)
+	var h http.Handler
+	switch {
+	case s.opts.DemoSite != nil && demoSiteBlocked[r.pattern]:
+		h = http.HandlerFunc(demoSiteRefuse)
+	case len(r.perms) > 0:
+		h = s.requirePerm(r.perms...)(r.h)
+	default:
+		h = r.h
 	}
-	if len(r.perms) > 0 {
-		return s.requirePerm(r.perms...)(r.h)
-	}
-	return r.h
+	// 认证中间件用 r.WithContext 造请求副本交给 handler，net/http 只清理原请求上的
+	// multipart 临时文件；统一在 handler 之前收口清理副本上的（见 withMultipartCleanup）。
+	return withMultipartCleanup(h)
 }
 
 // routes 是全部 HTTP 路由。前端静态资源与 404 兜底不在表里，见 Handler。

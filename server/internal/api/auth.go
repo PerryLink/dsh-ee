@@ -425,6 +425,34 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // ---- 中间件 ----
 
+// cleanupMultipartForm 删掉 r 上 ParseMultipartForm 落盘的临时文件。
+//
+// net/http 只在请求结束时清理它自己持有的那个 *http.Request 的 MultipartForm
+// （见 net/http 的 finishRequest）。但这层之后所有中间件为了塞账号上下文都会用
+// r.WithContext 造副本往下传，handler 是在副本上解析 multipart 的，原请求的
+// MultipartForm 永远是 nil，临时文件就一直留在 os.TempDir 里。所以 handler 返回后
+// 必须有人清副本上的，见 withMultipartCleanup。
+//
+// RemoveAll 是幂等的（文件已不存在时忽略 os.ErrNotExist），重复调用安全。
+func cleanupMultipartForm(r *http.Request) {
+	if r == nil || r.MultipartForm == nil {
+		return
+	}
+	_ = r.MultipartForm.RemoveAll()
+}
+
+// withMultipartCleanup 在 handler 返回后清理它解析 multipart 留下的临时文件。
+//
+// 包在认证之后（route.inner 的最后一层）：requireUser / requireAgent / requireConfig /
+// requireUserOrToken、嵌入会话等所有认证分支最终都落到同一个 handler，在这里收口一次
+// 即可，将来新增认证方式也不用各写一遍。
+func withMultipartCleanup(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer cleanupMultipartForm(r)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
