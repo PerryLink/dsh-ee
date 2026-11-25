@@ -856,10 +856,16 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tools := []map[string]any{}
+		// 云任务：审批模式不是只读时才下发写工具，执行前再按模式审批（runtime_approval.go）
+		runtimeWrites := pr.Runtime && s.runtimeWritesListed(r.Context(), pr)
 		for _, cn := range c.conns {
 			for _, t := range cn.tools {
+				name := mcpToolName(cn.asset.Slug, t.Name)
+				if pr.Runtime && (runtimeBotToolName(name) || !t.ReadOnly && !runtimeWrites) {
+					continue
+				}
 				tools = append(tools, map[string]any{
-					"name":        mcpToolName(cn.asset.Slug, t.Name),
+					"name":        name,
 					"description": "【" + cn.spec.Title + "】" + t.Description,
 					"inputSchema": t.InputSchema,
 					"annotations": map[string]any{"readOnlyHint": t.ReadOnly},
@@ -871,18 +877,26 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		if len(c.kbases) > 0 {
 			tools = append(tools, kbToolDefs()...)
 		}
-		if targets := s.appToolTargets(r.Context(), v, c); len(targets) > 0 {
-			tools = append(tools, appToolDefs(targets)...)
+		// 云端机器人的协作工具：只在属于个人机器人的一轮里（按这一轮的短期令牌认）出现。
+		if pr.Runtime {
+			if _, err := s.runtimeBotCaller(r.Context(), pr); err == nil {
+				tools = append(tools, botsToolDefs(runtimeWrites)...)
+			}
 		}
-		if sets, err := s.visibleDataSets(r.Context(), v); err != nil {
-			s.internalErr(w, r, err)
-			return
-		} else if len(sets) > 0 {
-			tools = append(tools, dataToolDefs(sets)...)
-		}
-		tools = append(tools, homeToolDefs()...)
-		for _, def := range s.agentToolList(r.Context(), pr) {
-			tools = append(tools, def)
+		if !pr.Runtime {
+			if targets := s.appToolTargets(r.Context(), v, c); len(targets) > 0 {
+				tools = append(tools, appToolDefs(targets)...)
+			}
+			if sets, err := s.visibleDataSets(r.Context(), v); err != nil {
+				s.internalErr(w, r, err)
+				return
+			} else if len(sets) > 0 {
+				tools = append(tools, dataToolDefs(sets)...)
+			}
+			tools = append(tools, homeToolDefs()...)
+			for _, def := range s.agentToolList(r.Context(), pr) {
+				tools = append(tools, def)
+			}
 		}
 		// 第三方 Harness 跟 cursor 翻页；DSH 接入插件一次要全量（mcp_tools_page.go）。
 		page, next, err := mcpToolsListPage(tools, msg.Params, dshConnect(r))
@@ -904,8 +918,17 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			writeRPC(w, msg.ID, nil, &mcp.Error{Code: -32602, Message: "参数格式不对"})
 			return
 		}
+		if pr.Runtime && (strings.HasPrefix(p.Name, "ee_") || strings.HasPrefix(p.Name, dataConn+"__") ||
+			strings.HasPrefix(p.Name, appConn+"__") || strings.HasPrefix(p.Name, homeConn+"__")) {
+			writeRPC(w, msg.ID, mcp.TextResult(runtimeReadOnlyRejection, true), nil)
+			return
+		}
 		if strings.HasPrefix(p.Name, "ee_") {
 			writeRPC(w, msg.ID, s.agentCall(r, pr, p.Name, p.Arguments), nil)
+			return
+		}
+		if pr.Runtime && runtimeBotToolName(p.Name) {
+			writeRPC(w, msg.ID, s.botsCall(r, pr, p.Name, p.Arguments), nil)
 			return
 		}
 		if strings.HasPrefix(p.Name, dataConn+"__") {
@@ -946,6 +969,11 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, t := range cn.tools {
 				if t.Name == tool {
+					// 云任务的写操作：按机器人的审批模式放行、出卡等员工批准或拦下，都留审计
+					if pr.Runtime && !t.ReadOnly {
+						writeRPC(w, msg.ID, s.runtimeWrite(r, v, pr, cn.asset, t, p.Arguments), nil)
+						return
+					}
 					ctx := r.Context()
 					// 写操作：调用方不是 DSH 时先由员工在网页上确认（write_confirm.go）
 					if ask := s.confirmWrite(r, v, cn.asset, t, p.Arguments); ask != nil {

@@ -12,8 +12,6 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/kb"
 )
 
-// 不启动服务、不连数据库的子命令：写扩展时用的检查和规格（docs/plugins.md §10、docs/agent-dev.md §3～§4）。
-
 // runCLI 处理子命令。不是子命令时 handled 为 false，由调用方启动服务。
 func runCLI(args []string, stdout, stderr io.Writer) (handled bool, code int) {
 	// 全局 --lang 在这里统一摘掉并解析一次（可以出现在任意子命令位置），子命令不用认识它。
@@ -47,6 +45,8 @@ func runCLI(args []string, stdout, stderr io.Writer) (handled bool, code int) {
 		return true, cliPackage(args[1:], stdout, stderr)
 	case "doctor":
 		return true, cliDoctor(args[1:], stdout, stderr)
+	case "blob-gc":
+		return true, cliBlobGC(args[1:], stdout, stderr)
 	case "admin":
 		return true, cliAdmin(args[1:], stdout, stderr)
 	}

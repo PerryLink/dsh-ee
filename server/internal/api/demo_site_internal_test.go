@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +39,37 @@ func TestDemoSiteGuard(t *testing.T) {
 	c := &http.Client{Transport: (&DemoSite{selfPort: port}).guard(&http.Transport{})}
 	if _, err := c.Get("http://169.254.169.254/latest/meta-data/"); !errors.Is(err, errDemoSiteDial) {
 		t.Fatalf("外部地址应被拦：%v", err)
+	}
+}
+
+// 云任务 / 云电脑在演示站必须整体拒绝：这些接口会创建真实的 OpenSandbox 沙箱并产生账单。
+// 这里动态遍历路由表，防止以后新增 /runtime/ 路由时忘了加进 demoSiteBlocked。
+func TestDemoSiteBlocksRuntimeRoutes(t *testing.T) {
+	s := &Server{opts: Options{DemoSite: &DemoSite{}}}
+	n := 0
+	for _, rt := range s.routes() {
+		if !strings.Contains(rt.pattern, "/runtime/") && !strings.HasSuffix(rt.pattern, "/runtime") {
+			continue
+		}
+		n++
+		method, _, _ := strings.Cut(rt.pattern, " ")
+		rec := httptest.NewRecorder()
+		func() {
+			// 漏挡的路由会走到真正的处理函数，可能因为 Server 没初始化而 panic。
+			// 统一报成「漏挡」，比让整个测试崩掉更好定位。
+			defer func() {
+				if v := recover(); v != nil {
+					t.Fatalf("%s 在演示站没有被拦下（处理函数 panic：%v），请加进 demoSiteBlocked", rt.pattern, v)
+				}
+			}()
+			rt.inner(s).ServeHTTP(rec, httptest.NewRequest(method, "/", nil))
+		}()
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), demoSiteMsg) {
+			t.Errorf("%s 在演示站应返回 403（demoSiteRefuse），实际 %d %s", rt.pattern, rec.Code, rec.Body.String())
+		}
+	}
+	if n == 0 {
+		t.Fatal("路由表里没有 /runtime/ 路由：这个测试已经失效，请检查 routes() 里的路径")
 	}
 }
 

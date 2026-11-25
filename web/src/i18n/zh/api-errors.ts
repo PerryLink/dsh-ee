@@ -10,6 +10,15 @@
  * es / pt / hi 等语言包合并后按同一份键补译文。
  */
 export default {
+  release: {
+    checksum_format: "SHA-512 格式无效，请仅粘贴完整的 sha512 值。",
+    checksum_mismatch: "SHA-512 校验不一致，请核对清单中的文件名和版本。",
+    invalid: "平台、版本或安装包文件名无效",
+    busy: "该平台正在下载或导入，或文件名已被其他版本使用",
+    checksum: "sha512 无效或校验不一致",
+    body: "安装包为空、超过大小限制或上传中断",
+    imported: "离线导入的安装包不能从官方下载，请重新导入",
+  },
   upstream: {
     auth_failed: "上游仓库认证失败，请检查令牌、用户名密码及仓库访问权限",
   },
@@ -208,5 +217,37 @@ export default {
     version_not_found: "版本不存在",
     asset_not_found: "能力不存在",
     review_forbidden: "没有权限审核这类能力",
+  },
+  runtime_chat: {
+    bot_unavailable: "这个机器人不存在或没有为你开放网页对话",
+    bot_disabled: "这个机器人的网页对话已停用，历史记录仍可查看",
+    not_found: "会话不存在或不属于当前账号",
+    invalid_message: "消息不能为空，且不能超过 {{max}} 字节",
+    invalid_key: "请求标识无效，请重新发送",
+    busy: "上一条消息还在处理中，请等待回复后再发送",
+    idempotency_conflict: "这条消息与之前的发送请求冲突，请重新发送",
+    queue_full: "你排队中的云任务已达上限，请稍后再试",
+    team_forbidden: "这个机器人没有共享给你所在的部门",
+    no_department: "你的账号没有填写部门，不能共享机器人",
+    invalid_department: "部门名不能超过 {{max}} 个字符，也不能含控制字符",
+    upload_too_large: "单个文件不能超过 {{max_mb}} MB",
+    upload_unsupported: "只支持 PDF、Word（.docx）、Excel（.xlsx）、CSV、PPT（.pptx）、Markdown 和纯文本文件",
+    upload_unreadable: "读不出这个文件的内容，可能已损坏、加密或是扫描件",
+    upload_busy: "同时在处理的文件太多，请稍后再试",
+    upload_quota: "还没发出的附件太多了（合计不超过 {{max_mb}} MB），先发出或删掉一些再上传",
+    too_many_uploads: "一条消息最多带 {{max}} 个附件",
+    upload_unavailable: "附件不存在或已经发出，请重新上传",
+  },
+  runtime_approval: {
+    invalid_mode: "审批模式只能是只读、逐个审批、自动审批或完全放行",
+    invalid_rules: "自动审批规则不合法：不能为空或只写 *，不能含空白或斜杠，最多 {{max}} 条",
+    risk_unconfirmed: "开启完全放行前必须确认风险",
+    locked: "管理员没有允许你修改这个机器人的审批模式",
+  },
+  runtime_computer: {
+    busy: "云电脑正在工作或正在被操作，请稍后再试",
+    unsupported: "当前运行时不支持常驻云电脑，每轮任务都会使用一台新电脑",
+    provider_failed: "沙箱服务操作失败，请稍后再试",
+    not_found: "这台云电脑不存在（可能已经被回收）",
   },
 };

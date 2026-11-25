@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/insta
 
 | 变量 | 作用 |
 | --- | --- |
-| `DSH_EE_VERSION` | 安装的版本，默认最新发布，如 `v0.3.0` |
+| `DSH_EE_VERSION` | 安装的版本，默认最新发布，如 `v0.3.1` |
 | `DSH_EE_IMAGE` | 换镜像，例如内网镜像仓库里的副本 |
 | `DSH_EE_PORT` | 宿主机端口，默认 8080 |
 | `TIDB_REGISTRY` | TiDB 镜像来源，默认 Docker Hub 的 `pingcap`，拉不动时可换镜像站 |
@@ -120,13 +120,13 @@ systemctl enable --now dsh-ee
 ## 在线使用 GHCR 镜像
 
 每次 push 发布 tag，image workflow 校验 tag 在主干上后，自动构建并推送 linux/amd64 与 linux/arm64 镜像。
-完整版本标签如 `v0.3.0`；稳定版另更新 `0.3` 与 `latest`，预发布（rc / beta / alpha 等）不更新浮动标签。
+完整版本标签如 `v0.3.1`；稳定版另更新 `0.3` 与 `latest`，预发布（rc / beta / alpha 等）不更新浮动标签。
 镜像可以匿名拉取，上面的[一条命令在线安装](#一条命令在线安装)用的就是它。已有数据库时也可以只跑一个容器，只需要 DSN：
 
 ```bash
 docker run -d --name dsh-ee -p 8080:8080 -v dsh-ee-data:/data \
   -e DSH_EE_DSN='root:@tcp(tidb-host:4000)/dsh_ee' \
-  ghcr.io/hikariming/dsh-ee:v0.3.0
+  ghcr.io/hikariming/dsh-ee:v0.3.1
 docker logs dsh-ee 2>&1 | grep 初始化码
 ```
 
@@ -146,6 +146,8 @@ WITH_DB=tidb make bundle VERSION=v0.1.0   # 只带 TiDB 镜像，包小一些
 ```
 
 产物在 `deploy/out/`。离线包仍手工构建、归档，不由 GHCR workflow 自动生成或上传。
+
+镜像的基础镜像版本由 `Dockerfile` 决定：Go 阶段固定为 `golang:1.27.4-alpine`（与 `server/go.mod` 的 `go 1.27.4` 对齐，避免浮动 tag 换 patch 后构建环境漂移），前端阶段用 `node:22-alpine`（与 CI 的 Node 22 一致），pnpm 由 `web/package.json` 的 `packageManager` 经 corepack 固定。升级 Go/Node 大版本时要把 `go.mod`、`Dockerfile` 与 CI 一起改，同一 commit 才能复现同一镜像。
 
 ## 开发环境直接用 compose
 

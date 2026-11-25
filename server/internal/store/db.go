@@ -40,9 +40,21 @@ func (s *Store) SuperDisabled() bool { return s.superOff.Load() }
 
 // Open 连接数据库；库不存在时（MySQL 错误 1049）尝试创建，方便本地开发。
 func Open(ctx context.Context, dsn string) (*Store, error) {
+	return open(ctx, dsn, true)
+}
+
+// OpenExisting 只连接 DSN 指定的现有数据库，不创建库。
+func OpenExisting(ctx context.Context, dsn string) (*Store, error) {
+	return open(ctx, dsn, false)
+}
+
+func open(ctx context.Context, dsn string, allowCreate bool) (*Store, error) {
 	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("解析 DSN: %w", err)
+	}
+	if !allowCreate && cfg.DBName == "" {
+		return nil, errors.New("DSN 未指定数据库")
 	}
 	// 统一按 UTC 读写时间。
 	cfg.ParseTime = true
@@ -51,7 +63,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 
 	db, err := connect(ctx, cfg)
 	var me *mysql.MySQLError
-	if errors.As(err, &me) && me.Number == 1049 && cfg.DBName != "" {
+	if allowCreate && errors.As(err, &me) && me.Number == 1049 && cfg.DBName != "" {
 		if err := createDatabase(ctx, cfg); err != nil {
 			return nil, err
 		}

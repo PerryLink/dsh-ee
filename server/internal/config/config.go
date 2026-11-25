@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hikariming/dsh-ee/server/internal/embed"
+	"github.com/hikariming/dsh-ee/server/internal/runtime"
 )
 
 type Config struct {
@@ -78,6 +79,7 @@ type Config struct {
 	BootstrapAdminPassword string
 	// 本地数据目录：npm 包 tarball、上游元数据缓存。
 	DataDir string
+	Runtime runtime.Settings
 	// 对外访问地址（如 https://dsh.acme.internal），用于生成 tarball 下载地址；
 	// 为空时按请求的 Host / X-Forwarded-* 推断。
 	PublicURL string
@@ -490,6 +492,11 @@ func Load() (*Config, error) {
 		}
 		c.CSPReportURI = v
 	}
+	runtimeSettings, err := runtime.LoadSettings(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	c.Runtime = runtimeSettings
 	return c, nil
 }
 

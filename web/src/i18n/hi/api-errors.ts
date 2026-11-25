@@ -3,6 +3,15 @@ import type { Messages } from "../types";
 
 /** 老 /api/* 错误码的英文文案；键路径与 server/internal/api/errcodes.go 的 code 原文一一对应。 */
 export default {
+  release: {
+    checksum_format: "SHA-512 प्रारूप अमान्य है। केवल पूरा sha512 मान पेस्ट करें।",
+    checksum_mismatch: "SHA-512 मेल नहीं खाता। मेनिफ़ेस्ट में फ़ाइल का नाम और संस्करण जाँचें।",
+    invalid: "Invalid platform, version or installer filename.",
+    busy: "This platform is busy or the filename belongs to another version.",
+    checksum: "Invalid SHA-512 or checksum mismatch.",
+    body: "The package is empty, too large, or the upload was interrupted.",
+    imported: "Offline packages cannot be mirrored. Import the package again.",
+  },
   upstream: {
     auth_failed: "अपस्ट्रीम रिपॉज़िटरी प्रमाणीकरण विफल रहा। टोकन, उपयोगकर्ता नाम, पासवर्ड और रिपॉज़िटरी अनुमतियाँ जाँचें।",
   },
@@ -201,5 +210,37 @@ export default {
     version_not_found: "That version doesn't exist.",
     asset_not_found: "That capability doesn't exist.",
     review_forbidden: "You don't have permission to review this kind of capability.",
+  },
+  runtime_chat: {
+    bot_unavailable: "This bot doesn't exist or doesn't have web chat enabled for you.",
+    bot_disabled: "Web chat is disabled for this bot. You can still read the history.",
+    not_found: "The conversation doesn't exist or doesn't belong to this account.",
+    invalid_message: "The message can't be empty or longer than {{max}} bytes.",
+    invalid_key: "Invalid request identifier. Send the message again.",
+    busy: "The previous message is still being processed. Wait for the reply before sending.",
+    idempotency_conflict: "This message conflicts with an earlier send request. Send it again.",
+    queue_full: "You've reached the limit of queued cloud tasks. Try again later.",
+    team_forbidden: "This bot isn't shared with your department.",
+    no_department: "Your account has no department, so you can't share the bot.",
+    invalid_department: "The department name can't exceed {{max}} characters or contain control characters.",
+    upload_too_large: "हर फ़ाइल अधिकतम {{max_mb}} MB की हो सकती है।",
+    upload_unsupported: "केवल PDF, Word (.docx), Excel (.xlsx), CSV, PowerPoint (.pptx), Markdown और सादा टेक्स्ट फ़ाइलें समर्थित हैं।",
+    upload_unreadable: "इस फ़ाइल की सामग्री पढ़ी नहीं जा सकी। यह खराब, एन्क्रिप्टेड या स्कैन की गई छवि हो सकती है।",
+    upload_busy: "अभी बहुत सारी फ़ाइलें प्रोसेस हो रही हैं। थोड़ी देर बाद फिर कोशिश करें।",
+    upload_quota: "बहुत सारे अटैचमेंट अभी भेजे नहीं गए हैं (कुल {{max_mb}} MB तक)। पहले कुछ भेजें या हटाएँ।",
+    too_many_uploads: "एक संदेश में अधिकतम {{max}} अटैचमेंट हो सकते हैं।",
+    upload_unavailable: "अटैचमेंट मौजूद नहीं है या पहले ही भेजा जा चुका है। इसे फिर से अपलोड करें।",
+  },
+  runtime_approval: {
+    invalid_mode: "अनुमोदन मोड केवल-पढ़ने, हर एक को स्वीकृत करें, स्वतः स्वीकृति या पूर्ण पहुँच में से एक होना चाहिए।",
+    invalid_rules: "स्वतः स्वीकृति नियम अमान्य हैं: अकेला * नहीं, स्पेस या स्लैश नहीं, और अधिकतम {{max}} नियम।",
+    risk_unconfirmed: "पूर्ण पहुँच चालू करने से पहले जोखिमों की पुष्टि करें।",
+    locked: "आपके व्यवस्थापक ने आपको इस बॉट का अनुमोदन मोड बदलने की अनुमति नहीं दी है।",
+  },
+  runtime_computer: {
+    busy: "The cloud computer is working or being changed right now. Try again shortly.",
+    unsupported: "This runtime doesn't keep cloud computers; every task uses a fresh one.",
+    provider_failed: "The sandbox service couldn't complete the operation. Try again later.",
+    not_found: "That cloud computer doesn't exist (it may already have been reclaimed).",
   },
 } satisfies Messages<typeof zh>;

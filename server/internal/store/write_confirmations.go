@@ -26,19 +26,21 @@ type WriteConfirmation struct {
 	Status   string `json:"status"`
 	Client   string `json:"client"`
 	// 发起这次确认的接入令牌；0 表示没有令牌（旧记录）
-	TokenID   int64      `json:"token_id,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	DecidedAt *time.Time `json:"decided_at"`
+	TokenID int64 `json:"token_id,omitempty"`
+	// 云任务（云端机器人）发起的确认才有：对话页据此把审批卡显示在那一轮里
+	RuntimeTaskID int64      `json:"runtime_task_id,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	DecidedAt     *time.Time `json:"decided_at"`
 }
 
-const confirmCols = "id, user_id, asset_id, tool, args_hash, args, status, client, token_id, created_at, expires_at, decided_at"
+const confirmCols = "id, user_id, asset_id, tool, args_hash, args, status, client, token_id, runtime_task_id, created_at, expires_at, decided_at"
 
 func scanConfirm(row interface{ Scan(...any) error }) (*WriteConfirmation, error) {
 	var c WriteConfirmation
 	var decided sql.NullTime
-	var tokenID sql.NullInt64
-	if err := row.Scan(&c.ID, &c.UserID, &c.AssetID, &c.Tool, &c.ArgsHash, &c.Args, &c.Status, &c.Client, &tokenID, &c.CreatedAt, &c.ExpiresAt, &decided); err != nil {
+	var tokenID, taskID sql.NullInt64
+	if err := row.Scan(&c.ID, &c.UserID, &c.AssetID, &c.Tool, &c.ArgsHash, &c.Args, &c.Status, &c.Client, &tokenID, &taskID, &c.CreatedAt, &c.ExpiresAt, &decided); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -46,6 +48,9 @@ func scanConfirm(row interface{ Scan(...any) error }) (*WriteConfirmation, error
 	}
 	if tokenID.Valid {
 		c.TokenID = tokenID.Int64
+	}
+	if taskID.Valid {
+		c.RuntimeTaskID = taskID.Int64
 	}
 	if decided.Valid {
 		t := decided.Time
@@ -57,13 +62,16 @@ func scanConfirm(row interface{ Scan(...any) error }) (*WriteConfirmation, error
 func (s *Store) CreateWriteConfirmation(ctx context.Context, c *WriteConfirmation, tokenHash string, ttl time.Duration) error {
 	t := now()
 	c.CreatedAt, c.ExpiresAt, c.Status = t, t.Add(ttl), ConfirmPending
-	var tokenID any
+	var tokenID, taskID any
 	if c.TokenID > 0 {
 		tokenID = c.TokenID
 	}
+	if c.RuntimeTaskID > 0 {
+		taskID = c.RuntimeTaskID
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO write_confirmations (token_hash, user_id, asset_id, tool, args_hash, args, status, client, token_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		tokenHash, c.UserID, c.AssetID, c.Tool, c.ArgsHash, c.Args, c.Status, c.Client, tokenID, c.CreatedAt, c.ExpiresAt)
+		`INSERT INTO write_confirmations (token_hash, user_id, asset_id, tool, args_hash, args, status, client, token_id, runtime_task_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		tokenHash, c.UserID, c.AssetID, c.Tool, c.ArgsHash, c.Args, c.Status, c.Client, tokenID, taskID, c.CreatedAt, c.ExpiresAt)
 	if err != nil {
 		return err
 	}
@@ -107,6 +115,12 @@ func (s *Store) UseWriteConfirmation(ctx context.Context, id int64) (bool, error
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// ExpireWriteConfirmation 让一条还在等的确认立即过期（云任务不再等它时用），之后再批准也不会执行。
+func (s *Store) ExpireWriteConfirmation(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE write_confirmations SET expires_at = ? WHERE id = ? AND status = ?", now(), id, ConfirmPending)
+	return err
 }
 
 // PendingWriteConfirmations 列出这个人还在等确认的。

@@ -16,6 +16,7 @@ import { useMenus, useMenuTitle } from "../lib/menus";
 import { MenuIcon } from "../lib/icons";
 import { PAGE_META } from "../lib/page-meta";
 import { SEARCH_ITEMS } from "../lib/search-index";
+import { useStore } from "../lib/store";
 
 /** 全局快捷键：⌘K / Ctrl+K 打开或关上搜索。 */
 export function useSearchShortcut(toggle: () => void) {
@@ -76,7 +77,8 @@ function DocsGroup({ onSelect }: { onSelect: (slug: string) => void }) {
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t, i18n } = useTranslation();
-  const { tree, pathOf, hasPage } = useMenus();
+  const { tree, menus, pathOf, hasPage } = useMenus();
+  const { settings } = useStore();
   const menuTitle = useMenuTitle();
   const navigate = useNavigate();
   const go = (to: string) => {
@@ -86,7 +88,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
 
   const pages = tree.flatMap((n) =>
     n.kind === "group" ? (n.visible ? n.children.filter((c) => c.visible).map((c) => ({ m: c, group: menuTitle(n) })) : []) : n.visible ? [{ m: n, group: "" }] : [],
-  ).filter(({ m }) => m.kind === "page");
+  ).filter(({ m }) => m.kind === "page" && (m.page_key !== "dsh-download" || settings.distribution.enabled));
+  const downloadMenu = menus.find((m) => m.kind === "page" && m.page_key === "dsh-download");
+  if (settings.distribution.enabled && downloadMenu && !pages.some(({ m }) => m.id === downloadMenu.id)) {
+    pages.push({ m: downloadMenu, group: "" });
+  }
   const desc = (key: string) => (i18n.exists(`pageDesc.${key}`) ? t(`pageDesc.${key}` as never) : PAGE_META[key]?.description ?? "");
   const items = SEARCH_ITEMS.filter((it) => it.page === "account" || hasPage(it.page));
 
@@ -102,7 +108,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               <CommandItem
                 key={`page-${m.id}`}
                 value={`page ${m.id} ${title}`}
-                keywords={[group, desc(m.page_key), m.path, PAGE_META[m.page_key]?.title ?? ""]}
+                keywords={[group, desc(m.page_key), m.path, PAGE_META[m.page_key]?.title ?? "", ...(PAGE_META[m.page_key]?.keywords ?? [])]}
                 onSelect={() => go(m.path)}
                 className="[&>svg:last-child]:hidden"
               >

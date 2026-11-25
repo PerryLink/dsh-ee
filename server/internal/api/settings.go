@@ -114,6 +114,8 @@ func sectionPerms(field string) []string {
 		return []string{rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage}
 	case "Knowledge":
 		return []string{rbac.SettingsManage, rbac.KnowledgeManage}
+	case "Distribution":
+		return []string{rbac.SettingsManage, rbac.DistributionManage}
 	default:
 		return []string{rbac.SettingsManage}
 	}

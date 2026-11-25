@@ -55,6 +55,8 @@ export type DshTarget = "mac-arm64" | "mac-x64" | "win-x64";
 export type DshReleaseState = "available" | "downloading" | "mirrored" | "failed" | "removed";
 
 export interface DshRelease {
+  source?: "import" | "official";
+  upstream_url?: string;
   id: number;
   target: DshTarget;
   kind: "zip" | "dmg" | "exe";

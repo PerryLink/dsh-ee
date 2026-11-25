@@ -33,6 +33,9 @@ import directory from "./directory";
 import devdocs from "./devdocs";
 import embed from "./embed";
 import expertCenter from "./expert-center";
+import { runtime } from "../en/runtime";
+import { approval } from "../en/approval";
+import { botChat } from "../en/bot-chat";
 
 export default {
   ...common,
@@ -68,4 +71,7 @@ export default {
   ...devdocs,
   ...embed,
   ...expertCenter,
+  runtime,
+  botChat,
+  approval,
 } satisfies Messages<typeof zh>;

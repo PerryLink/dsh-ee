@@ -187,6 +187,7 @@ export default {
         "vote": "प्रतिक्रिया को रेटिंग दी"
       },
       "dsh_release": {
+        import: "Imported offline installer",
         "check": "आधिकारिक संस्करण जाँचा",
         "mirror": "इंस्टॉलर डाउनलोड किया",
         "mirror_failed": "इंस्टॉलर सत्यापन विफल",
