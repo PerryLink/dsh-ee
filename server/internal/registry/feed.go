@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,6 +74,18 @@ type feedEntry struct {
 
 // DshfindSource 是内置的 dshfind 插件源的显示名。
 const DshfindSource = "dshfind"
+
+// feedFetchTimeout 是单次插件源抓取（含重定向与响应体读取）的总超时。transport 只有响应头
+// 超时（默认部署 1 分钟），服务端可以在发完响应头后一直慢慢吐字节，把管理面的抓取 goroutine
+// 长期占住；这里按整次抓取限时。改成包级变量便于测试用短超时验证。
+var feedFetchTimeout = 30 * time.Second
+
+// feedMaxRedirects 是插件源抓取允许的最大重定向跳数，与 tarball 下载保持一致。
+const feedMaxRedirects = 5
+
+// feedMaxBodyBytes 是插件源索引响应体的上限。正常插件索引是 MB 级；上限用来防止恶意或损坏的
+// 源用超大响应占满管理面进程内存（JSON 仍然是流式解析，不会整份读入内存）。
+const feedMaxBodyBytes = 16 << 20
 
 // FeedResult 是一个插件源这次取目录的结果。
 type FeedResult struct {
@@ -153,13 +166,33 @@ func (s *Service) fetchFeed(ctx context.Context, url string, refresh bool) ([]Fe
 	if !refresh && time.Since(feed.at) < time.Hour && feed.plugins != nil {
 		return feed.plugins, feed.at, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	fetchCtx, cancel := context.WithTimeout(ctx, feedFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	req.Header.Set("User-Agent", "dsh-ee")
-	resp, err := s.up.hc.Do(req)
+	// 插件索引按匿名抓取（服务端配置的上游凭据不能跟着第三方目录的跳转发出去），所以这里用
+	// s.up.hc 的副本而不是带凭据的 authenticatedClient。
+	// 每一跳重定向都要过 ValidateUpstreamURL：拨号层的 IP 守卫只在直连时生效，部署走
+	// HTTP(S)_PROXY 时目标主机由代理解析、守卫被绕过；逐跳预检保证代理模式下重定向到内网或
+	// 云元数据地址也会被拒绝，而合法的跨主机 CDN 跳转（公网地址）照常跟随。
+	client := *s.up.hc
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= feedMaxRedirects {
+			return fmt.Errorf("插件目录重定向超过 %d 次", feedMaxRedirects)
+		}
+		if err := s.up.ValidateUpstreamURL(req.Context(), req.URL.String()); err != nil {
+			return fmt.Errorf("插件目录重定向被拒绝：%w", err)
+		}
+		return nil
+	}
+	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, time.Time{}, fmt.Errorf("访问插件目录超时：%w", err)
+		}
 		return nil, time.Time{}, fmt.Errorf("访问插件目录：%w", err)
 	}
 	defer resp.Body.Close()
@@ -188,7 +221,12 @@ func (s *Service) fetchFeed(ctx context.Context, url string, refresh bool) ([]Fe
 			} `json:"versions"`
 		} `json:"plugins"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<20)).Decode(&idx); err != nil {
+	// +1 让流式解析最多读到上限之外的 1 字节，用来区分「响应过大」和普通的格式错误。
+	limited := &io.LimitedReader{R: resp.Body, N: feedMaxBodyBytes + 1}
+	if err := json.NewDecoder(limited).Decode(&idx); err != nil {
+		if limited.N <= 0 {
+			return nil, time.Time{}, fmt.Errorf("插件目录超过 %d MB 上限", feedMaxBodyBytes>>20)
+		}
 		return nil, time.Time{}, fmt.Errorf("插件目录格式错误：%w", err)
 	}
 	out := make([]FeedPlugin, 0, len(idx.Plugins))
