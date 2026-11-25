@@ -36,6 +36,9 @@ type RuntimeChatUpload struct {
 
 const runtimeChatUploadColumns = `id, owner_id, conversation_id, COALESCE(task_id,0), name, size, format, pages, text_bytes, storage_key, created_at`
 
+// runtimeChatUploadJoinColumns 是同一组列加上表别名 u：要 JOIN runtime_tasks 时两张表有同名列（id、owner_id、created_at），必须限定。
+const runtimeChatUploadJoinColumns = `u.id, u.owner_id, u.conversation_id, COALESCE(u.task_id,0), u.name, u.size, u.format, u.pages, u.text_bytes, u.storage_key, u.created_at`
+
 func scanRuntimeChatUploads(rows *sql.Rows) ([]RuntimeChatUpload, error) {
 	defer rows.Close()
 	out := []RuntimeChatUpload{}
@@ -112,6 +115,24 @@ func (s *Store) PruneRuntimeChatUploads(ctx context.Context, before time.Time) (
 		}
 	}
 	return removed, nil
+}
+
+// RuntimeChatUploadsFinishedBefore 列出挂在一轮已经结束（成功/失败/取消）且结束早于 before 的附件，
+// 按 id 从小到大分页：返回 id 大于 afterID 的最多 limit 条。这一轮已经不会再读这些文件，调用方可以删原件和正文；
+// DB 行要留着，历史里还要显示文件名、大小和格式。
+func (s *Store) RuntimeChatUploadsFinishedBefore(ctx context.Context, before time.Time, afterID int64, limit int) ([]RuntimeChatUpload, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeChatUploadJoinColumns+` FROM runtime_chat_uploads u
+		JOIN runtime_tasks t ON t.id=u.task_id
+		WHERE u.id>? AND t.status IN (?,?,?) AND t.finished_at<?
+		ORDER BY u.id LIMIT ?`,
+		afterID, RuntimeSucceeded, RuntimeFailed, RuntimeCanceled, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanRuntimeChatUploads(rows)
 }
 
 // RuntimeChatUploadsForTasks 按轮次（任务 ID）列出挂在上面的附件，按上传顺序。

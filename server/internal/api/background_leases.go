@@ -18,6 +18,7 @@ const (
 	leaseElevationExpiry     = "admin.elevation-expiry"
 	leaseRecoveryExpiry      = "admin.recovery-expiry"
 	leaseAppRowPurge         = "app.row-purge"
+	leaseRuntimeChatUploadGC = "runtime.chat-upload-gc"
 	leaseDshReleases         = "dsh.releases"
 	leaseConnectPublish      = "connect.publish"
 	leaseRegistryCheckUpdate = "registry.check-updates"

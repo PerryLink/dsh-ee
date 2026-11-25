@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hikariming/dsh-ee/server/internal/runtime"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
@@ -187,4 +189,125 @@ func TestRuntimeChatUploadFileName(t *testing.T) {
 			t.Errorf("runtimeChatUploadFileName(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// TestRuntimeChatUploadPurgedAfterTask：一轮结束（成功/失败/取消）之后，后台回收只删附件的原件和正文，
+// DB 行保留——历史接口仍然返回文件名、大小和格式。还没结束的轮次、还没发出的附件都不受影响。
+func TestRuntimeChatUploadPurgedAfterTask(t *testing.T) {
+	c, employee, admin := newRuntimeChatTest(t)
+	ctx := context.Background()
+	ownerID, owner := employee("gc-owner")
+	upload := runtimeUploadClient(t, c.s, ownerID)
+	on := true
+	const chat = "/api/runtime/chat"
+	bot := decodeRuntimeChat[store.RuntimeBot](t, "create bot", admin("POST", runtimeBotsTestPath, runtimeChatBotBody(t, ownerID, "Reader", false, &on)), http.StatusOK)
+	thread := decodeRuntimeChat[store.RuntimeChatConversation](t, "open thread", owner("POST", chat+"/conversations", fmt.Sprintf("{\"bot_id\":%d}", bot.ID)), http.StatusOK)
+	threadPath := chat + "/conversations/" + strconv.FormatInt(thread.ID, 10)
+	uploadAndSend := func(name, content, key string, data []byte) (store.RuntimeChatUpload, int64) {
+		t.Helper()
+		up := decodeRuntimeChat[store.RuntimeChatUpload](t, "upload "+name, upload(threadPath+"/uploads", name, data), http.StatusCreated)
+		body, _ := json.Marshal(map[string]any{"content": content, "idempotency_key": key, "uploads": []int64{up.ID}})
+		turn := decodeRuntimeChat[store.RuntimeChatTurn](t, "send "+name, owner("POST", threadPath+"/messages", string(body)), http.StatusAccepted)
+		return up, turn.ID
+	}
+	storageKey := func(id int64) string {
+		t.Helper()
+		var key string
+		if err := c.s.store.DB().QueryRowContext(ctx, `SELECT storage_key FROM runtime_chat_uploads WHERE id=?`, id).Scan(&key); err != nil {
+			t.Fatalf("读附件存储键失败：%v", err)
+		}
+		return key
+	}
+	// filesExist 断言附件的原件和正文两个文件在 / 不在。
+	filesExist := func(what string, id int64, want bool) {
+		t.Helper()
+		key := storageKey(id)
+		for _, p := range []string{c.s.runtimeChatUploadPath(key), c.s.runtimeChatUploadPath(key) + ".md"} {
+			_, err := os.Stat(p)
+			if want && err != nil {
+				t.Fatalf("%s：附件文件不存在 %s: %v", what, p, err)
+			}
+			if !want && !os.IsNotExist(err) {
+				t.Fatalf("%s：附件文件没有删掉 %s", what, p)
+			}
+		}
+	}
+	// metadata 断言 DB 行还在，历史接口仍返回同样的文件名、大小和格式。
+	metadata := func(what string, up store.RuntimeChatUpload, taskID int64) {
+		t.Helper()
+		var rows int
+		if err := c.s.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_chat_uploads WHERE id=?`, up.ID).Scan(&rows); err != nil || rows != 1 {
+			t.Fatalf("%s：附件 DB 行没了（%d, %v）", what, rows, err)
+		}
+		history := decodeRuntimeChat[runtimeChatDetail](t, what+" history", owner("GET", threadPath, ""), http.StatusOK)
+		for _, m := range history.Messages {
+			if m.ID != taskID {
+				continue
+			}
+			if len(m.Attachments) != 1 || m.Attachments[0].ID != up.ID || m.Attachments[0].Name != up.Name ||
+				m.Attachments[0].Size != up.Size || m.Attachments[0].Format != up.Format {
+				t.Fatalf("%s：历史里的附件元数据不对：%+v，want %+v", what, m.Attachments, up)
+			}
+			return
+		}
+		t.Fatalf("%s：历史里找不到第 %d 轮", what, taskID)
+	}
+
+	// 成功的一轮：排队时不删；刚结束还在 grace 里不删；grace 到期删文件、留元数据。
+	const doc = "# 季度计划\n\n- 第三季度营收目标 1200 万\n"
+	okUp, okTask := uploadAndSend("成功.md", "", "gc-ok", []byte(doc))
+	filesExist("排队中的轮次", okUp.ID, true)
+	if n := c.s.purgeRuntimeChatUploads(ctx, 0); n != 0 {
+		t.Fatalf("还没结束的轮次被回收了 %d 个文件", n)
+	}
+	filesExist("排队中的轮次", okUp.ID, true)
+	c.runNext()
+	if n := c.s.purgeRuntimeChatUploads(ctx, runtimeChatUploadPurgeGrace); n != 0 {
+		t.Fatalf("刚结束、还在 grace 里的附件被回收了 %d 个文件", n)
+	}
+	filesExist("grace 内", okUp.ID, true)
+	if n := c.s.purgeRuntimeChatUploads(ctx, 0); n != 2 {
+		t.Fatalf("回收成功的轮次应该删掉原件和正文两个文件，实际 %d", n)
+	}
+	filesExist("成功之后", okUp.ID, false)
+	metadata("成功之后", okUp, okTask)
+	// DB 行不删，所以下一轮还会选中它；再跑一次是幂等的，不报错也不重复计数。
+	if n := c.s.purgeRuntimeChatUploads(ctx, 0); n != 0 {
+		t.Fatalf("重复回收又删了 %d 个文件", n)
+	}
+
+	// 失败的一轮：第一次失败会重新排队，第二次才到 failed 终态。
+	failUp, failTask := uploadAndSend("失败.md", "算一下", "gc-fail", []byte("# 算一下\n"))
+	run := c.m.run
+	c.m.run = func(runtime.Command) error { return errors.New("boom") }
+	c.runNext()
+	c.runNext()
+	c.m.run = run
+	var status string
+	if err := c.s.store.DB().QueryRowContext(ctx, `SELECT status FROM runtime_tasks WHERE id=?`, failTask).Scan(&status); err != nil || status != store.RuntimeFailed {
+		t.Fatalf("没造出失败的一轮：%q %v", status, err)
+	}
+	if n := c.s.purgeRuntimeChatUploads(ctx, 0); n != 2 {
+		t.Fatalf("回收失败的轮次应该删掉两个文件，实际 %d", n)
+	}
+	filesExist("失败之后", failUp.ID, false)
+	metadata("失败之后", failUp, failTask)
+
+	// 取消的一轮。
+	cancelUp, cancelTask := uploadAndSend("取消.md", "取消吧", "gc-cancel", []byte("# 取消\n"))
+	if rec := owner("POST", "/api/runtime/tasks/"+strconv.FormatInt(cancelTask, 10)+"/cancel", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("取消排队中的轮次：HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if n := c.s.purgeRuntimeChatUploads(ctx, 0); n != 2 {
+		t.Fatalf("回收取消的轮次应该删掉两个文件，实际 %d", n)
+	}
+	filesExist("取消之后", cancelUp.ID, false)
+	metadata("取消之后", cancelUp, cancelTask)
+
+	// 还没发出去的附件不归回收任务管（另有 24h 过期清理）。
+	pending := decodeRuntimeChat[store.RuntimeChatUpload](t, "pending upload", upload(threadPath+"/uploads", "待发.md", []byte("# 待发\n")), http.StatusCreated)
+	if n := c.s.purgeRuntimeChatUploads(ctx, 0); n != 0 {
+		t.Fatalf("待发附件被回收了 %d 个文件", n)
+	}
+	filesExist("待发附件", pending.ID, true)
 }

@@ -36,18 +36,31 @@ const (
 	runtimeChatUploadName       = 120
 	// runtimeChatUploadsWorkDir 是附件在机器人工作目录里的位置（相对路径），按轮次分子目录。
 	runtimeChatUploadsWorkDir = ".uploads"
+	// runtimeChatUploadPurgeGrace 是一轮结束多久之后回收附件的原件和正文；DB 行不删，历史里还要显示文件名、大小和格式。
+	runtimeChatUploadPurgeGrace = 24 * time.Hour
+	// runtimeChatUploadPurgeBatch 是后台回收每页读多少条，避免一次把全部历史附件读进内存。
+	runtimeChatUploadPurgeBatch = 200
 )
 
 func (s *Server) runtimeChatUploadPath(key string) string {
 	return filepath.Join(s.opts.DataDir, runtimeChatUploadsDir, key)
 }
 
-func (s *Server) removeRuntimeChatUpload(u store.RuntimeChatUpload) {
+// removeRuntimeChatUpload 删掉附件的原件和正文，返回真正删掉的文件数。文件已经不在了算 0：
+// 上传事务失败、上一轮周期回收已经删过都可能是这种情况，不算错误。
+func (s *Server) removeRuntimeChatUpload(u store.RuntimeChatUpload) int {
+	removed := 0
 	for _, p := range []string{s.runtimeChatUploadPath(u.StorageKey), s.runtimeChatUploadPath(u.StorageKey) + ".md"} {
-		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		switch err := os.Remove(p); {
+		case err == nil:
+			removed++
+		case errors.Is(err, os.ErrNotExist):
+			// 已经清理过：回收任务每轮都会重扫历史行，这里幂等。
+		default:
 			s.log.Warn("删除网页对话附件失败", "path", p, "err", err)
 		}
 	}
+	return removed
 }
 
 // runtimeChatUploadFileName 把浏览器给的文件名收成一个能直接当路径最后一段的名字：去掉目录、控制字符和路径分隔符，
@@ -193,6 +206,54 @@ func (s *Server) pruneRuntimeChatUploads(ctx context.Context) {
 	}
 	for _, u := range removed {
 		s.removeRuntimeChatUpload(u)
+	}
+}
+
+// purgeRuntimeChatUploads 回收挂在一轮已经结束（成功/失败/取消）且结束超过 grace 的附件：只删原件和正文，
+// DB 行保留，历史页还显示文件名、大小和格式。分页读，避免一次把全部历史附件读进内存；文件已经不在
+// （上一轮回收删过、磁盘被手动清过）不算失败，返回真正删掉的文件数。
+func (s *Server) purgeRuntimeChatUploads(ctx context.Context, grace time.Duration) int {
+	before := time.Now().UTC().Add(-grace)
+	removed := 0
+	var afterID int64
+	for ctx.Err() == nil {
+		list, err := s.store.RuntimeChatUploadsFinishedBefore(ctx, before, afterID, runtimeChatUploadPurgeBatch)
+		if err != nil {
+			s.log.Warn("列出要回收的网页对话附件失败", "err", err)
+			return removed
+		}
+		if len(list) == 0 {
+			return removed
+		}
+		for _, u := range list {
+			removed += s.removeRuntimeChatUpload(u)
+		}
+		afterID = list[len(list)-1].ID
+		if len(list) < runtimeChatUploadPurgeBatch {
+			return removed
+		}
+	}
+	return removed
+}
+
+// runRuntimeChatUploadGC 每小时回收一次网页对话的附件：过期的待发附件删行删文件（关了页面、拖错文件没发出去的），
+// 已结束轮次的附件只删文件、DB 行留给历史页。多实例下由租约保证只有一个实例执行；启动时先跑一轮，
+// 升级后立刻回收积压。
+func (s *Server) runRuntimeChatUploadGC(ctx context.Context) {
+	for {
+		s.runLeased(ctx, leaseRuntimeChatUploadGC, func(ctx context.Context) {
+			s.pruneRuntimeChatUploads(ctx)
+			if n := s.purgeRuntimeChatUploads(ctx, runtimeChatUploadPurgeGrace); n > 0 {
+				s.log.Info("回收了已结束轮次的网页对话附件文件", "files", n)
+			}
+		})
+		timer := time.NewTimer(time.Hour)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 }
 

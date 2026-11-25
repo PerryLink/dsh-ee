@@ -634,6 +634,7 @@ func (s *Server) RunBackground(ctx context.Context) {
 	go s.runElevationExpiry(ctx)
 	go s.runRecoveryExpiry(ctx)
 	go s.runAppRowPurge(ctx)
+	go s.runRuntimeChatUploadGC(ctx)
 	go s.runDshReleases(ctx)
 	if s.registry == nil {
 		return
