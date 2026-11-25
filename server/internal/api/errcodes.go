@@ -55,6 +55,65 @@ const (
 	codeDingTalkChatEmpty    = "dingtalk_chat.empty"
 	codeDingTalkChatMissing  = "dingtalk_chat.missing"
 	codeDingTalkChatSend     = "dingtalk_chat.send"
+
+	// ---- 员工网页对话：server/internal/api/runtime_chat.go ----
+
+	// codeRuntimeChatBotUnavailable：取或建线程、读机器人资料时机器人不存在、不属于本人或未开启网页对话，404。params 无。
+	codeRuntimeChatBotUnavailable = "runtime_chat.bot_unavailable"
+	// codeRuntimeChatBotDisabled：发消息时对话绑定的机器人或当前账号已不满足对话条件，409；历史仍可读。params 无。
+	codeRuntimeChatBotDisabled = "runtime_chat.bot_disabled"
+	// codeRuntimeChatNotFound：对话不存在或不属于本人，404。params 无。
+	codeRuntimeChatNotFound = "runtime_chat.not_found"
+	// codeRuntimeChatInvalidMessage：消息为空、超长或含非法字符，400。params：max（最大字节数）。
+	codeRuntimeChatInvalidMessage = "runtime_chat.invalid_message"
+	// codeRuntimeChatInvalidKey：幂等键缺失、超长或含非可见 ASCII 字符，400。params：max（最大字符数）。
+	codeRuntimeChatInvalidKey = "runtime_chat.invalid_key"
+	// codeRuntimeChatBusy：这段对话已有一条消息在排队或运行，409。params 无。
+	codeRuntimeChatBusy = "runtime_chat.busy"
+	// codeRuntimeChatIdempotencyConflict：同一个幂等键重放了不同的消息内容，409。params 无。
+	codeRuntimeChatIdempotencyConflict = "runtime_chat.idempotency_conflict"
+	// codeRuntimeChatQueueFull：员工排队或运行中的云任务已达上限，429。params 无。
+	codeRuntimeChatQueueFull = "runtime_chat.queue_full"
+	// codeRuntimeChatTeamForbidden：团队线程或团队机器人没有共享给当前员工所在的部门（包括已取消共享、改了部门、员工调岗），403。params 无。
+	codeRuntimeChatTeamForbidden = "runtime_chat.team_forbidden"
+	// codeRuntimeChatNoDepartment：所有者要共享机器人，但自己的账号没有填部门，409。params 无。
+	codeRuntimeChatNoDepartment = "runtime_chat.no_department"
+	// codeRuntimeChatInvalidDepartment：管理员共享机器人时给的部门名为空白以外的非法值（超长、含控制字符），400。params：max（最大字符数）。
+	codeRuntimeChatInvalidDepartment = "runtime_chat.invalid_department"
+	// codeRuntimeChatUploadTooLarge：拖进对话框的文件超过单个文件上限，413。params：max_mb（上限，MB）。
+	codeRuntimeChatUploadTooLarge = "runtime_chat.upload_too_large"
+	// codeRuntimeChatUploadUnsupported：附件不是 PDF / Word / Excel / CSV / PPT / Markdown / 纯文本，400。params 无。
+	codeRuntimeChatUploadUnsupported = "runtime_chat.upload_unsupported"
+	// codeRuntimeChatUploadUnreadable：附件格式支持但读不出内容（损坏、加密、扫描件、超出转换上限），400。params 无。
+	codeRuntimeChatUploadUnreadable = "runtime_chat.upload_unreadable"
+	// codeRuntimeChatUploadBusy：同时在转换的文件太多，429。params 无。
+	codeRuntimeChatUploadBusy = "runtime_chat.upload_busy"
+	// codeRuntimeChatUploadQuota：本人还没发出的附件总量到了上限，429。params: max_mb。
+	codeRuntimeChatUploadQuota = "runtime_chat.upload_quota"
+	// codeRuntimeChatTooManyUploads：一条消息带的附件超过上限，400。params：max（最多几个）。
+	codeRuntimeChatTooManyUploads = "runtime_chat.too_many_uploads"
+	// codeRuntimeChatUploadUnavailable：附件不存在、不属于本人这段对话或已经随别的消息发出，发消息时 409、删除时 404。params 无。
+	codeRuntimeChatUploadUnavailable = "runtime_chat.upload_unavailable"
+	// codeRuntimeApprovalInvalidMode：云端机器人的审批模式不是 read_only / manual / auto / full，400。params 无。
+	codeRuntimeApprovalInvalidMode = "runtime_approval.invalid_mode"
+	// codeRuntimeApprovalInvalidRules：自动审批规则不合法（空模式、单独的 *、含空白或斜杠、超长或超过条数上限），400。params：max（最多条数）。
+	codeRuntimeApprovalInvalidRules = "runtime_approval.invalid_rules"
+	// codeRuntimeApprovalRiskUnconfirmed：切到完全放行时没有确认风险（confirm_full_access），400。params 无。
+	codeRuntimeApprovalRiskUnconfirmed = "runtime_approval.risk_unconfirmed"
+	// codeRuntimeApprovalLocked：管理员没有允许所有者本人修改这个机器人的审批模式，403。params 无。
+	codeRuntimeApprovalLocked = "runtime_approval.locked"
+
+	// ---- 常驻云电脑（员工电脑 / 团队电脑）：server/internal/api/runtime_computer.go ----
+
+	// codeRuntimeComputerBusy：电脑正在跑任务或正在被另一次操作改动，手动休眠 / 重置 / 回收被拒，409。params 无。
+	codeRuntimeComputerBusy = "runtime_computer.busy"
+	// codeRuntimeComputerUnsupported：当前运行时不支持常驻电脑（provider 不支持休眠 / 唤醒或已关闭常驻），每轮都是新电脑，409。params 无。
+	codeRuntimeComputerUnsupported = "runtime_computer.unsupported"
+	// codeRuntimeComputerProviderFailed：沙箱服务执行休眠 / 删除失败，502。params 无。
+	codeRuntimeComputerProviderFailed = "runtime_computer.provider_failed"
+	// codeRuntimeComputerNotFound：管理员按电脑 ID 休眠 / 回收时没有这台电脑，404。params 无。
+	codeRuntimeComputerNotFound = "runtime_computer.not_found"
+
 	// ---- 登录与认证：server/internal/api/auth.go ----
 
 	// codeAuthLoginRequired：没有网页会话或嵌入令牌，401。params 无。

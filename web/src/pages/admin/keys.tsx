@@ -124,7 +124,7 @@ export default function AdminTokens() {
                 <td className="px-5 py-3 text-neutral-600"><div className="flex items-center gap-1.5">{token.username || "—"}{token.account_type === "bot" && <Badge>bot</Badge>}</div><div className="text-xs">{token.department}</div></td>
                 <td className="px-5 py-3 text-neutral-600">{t(`tokens.sources.${token.source}`)}</td>
                 <td className="px-5 py-3"><Badge tone={token.client_kind === "dsh" ? "brand" : "slate"}>{t(`tokens.clientKinds.${token.client_kind ?? "third_party"}`)}</Badge></td>
-                <td className="max-w-64 px-5 py-3 text-xs text-neutral-600">{token.scopes.map((scope) => t(`tokens.scopes.${scope}`)).join(" · ")}</td>
+                <td className="max-w-64 px-5 py-3 text-xs text-neutral-600">{token.scopes.map((scope) => t(`tokens.scopes.${scope}`, { nsSeparator: false })).join(" · ")}</td>
                 <td className="px-5 py-3 text-right tabular-nums">{formatTokens(token.month_used)}{token.monthly_token_limit !== null && ` / ${formatTokens(token.monthly_token_limit)}`}</td>
                 <td className="px-5 py-3 text-right tabular-nums text-neutral-600">{formatTime(token.last_used_at)}</td>
                 <td className="px-5 py-3"><Badge tone={revoked ? "slate" : "green"}>{t(revoked ? "tokens.states.revoked" : "tokens.states.active")}</Badge></td>

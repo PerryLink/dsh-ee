@@ -76,6 +76,31 @@ Go 写的 dsh-ee 服务端。目前实现：
 
 服务端仅在已认证的 `/api/dsh/catalog` 下发配置及明文凭据，不代理或存储这些制品，不写入可下载的接入组合包。请使用只读仓库账号并部署 HTTPS。接入插件在 DSH profile 内写入私有配置，通过进程环境供 DSH 内的 pip / Maven 使用；移除镜像时删除文件并恢复原环境，插件卸载时也恢复环境，不覆盖员工自己的配置。Maven 需要 3.9+。详见 [运维手册](../docs/operations.md)。
 
+## Conan 与 Raw 源
+
+在 **管理后台 → 分发与源 → npm 源 → Conan 与 Raw 源** 创建源。每个源有独立地址；托管源不会回源，代理只读且不缓存。管理需要 `registry.manage`；客户端使用统一接入令牌 `ee_at_…`，下载需要 `registry:read`，上传需要 `registry:publish`。请通过 HTTPS 使用令牌，不要把它放在 URL 或命令历史里。
+
+**Conan 2：**创建托管源后，将其地址添加为远程仓库。使用令牌作为 Conan 登录密码（用户名可填 `dsh-ee`）。下面示例假定已在当前目录执行过 `conan create .`。
+
+```sh
+conan remote add dsh-cpp https://dsh.example/conan/cpp
+CONAN_PASSWORD="$DSH_EE_TOKEN" conan remote login dsh-cpp dsh-ee
+conan upload 'my-package/1.0' -r dsh-cpp --confirm
+conan install --requires=my-package/1.0 -r dsh-cpp
+```
+
+Conan 代理使用 ConanCenter（`https://center2.conan.io`），需另建一个只读源。不支持 Conan 1 或客户端远程删除。
+
+**Raw：**将源地址和相对路径直接用于 curl、脚本或中间件；托管源支持 `PUT`、`GET`、`HEAD` 和 Range 下载。
+
+```sh
+raw=https://dsh.example/raw/team-artifacts
+curl -f -H "Authorization: Bearer $DSH_EE_TOKEN" -T ./release.bin "$raw/releases/release.bin"
+curl -f -H "Authorization: Bearer $DSH_EE_TOKEN" -O "$raw/releases/release.bin"
+```
+
+Raw 代理按相对路径访问指定的公网 HTTP(S) 基础地址，不接受客户端传入上游 URL，也不转发 dsh-ee 令牌。单个文件上限 512 MiB（Conan 清单 4 MiB）。托管文件上传后可在源页面刷新制品列表；备份时请同时备份数据库与数据目录。
+
 ## npm 源
 
 ### 企业制品仓库上游

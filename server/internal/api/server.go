@@ -26,6 +26,7 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/oidc"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/registry"
+	"github.com/hikariming/dsh-ee/server/internal/runtime"
 	"github.com/hikariming/dsh-ee/server/internal/secret"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
@@ -43,6 +44,7 @@ type Options struct {
 	Web http.Handler
 	// npm 源的数据目录（tarball、上游缓存）；为空时用临时目录（测试）。
 	DataDir string
+	Runtime runtime.Settings
 	// 对外地址，用于生成 tarball 下载地址；为空时按请求推断。
 	PublicURL string
 	// 浏览器内第三方 Harness 直连 /v1 与 /mcp 的跨域白名单，逗号分隔的完整 origin
@@ -166,15 +168,22 @@ type Server struct {
 	dingTalkClientMu   sync.Mutex
 	dingTalkAPIClient  *dingtalk.Client
 
-	initAdmin       initAdminState
-	store           *store.Store
-	box             *secret.Box
-	opts            Options
-	log             *slog.Logger
-	limiter         *loginLimiter
-	loginIPLimiter  *loginIPLimiter
-	deviceCodeRate  *ipRate
-	deviceTokenRate *ipRate
+	initAdmin initAdminState
+	// teamComputer 判断一轮云任务是不是团队对话的轮次、该用哪个团队（部门）的电脑（见 runtime_computer.go 的
+	// cloudTaskComputer）。为 nil 时没有团队电脑：团队共享（#320）合进来后由它接上。测试里直接赋值。
+	teamComputer func(ctx context.Context, task *store.RuntimeTask) (department string, botID int64, err error)
+	// 旧云电脑回收失败后的退避状态（orphan id → 下次重试时间 / 连续失败次数），见 runtime_computer.go 的
+	// reapComputerOrphans；只由回收器的单个 goroutine 访问。
+	computerOrphanRetries map[int64]computerOrphanRetry
+	computerOrphanCursor  int64
+	store                 *store.Store
+	box                   *secret.Box
+	opts                  Options
+	log                   *slog.Logger
+	limiter               *loginLimiter
+	loginIPLimiter        *loginIPLimiter
+	deviceCodeRate        *ipRate
+	deviceTokenRate       *ipRate
 	// client_credentials 的每 IP 限流；nil 表示关闭（见 clients.go）
 	clientTokenRate *ipRate
 	// 启动时间、登录计数与嵌入拒绝计数，只给 /metrics 用
@@ -191,6 +200,7 @@ type Server struct {
 	trustedProxies []netip.Prefix
 	upstream       *http.Client
 	registry       *registry.Service
+	packageProxy   *registry.PackageProxy
 	settings       settingsCache
 	// 能力目录变化的通知（DSH 的 MCP 长连接据此刷新工具）
 	hub hubBroker
@@ -290,6 +300,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 		}
 	}
 	s := &Server{store: st, box: box, opts: opts, log: log, leases: opts.BackgroundLeases, limiter: newLoginLimiter(), deviceCodeRate: newIPRate(deviceCodePerMinute), deviceTokenRate: newIPRate(deviceTokenPerMinute), trustedProxies: opts.TrustedProxies, upstream: up, connectKick: make(chan struct{}, 1), elevationKick: make(chan struct{}, 1), streamsDone: make(chan struct{})}
+	s.teamComputer = s.runtimeTeamComputer
 	if opts.RateLimitPerMinute > 0 {
 		s.tokenRate = newTokenRate(opts.RateLimitPerMinute, opts.RateLimitWindow)
 	}
@@ -302,6 +313,7 @@ func New(st *store.Store, box *secret.Box, opts Options, log *slog.Logger) *Serv
 	s.extEndpointRate.limit = extEndpointPerMinute
 	s.initDshReleases()
 	s.registry = s.newRegistry()
+	s.packageProxy = registry.NewPackageProxy()
 	s.routeTable = s.routes()
 	s.agentTools = buildAgentTools(s.routeTable)
 	return s
@@ -392,7 +404,7 @@ func (s *Server) Handler() http.Handler {
 	// securityHeaders 在最外层，harnessAPI 直接写出的响应同样带文档安全头。
 	// 每令牌限流（DSH_EE_RATE_LIMIT）放在 cors 里面，429 也带 CORS 头，浏览器能读到 Retry-After；
 	// requestID 在最外层，日志与响应用同一个请求号。
-	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(mux))))))
+	return s.requestID(s.logRequests(s.securityHeaders(s.cors(s.rateLimit(harnessAPI(runtimeTokenRoute(packageSourcePaths(mux))))))))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -608,6 +620,11 @@ func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
 
 // RunBackground 跑定时任务：LDAP、飞书组织同步、插件更新、接入插件与 Desktop 版本同步。
 func (s *Server) RunBackground(ctx context.Context) {
+	if s.opts.Runtime.Provider != nil && s.opts.DemoSite == nil {
+		go s.runCloudWorker(ctx)
+		go s.runCloudScheduler(ctx)
+		go s.runCloudComputerReaper(ctx)
+	}
 	go s.runLDAPSync(ctx)
 	go s.runFeishuSync(ctx)
 	go s.runDingTalkSync(ctx)

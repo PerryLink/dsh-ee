@@ -31,6 +31,9 @@ import directory from "./directory";
 import devdocs from "./devdocs";
 import embed from "./embed";
 import expertCenter from "./expert-center";
+import { runtime } from "./runtime";
+import { approval } from "./approval";
+import { botChat } from "./bot-chat";
 
 /** 中文文案（源语言）。按页面分模块，这里合并成一棵树。 */
 export default {
@@ -67,4 +70,7 @@ export default {
   ...devdocs,
   ...embed,
   ...expertCenter,
+  runtime,
+  botChat,
+  approval,
 };

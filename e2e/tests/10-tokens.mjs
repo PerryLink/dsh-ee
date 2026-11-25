@@ -161,6 +161,8 @@ export default async function (t) {
     await employee.goto(`${BASE}/tokens`);
     await employee.getByRole("button", { name: "生成令牌", exact: true }).click();
     await employee.getByRole("checkbox", { name: "模型", exact: true }).waitFor();
+    await employee.getByRole("checkbox", { name: "安装插件", exact: true }).waitFor();
+    await employee.getByRole("checkbox", { name: "发布插件", exact: true }).waitFor();
     assertEq(await employee.getByRole("checkbox", { name: "权限配置（dsh-ee config）", exact: true }).count(), 0, "普通员工看不到 config 范围");
     await admin.goto(`${BASE}/tokens`);
     await admin.getByRole("button", { name: "生成令牌", exact: true }).click();

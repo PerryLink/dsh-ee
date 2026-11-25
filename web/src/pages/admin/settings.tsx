@@ -12,6 +12,7 @@ import { useConfirm } from "../../lib/confirm";
 import { useAuth } from "../../lib/auth";
 import { Trans, useTranslation } from "react-i18next";
 import { LANGUAGE_OPTIONS } from "../../lib/languages";
+import RuntimeSettings from "./runtime-settings";
 
 /** 设置页的一节。id 用于页内目录与全局搜索定位（lib/search-index.ts）。 */
 export function Section({ id, title, desc, children }: { id?: string; title: string; desc?: string; children: ReactNode }) {
@@ -198,6 +199,10 @@ export default function AdminSettings() {
           <EmbedSettings />
         </Section>
 
+        <Section id="settings-runtime" title={t("runtime.title")} desc={t("runtime.desc")}>
+          <RuntimeSettings />
+        </Section>
+
         <Section id="settings-demo" title={t("demo.title")} desc={t("demo.desc")}>
           <DemoSettings />
         </Section>
@@ -216,6 +221,7 @@ const TOC: { id: string; label: string }[] = [
   { id: "settings-connect", label: "connectAdmin.title" },
   { id: "settings-write-confirm", label: "writeConfirm.title" },
   { id: "settings-embed", label: "settingsAdmin.embed.title" },
+  { id: "settings-runtime", label: "runtime.title" },
   { id: "settings-demo", label: "demo.title" },
 ];
 

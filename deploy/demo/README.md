@@ -9,7 +9,8 @@
 
 - 登录页显示演示账号和「一键填入」，每个页面顶上提示「公开演示站、会重置、别填真实密钥」。
 - 关掉会把别人锁在外面的操作：改密码、改用户 / 角色、配 LDAP / OIDC、换 logo。
-- 关掉会被滥用的操作：加模型接入（别人会拿访客的 key 用）、上传包、npm publish、同步上游、同步 DSH 官方包。
+- 关掉会被滥用的操作：加模型接入（别人会拿访客的 key 用）、上传包、npm publish、同步上游、同步 DSH 官方包、
+  云任务 / 云电脑（`/api/runtime`、`/api/admin/runtime` 全部拒绝，即使部署时配了 `DSH_EE_RUNTIME_*` 也不会执行）。
 - 所有对外请求只许连 dsh-ee 自己（示例连接就是连自己），按解析后的 IP 判断；
   试连别的地址、云主机元数据接口都会被拒。
 - 建应用、知识库、数据中台、管理模式这些照常可用，重置以后就清掉了。
@@ -19,7 +20,8 @@
   用自己的 DSH 接入成功，各往这个文件追加一行：时间、动作、对象（示例员工的用户名或应用名）。
   不记 IP、浏览器或别的访客信息；重置不清这个文件。`demo.sh stats` 按天汇总。
 
-被关掉的接口在 `server/internal/api/demo_site.go` 的 `demoSiteBlocked` 里。
+大部分被关掉的接口在 `server/internal/api/demo_site.go` 的 `demoSiteBlocked` 里；云任务 / 云电脑另有
+`runtimeAvailable()` 在演示模式下整体关闭（404）。两处都挡，配了 `DSH_EE_RUNTIME_*` 也不会执行。
 
 ## 部署
 

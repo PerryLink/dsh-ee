@@ -3,6 +3,36 @@ import type zhNs from "../zh/registry";
 import type { Messages } from "../types";
 
 export default {
+  packageSources: {
+    title: "Fontes Conan e Raw",
+    description: "Crie fontes hospedadas ou use URLs de proxy somente leitura diretamente no Conan, em scripts e no middleware.",
+    add: "Adicionar fonte",
+    cancel: "Cancelar",
+    protocol: "Tipo",
+    mode: "Modo",
+    hosted: "Hospedada",
+    proxy: "Proxy somente leitura",
+    name: "Nome da fonte",
+    upstream: "URL HTTP(S) de origem",
+    conanCenter: "Esta fonte busca pacotes no ConanCenter (center2.conan.io).",
+    create: "Criar fonte",
+    empty: "Ainda não há fontes Conan ou Raw.",
+    select: "Selecionar fonte",
+    saved: "URL de origem salva",
+    save: "Salvar",
+    endpoint: "URL da fonte",
+    tokenHint: "Defina DSH_EE_TOKEN com um token de acesso unificado. Downloads exigem registry:read; uploads exigem registry:publish.",
+    instructions: "Comandos de uso",
+    proxyArtifacts: "O proxy não armazena arquivos em cache, portanto não há uma lista de artefatos locais.",
+    artifacts: "Artefatos",
+    refresh: "Atualizar lista",
+    path: "Caminho do arquivo",
+    size: "Tamanho",
+    updated: "Atualizado",
+    noFiles: "Ainda não há artefatos. Atualize a lista após o upload.",
+    previous: "Anterior",
+    next: "Próximo",
+  },
   registry: {
     settingsSaveFailed: "As configurações não foram salvas: {{msg}}",
     scan: {

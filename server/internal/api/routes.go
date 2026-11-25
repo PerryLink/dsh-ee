@@ -118,6 +118,34 @@ func (s *Server) routes() []route {
 		prmt("GET /api/me/dingtalk-chat", s.handleDingTalkChatStatus),
 		agt("GET /api/me/dingtalk-chat/next", s.handleDingTalkChatNext),
 		agt("POST /api/me/dingtalk-chat/{id}/reply", s.handleDingTalkChatReply),
+		usr("POST /api/runtime/tasks", s.handleRuntimeSubmit),
+		usr("GET /api/runtime/tasks", s.handleRuntimeTasks),
+		usr("GET /api/runtime/tasks/{id}", s.handleRuntimeTask),
+		usr("GET /api/runtime/tasks/{id}/events", s.handleRuntimeEvents),
+		usr("POST /api/runtime/tasks/{id}/cancel", s.handleRuntimeCancel),
+		usr("GET /api/runtime/tasks/{id}/artifacts", s.handleRuntimeArtifacts),
+		usr("GET /api/runtime/tasks/{id}/artifacts/{artifact}", s.handleRuntimeArtifacts),
+		// 员工网页对话（runtime_chat.go）：只认网页会话里的员工本人
+		usr("GET /api/runtime/chat/bots", s.handleRuntimeChatBots),
+		usr("GET /api/runtime/chat/bots/{id}/profile", s.handleRuntimeChatBotProfile),
+		// 所有者本人切换机器人的写操作审批模式（runtime_approval.go），需管理员允许
+		usr("PUT /api/runtime/chat/bots/{id}/approval", s.handleRuntimeChatBotApproval),
+		usr("GET /api/runtime/chat/conversations", s.handleRuntimeChatConversations),
+		usr("POST /api/runtime/chat/conversations", s.handleRuntimeChatCreate),
+		usr("GET /api/runtime/chat/conversations/{id}", s.handleRuntimeChatConversation),
+		usr("POST /api/runtime/chat/conversations/{id}/messages", s.handleRuntimeChatMessage),
+		usr("POST /api/runtime/chat/conversations/{id}/uploads", s.handleRuntimeChatUpload),
+		usr("DELETE /api/runtime/chat/uploads/{id}", s.handleRuntimeChatUploadDelete),
+		usr("PUT /api/runtime/chat/bots/{id}/share", s.handleRuntimeChatShare),
+		usr("POST /api/runtime/chat/bots/{id}/computer/{action}", s.handleRuntimeChatComputer),
+		prm("GET /api/admin/runtime/bots", s.handleRuntimeBots, rbac.SettingsManage),
+		prm("POST /api/admin/runtime/bots", s.handleRuntimeSaveBot, rbac.SettingsManage),
+		prm("PUT /api/admin/runtime/bots/{id}", s.handleRuntimeSaveBot, rbac.SettingsManage),
+		prm("POST /api/admin/runtime/bots/{id}/run", s.handleRuntimeRunBot, rbac.SettingsManage),
+		prm("PUT /api/admin/runtime/bots/{id}/share", s.handleRuntimeShareBot, rbac.SettingsManage),
+		prm("GET /api/admin/runtime/computers", s.handleRuntimeComputers, rbac.SettingsManage),
+		prm("POST /api/admin/runtime/computers/{id}/hibernate", s.handleRuntimeComputerAdmin, rbac.SettingsManage),
+		prm("DELETE /api/admin/runtime/computers/{id}", s.handleRuntimeComputerAdmin, rbac.SettingsManage),
 		pub("GET /api/auth/handoff", s.handleAuthHandoff),
 		// 跨站嵌入 v1（embed.go）：宿主后端 mint 一次性 code；iframe 同源 exchange；注销嵌入会话
 		pub("POST /api/embed/sessions", s.handleEmbedSessionCreate),
@@ -237,7 +265,8 @@ func (s *Server) routes() []route {
 		prm("GET /api/admin/embed-settings", s.handleAdminEmbedSettings, rbac.SettingsManage),
 		// 嵌入运行概览（embed_stats.go）：只聚合数量，给设置页的运行概览卡片用
 		prm("GET /api/admin/embed/stats", s.handleAdminEmbedStats, rbac.SettingsManage),
-		prm("PUT /api/admin/settings", s.handlePutSettings, rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage),
+		// 按段落再校验：这里放行所有可能改设置的页面权限，distribution 段在 sectionPerms 里单独授权。
+		prm("PUT /api/admin/settings", s.handlePutSettings, rbac.SettingsManage, rbac.RegistryManage, rbac.UpstreamManage, rbac.DistributionManage),
 
 		// LDAP / AD 登录：配置里有服务账号，单独存、单独授权
 		prm("GET /api/admin/auth/ldap", s.handleGetLDAP, rbac.SettingsManage),
@@ -412,12 +441,14 @@ func (s *Server) routes() []route {
 		prm("GET /api/dsh/releases", s.handleDshReleases, rbac.PortalView),
 		prm("GET /dl/{target}/{file}", s.handleDownloadDshRelease, rbac.PortalView),
 		pub("GET /dl/connect/{file}", s.handleConnectTarball),
-		prm("GET /api/admin/dsh-releases", s.handleAdminDshReleases, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/import", s.handleImportDshRelease, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/check", s.handleCheckDshReleases, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/{id}/mirror", s.handleMirrorDshRelease, rbac.SettingsManage),
-		prm("POST /api/admin/dsh-releases/{id}/recommend", s.handleRecommendDshRelease, rbac.SettingsManage),
-		prm("DELETE /api/admin/dsh-releases/{id}", s.handleDeleteDshRelease, rbac.SettingsManage),
+		// DSH 分发页的操作权限：settings.manage 是旧行为，distribution.manage 是该页菜单对应的
+		// 权限点；两者任一即可，只给「管理 DSH 分发」的角色不再看到页面却处处 403。
+		prm("GET /api/admin/dsh-releases", s.handleAdminDshReleases, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/import", s.handleImportDshRelease, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/check", s.handleCheckDshReleases, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/{id}/mirror", s.handleMirrorDshRelease, rbac.SettingsManage, rbac.DistributionManage),
+		prm("POST /api/admin/dsh-releases/{id}/recommend", s.handleRecommendDshRelease, rbac.SettingsManage, rbac.DistributionManage),
+		prm("DELETE /api/admin/dsh-releases/{id}", s.handleDeleteDshRelease, rbac.SettingsManage, rbac.DistributionManage),
 		pub("/mcp", s.handleMCP),
 
 		// 管理员向导：首次部署清单、日常巡检、审核时读内容、连接申请
@@ -456,6 +487,10 @@ func (s *Server) routes() []route {
 		// npm 源与上游预载
 		prm("GET /api/admin/registry", s.handleRegistryOverview, rbac.RegistryManage, rbac.UpstreamManage, rbac.DashboardView),
 		prm("POST /api/admin/registry/check", s.handleRegistryCheck, rbac.RegistryManage),
+		prm("GET /api/admin/registry/sources", s.handleListPackageSources, rbac.RegistryManage),
+		prm("POST /api/admin/registry/sources", s.handleCreatePackageSource, rbac.RegistryManage),
+		prm("PATCH /api/admin/registry/sources/{protocol}/{source}", s.handleUpdatePackageSource, rbac.RegistryManage),
+		prm("GET /api/admin/registry/sources/{protocol}/{source}/artifacts", s.handlePackageArtifacts, rbac.RegistryManage),
 		prm("GET /api/admin/npm-tokens", s.handleAllNpmTokens, rbac.RegistryManage),
 		prm("DELETE /api/admin/npm-tokens/{id}", s.handleRevokeNpmToken, rbac.RegistryManage),
 		prm("GET /api/admin/upstream/feed", s.handleUpstreamFeed, rbac.UpstreamManage),
@@ -468,6 +503,8 @@ func (s *Server) routes() []route {
 
 		// npm 协议与 DSH 插件索引
 		pub("/npm/", s.handleNpm),
+		pub("/conan/", s.handleConanSource),
+		pub("/raw/", s.handleRawSource),
 		pub("GET /index/dsh-index.json", s.handleDshIndex),
 		pub("GET /setup.sh", s.handleSetupSh),
 		pub("GET /setup.ps1", s.handleSetupPs1),

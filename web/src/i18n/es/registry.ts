@@ -3,6 +3,36 @@ import type zhNs from "../zh/registry";
 import type { Messages } from "../types";
 
 export default {
+  packageSources: {
+    title: "Orígenes Conan y Raw",
+    description: "Crea orígenes alojados o usa las URL de proxy de solo lectura directamente en Conan, scripts y middleware.",
+    add: "Añadir origen",
+    cancel: "Cancelar",
+    protocol: "Tipo",
+    mode: "Modo",
+    hosted: "Alojado",
+    proxy: "Proxy de solo lectura",
+    name: "Nombre del origen",
+    upstream: "URL HTTP(S) de origen",
+    conanCenter: "Este origen obtiene paquetes de ConanCenter (center2.conan.io).",
+    create: "Crear origen",
+    empty: "Aún no hay orígenes Conan ni Raw.",
+    select: "Elegir origen",
+    saved: "URL de origen guardada",
+    save: "Guardar",
+    endpoint: "URL del origen",
+    tokenHint: "Configura DSH_EE_TOKEN con un token de acceso unificado. Las descargas requieren registry:read; las cargas, registry:publish.",
+    instructions: "Comandos de uso",
+    proxyArtifacts: "El proxy no almacena archivos en caché, por lo que no hay una lista local de artefactos.",
+    artifacts: "Artefactos",
+    refresh: "Actualizar lista",
+    path: "Ruta de archivo",
+    size: "Tamaño",
+    updated: "Actualizado",
+    noFiles: "Aún no hay artefactos. Actualiza la lista tras subir un archivo.",
+    previous: "Anterior",
+    next: "Siguiente",
+  },
   "registry": {
     "settingsSaveFailed": "La configuración no se guardó: {{msg}}",
     "scan": {
