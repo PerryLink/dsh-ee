@@ -34,7 +34,7 @@ dsh-ee 保存机器人定义、队列、状态事件和文件；执行在 OpenSa
 
 ## 任务 API
 
-登录后可用 `POST /api/runtime/tasks` 提交 `{"prompt":"生成今日摘要","idempotency_key":"daily-2026-11-22","timeout_seconds":120}`。`GET /api/runtime/tasks` 列出最近任务；`GET /api/runtime/tasks/{id}` 查状态，`GET /api/runtime/tasks/{id}/events` 查状态变更，`POST /api/runtime/tasks/{id}/cancel` 取消。用 `GET /api/runtime/tasks/{id}/artifacts` 查文件，`GET /api/runtime/tasks/{id}/artifacts/{artifact}` 下载。员工只能查看自己的任务。有系统设置权限的管理员可以查看普通任务，但网页对话和使用常驻电脑的任务结果（含回复、错误详情及产物）只对所有者开放。
+登录后可用 `POST /api/runtime/tasks` 提交 `{"prompt":"生成今日摘要","idempotency_key":"daily-2026-11-22","timeout_seconds":120}`。`GET /api/runtime/tasks` 列出最近任务；`GET /api/runtime/tasks/{id}` 查状态，`GET /api/runtime/tasks/{id}/events` 查状态变更，`POST /api/runtime/tasks/{id}/cancel` 取消。用 `GET /api/runtime/tasks/{id}/artifacts` 查文件，`GET /api/runtime/tasks/{id}/artifacts/{artifact}` 下载。员工只能查看自己的任务。有系统设置权限的管理员可以查看普通任务，但网页对话和使用常驻电脑的任务结果（含回复、错误详情及产物）只对所有者开放。查看产物列表和下载产物都写审计（`runtime.artifact.list` / `runtime.artifact.download`）：操作人、`source`（`team` / `personal`）、任务归属、文件 id 和名字，不记文件内容。
 
 任务最长 5 分钟，单次运行的令牌只在该员工权限范围内、只对指定模型的网关请求和 MCP 连接工具生效（写操作按机器人的审批模式放行，默认只读，见 [bot-approval.md](./bot-approval.md)），并在退出时吊销。临时电脑的工作目录和产物目录都是 `/tmp/dsh-ee-output`；常驻电脑的产物目录是工作目录下的 `output/`。DSH 的 shell 工具在 bwrap 下会把 `/tmp` 换成临时文件系统，只把工作区根挂回真实目录，所以产物目录必须在工作区内。
 

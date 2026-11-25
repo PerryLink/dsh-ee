@@ -219,6 +219,18 @@ func TestRuntimeTeamChatSharing(t *testing.T) {
 	if rec := bob("GET", download, ""); rec.Code != http.StatusOK || rec.Body.String() != "pilot summary" {
 		t.Fatalf("bob downloads alice's file: HTTP %d", rec.Code)
 	}
+	// 团队文件库的读操作也留痕：列表和下载各一条，记录谁看的、哪一轮、哪个部门、哪个文件；403 / 404 不写。
+	if logs := audits("runtime.artifact.list"); len(logs) != 1 || logs[0].ActorID == nil || *logs[0].ActorID != bobID ||
+		logs[0].Target != strconv.FormatInt(first.ID, 10) || logs[0].Detail["source"] != "team" ||
+		logs[0].Detail["owner_id"] != float64(aliceID) || logs[0].Detail["owner"] != "alice" ||
+		logs[0].Detail["conversation_id"] != float64(thread.ID) || logs[0].Detail["department"] != rd || logs[0].Detail["artifact_id"] != nil {
+		t.Fatalf("artifact list audit: %+v", logs)
+	}
+	if logs := audits("runtime.artifact.download"); len(logs) != 1 || logs[0].ActorID == nil || *logs[0].ActorID != bobID ||
+		logs[0].Target != strconv.FormatInt(first.ID, 10) || logs[0].Detail["source"] != "team" ||
+		logs[0].Detail["artifact_id"] != float64(files[0].ID) || logs[0].Detail["artifact"] != "summary.txt" {
+		t.Fatalf("artifact download audit: %+v", logs)
+	}
 	expectRuntimeChatCode(t, "outsider downloads", outsider("GET", download, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
 	expectRuntimeChatCode(t, "outsider lists", outsider("GET", aliceTask+"/artifacts", ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
 	// 事件和取消仍然只认触发人本人。
@@ -250,6 +262,13 @@ func TestRuntimeTeamChatSharing(t *testing.T) {
 	}
 	expectRuntimeChatCode(t, "bob downloads after unshare", bob("GET", download, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
 	expectRuntimeChatCode(t, "alice downloads her turn after unshare", alice("GET", download, ""), http.StatusForbidden, codeRuntimeChatTeamForbidden)
+	// 团队外、调岗后、取消共享后的 403 和所有者的定时任务产物 404 都没有写审计：只有成功读取才留痕。
+	if logs := audits("runtime.artifact.list"); len(logs) != 1 {
+		t.Fatalf("failed artifact lists were audited: %+v", logs)
+	}
+	if logs := audits("runtime.artifact.download"); len(logs) != 1 {
+		t.Fatalf("failed artifact downloads were audited: %+v", logs)
+	}
 	// 任务级接口（summary / 事件 / 取消）同样要求当前成员资格：取消共享后，触发过这一轮的 alice
 	// 也读不到、看不了、取消不了；修复前这三条都只按 owner_id 放行。
 	for _, probe := range []struct{ name, method, path string }{

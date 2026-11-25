@@ -394,8 +394,35 @@ func runRuntimePilot(t *testing.T, provider runtime.Provider, image string, comm
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &artifacts) != nil || len(artifacts) != 1 {
 		t.Fatalf("artifact list: %d %s", rec.Code, rec.Body.String())
 	}
-	rec = request("GET", base+"/artifacts/"+strconv.FormatInt(artifacts[0].ID, 10), "")
+	artifactPath := base + "/artifacts/" + strconv.FormatInt(artifacts[0].ID, 10)
+	// 别人的任务 / 不存在的文件是 404，不写审计；本人成功的列表和下载各写一条。
+	if rec := other("GET", artifactPath, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner artifact download: HTTP %d", rec.Code)
+	}
+	rec = request("GET", artifactPath, "")
 	if rec.Code != http.StatusOK || rec.Body.String() != "pilot summary" {
 		t.Fatalf("artifact download: %d", rec.Code)
+	}
+	for _, probe := range []struct {
+		action string
+		detail map[string]any
+	}{
+		{"runtime.artifact.list", nil},
+		{"runtime.artifact.download", map[string]any{"artifact_id": float64(artifacts[0].ID), "artifact": "summary.txt"}},
+	} {
+		logs, err := st.ListAudit(ctx, store.AuditFilter{Action: probe.action})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(logs) != 1 || logs[0].ActorID == nil || *logs[0].ActorID != employee || logs[0].Target != strconv.FormatInt(task.ID, 10) ||
+			logs[0].Detail["source"] != "personal" || logs[0].Detail["owner_id"] != float64(employee) || logs[0].Detail["owner"] != "runtime-owner" ||
+			logs[0].Detail["conversation_id"] != nil {
+			t.Fatalf("%s audit: %+v", probe.action, logs)
+		}
+		for k, want := range probe.detail {
+			if got := logs[0].Detail[k]; got != want {
+				t.Fatalf("%s audit detail %s = %v, want %v", probe.action, k, got, want)
+			}
+		}
 	}
 }

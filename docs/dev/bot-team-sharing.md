@@ -72,6 +72,8 @@ lang: zh-CN
 | --- | --- |
 | `runtime.bot.share` | 共享变更：操作人、机器人、`department`（新部门，空是取消）、`previous`、`by`（`owner` / `admin`） |
 | `runtime.chat.team_turn` | 团队对话里谁触发了任务：操作人就是发消息的员工，带 `bot_id`、`conversation_id`、`department`、`run_as` |
+| `runtime.artifact.list` | 谁看过文件库：操作人、`source`（`team` / `personal`）、`owner_id`、`owner`（触发那一轮的成员）、`conversation_id`、`department` |
+| `runtime.artifact.download` | 谁下载了哪个文件：在列表字段之外带 `artifact_id`、`artifact`（文件名）；不记文件内容或存储路径 |
 | `runtime.task.<状态>` | 任务结束（已有），带 `run_as` |
 
 ## 接口

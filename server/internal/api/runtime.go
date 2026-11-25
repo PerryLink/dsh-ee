@@ -212,11 +212,13 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 	}
 	id, owner := runtimeID(r, "id"), runtimeOwner(r)
 	task, err := s.store.RuntimeTask(r.Context(), id, owner)
+	// team 表示这次读取走的是团队线程的可见性校验，审计里据此区分来源（个人任务 / 个人线程都是 personal）。
+	team := false
 	if owner != 0 && (notFound(err) || err == nil && task.ChatConversationID != nil) {
 		// 团队产物要求当前团队权限，即使这一轮是本人触发的。
 		teamTask, teamErr := s.store.RuntimeTeamChatTask(r.Context(), id, owner)
 		if !notFound(teamErr) {
-			task, err = teamTask, teamErr
+			task, err, team = teamTask, teamErr, teamErr == nil
 		}
 	}
 	if err != nil {
@@ -229,6 +231,7 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if r.PathValue("artifact") == "" {
+		s.auditRuntimeArtifact(r, auditRuntimeArtifactList, task, team, nil)
 		writeJSON(w, http.StatusOK, files)
 		return
 	}
@@ -242,6 +245,8 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		defer f.Close()
+		// 文件确实存在、开始下发才记一次下载；找不到文件或 404 不写。
+		s.auditRuntimeArtifact(r, auditRuntimeArtifactDownload, task, team, &a)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(a.Name)}))
 		w.Header().Set("Cache-Control", "private, no-store")
@@ -249,6 +254,29 @@ func (s *Server) handleRuntimeArtifacts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.runtimeError(w, r, store.ErrNotFound)
+}
+
+// auditRuntimeArtifact 记一次产物列表 / 下载。detail 只带来源、任务归属和文件的编号、名字（下载时），
+// 不记文件内容、路径或 storage key；团队产物再带上线程和线程所属的部门，事后能回答谁看过、下了什么。
+func (s *Server) auditRuntimeArtifact(r *http.Request, action string, task *store.RuntimeTask, team bool, artifact *store.RuntimeArtifact) {
+	detail := map[string]any{"source": "personal", "owner_id": task.OwnerID, "owner": s.usernameOf(r, task.OwnerID)}
+	if task.ChatConversationID != nil {
+		detail["conversation_id"] = *task.ChatConversationID
+	}
+	if team {
+		detail["source"] = "team"
+		// 线程此刻对当前员工可见（RuntimeTeamChatTask 刚校验过），这里只取线程所属的部门名。
+		if task.ChatConversationID != nil {
+			if c, err := s.store.RuntimeChatConversation(r.Context(), *task.ChatConversationID, currentUser(r).ID); err == nil {
+				detail["department"] = c.Department
+			}
+		}
+	}
+	if artifact != nil {
+		detail["artifact_id"] = artifact.ID
+		detail["artifact"] = artifact.Name
+	}
+	s.audit(r, action, strconv.FormatInt(task.ID, 10), detail)
 }
 
 func (s *Server) handleRuntimeBots(w http.ResponseWriter, r *http.Request) {

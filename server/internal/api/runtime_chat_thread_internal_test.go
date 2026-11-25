@@ -214,6 +214,14 @@ func TestRuntimeWebChatThread(t *testing.T) {
 	if rec := owner("GET", download, ""); rec.Code != http.StatusOK || rec.Body.String() != "pilot summary" {
 		t.Fatalf("owner artifact download: HTTP %d", rec.Code)
 	}
+	// 个人对话里的产物下载同样留痕：来源是 personal，带所属线程，但没有团队部门；别人的 404 不写。
+	if logs, err := c.s.store.ListAudit(ctx, store.AuditFilter{Action: "runtime.artifact.download"}); err != nil {
+		t.Fatal(err)
+	} else if len(logs) != 1 || logs[0].ActorID == nil || *logs[0].ActorID != ownerID || logs[0].Target != strconv.FormatInt(turn.ID, 10) ||
+		logs[0].Detail["source"] != "personal" || logs[0].Detail["conversation_id"] != float64(thread.ID) || logs[0].Detail["artifact"] != "summary.txt" ||
+		logs[0].Detail["owner"] != "thread-owner" || logs[0].Detail["department"] != nil {
+		t.Fatalf("personal artifact download audit: %+v", logs)
+	}
 	for name, client := range map[string]func(string, string, string) *httptest.ResponseRecorder{"other employee": other, "admin": admin} {
 		if rec := client("GET", download, ""); rec.Code != http.StatusNotFound {
 			t.Fatalf("%s downloaded a chat artifact: HTTP %d", name, rec.Code)

@@ -112,6 +112,11 @@ const (
 	auditFilesUpload = "files.upload"
 	auditFilesDelete = "files.delete"
 	auditFilesList   = "files.list"
+
+	// 云任务产物（runtime.go handleRuntimeArtifacts）：列表 / 下载是读操作，但团队文件库对部门成员开放，
+	// 事后要能回答谁看过、下载了哪一轮的哪个文件。只记来源、归属与文件 id / 名字，不记内容、路径或 storage key。
+	auditRuntimeArtifactList     = "runtime.artifact.list"
+	auditRuntimeArtifactDownload = "runtime.artifact.download"
 )
 
 // audit 以当前登录用户的身份记一条操作。写失败只记日志，不影响请求本身。
