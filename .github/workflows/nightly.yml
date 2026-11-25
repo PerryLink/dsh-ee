@@ -25,7 +25,9 @@ concurrency:
 jobs:
   race:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # -race 放大 api 包全量测试约 6–8 倍：首次 nightly 实测 -timeout 50m 只跑到 81%（整包约 62–70m）。
+    # job 预算给 120m（90m 测试 + setup/teardown 余量），避免把「跑得慢」误报成失败。
+    timeout-minutes: 120
     services:
       tidb:
         image: pingcap/tidb:v8.5.8
@@ -45,7 +47,8 @@ jobs:
         env:
           DSH_EE_TEST_DSN: root:@tcp(127.0.0.1:4000)/
         run: |
-          go test -race -count=1 -timeout 50m \
+          # api 包 -race 约 62–70m，50m 会在中途 timeout；测试预算放宽到 90m。
+          go test -race -count=1 -timeout 90m \
             ./internal/api/ ./internal/store/ ./internal/registry/ ./internal/kb/
 
   govulncheck:
@@ -58,7 +61,9 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - name: 安装 govulncheck（固定版本）
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        # v1.1.4 内置的 x/tools v0.29.0 SSA builder 不认识 Go 1.27 语法，扫描前就 panic
+        #（unexpected expr: *ast.KeyValueExpr）；升至 v1.9.0（x/tools v0.52.0）可正常扫描。
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
       - name: 扫描 server 与独立 Go module
         run: |
           set -e
