@@ -83,5 +83,6 @@ export default {
     approved: "Solicitação de compartilhamento de «{{title}}» aprovada",
     rejected: "Solicitação de compartilhamento de «{{title}}» rejeitada",
     hint: "Após a aprovação, as pessoas do novo escopo veem esta capacidade no DSH imediatamente; ao rejeitar, o motivo é exibido ao responsável.",
+    legacyHint: "Esta solicitação de compartilhamento é anterior à atualização e não tem o carimbo de data/hora necessário para a revisão. A atualização o preenche automaticamente — atualize a página para revisar. Se persistir, verifique se a migração de banco de dados mais recente foi executada.",
   },
 } satisfies Messages<typeof zhNs>;
