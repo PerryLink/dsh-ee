@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
 
+	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
@@ -146,6 +148,20 @@ func roleLabels(ctx context.Context, s *Server, ids []any) string {
 	return strings.Join(names, "、")
 }
 
+// roleIDs 只列角色编号，给没有 roles.manage 的人看的预览用：角色名要通过
+// GET /api/admin/roles（roles.manage / users.manage）才读得到，不能在预览里替他读出来。
+func roleIDs(ids []any) string {
+	parts := make([]string, 0, len(ids))
+	for _, v := range ids {
+		f, _ := v.(float64)
+		parts = append(parts, fmt.Sprintf("#%d", int64(f)))
+	}
+	if len(parts) == 0 {
+		return "（无角色）"
+	}
+	return strings.Join(parts, "、")
+}
+
 func assetLabel(ctx context.Context, s *Server, id int64) (string, error) {
 	a, err := s.store.GetAsset(ctx, id)
 	if err != nil {
@@ -153,6 +169,27 @@ func assetLabel(ctx context.Context, s *Server, id int64) (string, error) {
 			return "", fmt.Errorf("没有 id 为 %d 的能力", id)
 		}
 		return "", err
+	}
+	return fmt.Sprintf("%s「%s」(%s)", a.Kind, a.Title, a.Slug), nil
+}
+
+// assetLabelFor 给「能力管理」类预览取标题：只有负责人或这一类资产的管理员看得到名称，
+// 其他人只回 #id。PATCH /api/hub/{id} 的路由只要求 portal.view、逐项校验在 handler 里，
+// 所以预览必须先做同一套可见性判断，否则开了管理模式的账号能按自增 id 枚举看不到的能力标题。
+func assetLabelFor(ctx context.Context, s *Server, p *Principal, id int64) (string, error) {
+	a, err := s.store.GetAsset(ctx, id)
+	if err != nil {
+		if notFound(err) {
+			return "", fmt.Errorf("没有 id 为 %d 的能力", id)
+		}
+		return "", err
+	}
+	if p == nil || p.User == nil {
+		return fmt.Sprintf("#%d", id), nil
+	}
+	v := viewer{user: p.User, access: p.Access}
+	if !v.owns(a) && !v.manages(a.Kind) {
+		return fmt.Sprintf("#%d", id), nil
 	}
 	return fmt.Sprintf("%s「%s」(%s)", a.Kind, a.Title, a.Slug), nil
 }
@@ -300,6 +337,55 @@ func settingsBody(ctx context.Context, s *Server, _ *Principal, args map[string]
 		return nil, errors.New(msg)
 	}
 	return base, nil
+}
+
+// changedSettingsSections 返回这次真正改动到的设置段（JSON 顶层键）。比较口径和
+// handler 逐段 reflect.DeepEqual 一致：没变的段不算改动，不触发权限错误。
+func changedSettingsSections(cur, after map[string]any) []string {
+	keys := make([]string, 0, len(after))
+	for k := range after {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		if !reflect.DeepEqual(cur[k], after[k]) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// settingsSectionField 把 JSON 顶层键映射回 store.AppSettings 的字段名：
+// sectionPerms（settings.go）是按 Go 字段名判定每个设置段归哪个权限点管的。
+func settingsSectionField(name string) string {
+	t := reflect.TypeOf(store.AppSettings{})
+	for i := 0; i < t.NumField(); i++ {
+		if strings.Split(t.Field(i).Tag.Get("json"), ",")[0] == name {
+			return t.Field(i).Name
+		}
+	}
+	return ""
+}
+
+// checkSettingsPreviewAccess 在生成预览前按 handler 的同一套段落权限预检：
+// 没有权限的段在预览里既不显示当前值，也不显示改动（embed 段只有 settings.manage 可见，
+// 不能在 diff 里被 registry.manage / upstream.manage / distribution.manage 的账号看到）。
+// 执行侧 handlePutSettings 保留原校验，双保险。
+func checkSettingsPreviewAccess(p *Principal, cur, after map[string]any) error {
+	if p == nil {
+		return nil
+	}
+	for _, name := range changedSettingsSections(cur, after) {
+		field := settingsSectionField(name)
+		if field == "" {
+			continue
+		}
+		if !p.Access.Has(sectionPerms(field)...) {
+			return fmt.Errorf("没有权限修改「%s」设置", name)
+		}
+	}
+	return nil
 }
 
 func ldapBase(ctx context.Context, s *Server) (map[string]any, error) {
@@ -738,8 +824,8 @@ func adminSpecs() map[string]*agentSpec {
 		"PATCH /api/hub/{id}": {
 			Tool: "ee_hub_admin", Action: "patch", Summary: "改能力的可用范围、下发方式（auto 自动生效 / optional 自选）、分类、精选，或上下架（下架要写 note）", En: "Change a capability", Effect: dg,
 			Params: []agentParam{pID, {Name: "category", Type: "string"}, {Name: "category_id", Type: "integer", Desc: "受管分类 id，0 表示取消归类"}, {Name: "featured", Type: "boolean", Desc: "设为精选"}, {Name: "scope", Schema: scopeSchema}, {Name: "delivery", Type: "string", Enum: []string{"auto", "optional"}}, {Name: "status", Type: "string", Enum: []string{"active", "unpublished"}}, {Name: "note", Type: "string"}},
-			Preview: func(ctx context.Context, s *Server, _ *Principal, args map[string]any) (string, error) {
-				l, err := assetLabel(ctx, s, argID(args))
+			Preview: func(ctx context.Context, s *Server, p *Principal, args map[string]any) (string, error) {
+				l, err := assetLabelFor(ctx, s, p, argID(args))
 				if err != nil {
 					return "", err
 				}
@@ -756,8 +842,8 @@ func adminSpecs() map[string]*agentSpec {
 		"DELETE /api/hub/{id}": {
 			Tool: "ee_hub_admin", Action: "delete", Summary: "删除一项能力（连同版本与订阅）", En: "Delete a capability", Effect: dg,
 			Params: []agentParam{pID},
-			Preview: func(ctx context.Context, s *Server, _ *Principal, args map[string]any) (string, error) {
-				l, err := assetLabel(ctx, s, argID(args))
+			Preview: func(ctx context.Context, s *Server, p *Principal, args map[string]any) (string, error) {
+				l, err := assetLabelFor(ctx, s, p, argID(args))
 				if err != nil {
 					return "", err
 				}
@@ -799,14 +885,21 @@ func adminSpecs() map[string]*agentSpec {
 		"PATCH /api/admin/connections/{id}/tools/{name}": {
 			Tool: "ee_connections_admin", Action: "tool", Summary: "开关某个工具，并可限定只有哪些角色能用（roles 为空表示范围内的人都能用）", En: "Change a connection tool", Effect: dg,
 			Params: []agentParam{pID, {Name: "name", Type: "string", Required: true, In: "path", Desc: "工具名"}, {Name: "enabled", Type: "boolean", Required: true}, {Name: "roles", Type: "array", Items: "integer"}},
-			Preview: func(ctx context.Context, s *Server, _ *Principal, args map[string]any) (string, error) {
-				l, err := assetLabel(ctx, s, argID(args))
+			Preview: func(ctx context.Context, s *Server, p *Principal, args map[string]any) (string, error) {
+				// 这里要对任意 id 取标题，和 ee_hub_admin 一样按可见性回退到 #id，
+				// 否则 connections.manage 的账号能借这个预览枚举自己看不到的能力标题。
+				l, err := assetLabelFor(ctx, s, p, argID(args))
 				if err != nil {
 					return "", err
 				}
 				msg := fmt.Sprintf("将%s %s 的工具 %v", map[bool]string{true: "启用", false: "停用"}[args["enabled"] == true], l, args["name"])
 				if roles, ok := args["roles"].([]any); ok && len(roles) > 0 {
-					msg += "，限定角色：" + roleLabels(ctx, s, roles)
+					// 角色名要 roles.manage 才读得到；没有这个权限的人只看编号。
+					if p != nil && p.Access.Has(rbac.RolesManage) {
+						msg += "，限定角色：" + roleLabels(ctx, s, roles)
+					} else {
+						msg += "，限定角色：" + roleIDs(roles)
+					}
 				}
 				msg += "。启用会修改数据的工具意味着员工的 Agent 可以对企业系统做写操作。"
 				return msg, nil
@@ -928,6 +1021,9 @@ func adminSpecs() map[string]*agentSpec {
 				}
 				after, err := settingsBody(ctx, s, p, args)
 				if err != nil {
+					return "", err
+				}
+				if err := checkSettingsPreviewAccess(p, cur, after); err != nil {
 					return "", err
 				}
 				lines := diffLines(cur, after, "")
