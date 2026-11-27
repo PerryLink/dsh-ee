@@ -367,25 +367,70 @@ test("image workflow 校验 tag 后用内置 token 发布多架构镜像", () =>
   for (const step of steps.filter((step) => step.uses)) assert.match(step.uses, /@v\d+$/);
 });
 
-test("image 标签：稳定版、预发布、元数据与空输入", (t) => {
+test("image 标签：只有 origin/main 上最新稳定 tag 推进浮动标签（补发旧 tag 不回退）", (t) => {
+  const script = imageWorkflow.jobs.image.steps.find((step) => step.id === "meta").run;
+  assert.match(script, /git tag --merged origin\/main --sort=-v:refname/, "浮动标签必须按 origin/main 上的 tag 判断");
+  // 临时仓库构造 tag / origin/main，不依赖本仓库实际 tag 与 CI 的浅 checkout。
   const dir = mkdtempSync(join(tmpdir(), "image-tags-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const script = imageWorkflow.jobs.image.steps.find((step) => step.id === "meta").run;
-  for (const [tag, expected] of [
-    ["v0.2.0", ["v0.2.0", "0.2", "latest"]],
-    ["v0.2.0-rc.1", ["v0.2.0-rc.1"]],
-    ["v0.2.0-beta.1", ["v0.2.0-beta.1"]],
-    ["v0.2.0-alpha.1", ["v0.2.0-alpha.1"]],
-    ["v0.2.0+build.1", ["v0.2.0_build.1", "0.2", "latest"]],
-  ]) {
+  const git = (repo, ...args) => {
+    const result = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+    assert.equal(result.status, 0, `git ${args.join(" ")} 失败：${result.stderr}`);
+    return result.stdout.trim();
+  };
+  const commit = (repo, message) => {
+    git(repo, "commit", "-q", "--allow-empty", "-m", message);
+    return git(repo, "rev-parse", "HEAD");
+  };
+  const tag = (repo, name) => git(repo, "tag", "-a", name, "-m", name);
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "user.email", "image-tags@example.com");
+  git(dir, "config", "user.name", "image-tags");
+  commit(dir, "base");
+  tag(dir, "v0.2.0");
+  const v030 = commit(dir, "release v0.3.0");
+  tag(dir, "v0.3.0");
+  const newest = commit(dir, "release v0.3.1");
+  tag(dir, "v0.3.1");
+  commit(dir, "release v0.4.0-rc.1");
+  for (const preview of ["v0.4.0-rc.1", "v0.4.0-beta.1", "v0.4.0-alpha.1"]) tag(dir, preview);
+  // 未合入 origin/main 的分支 tag（v0.9.0）：--merged 必须排除，否则会误判「最新」。
+  git(dir, "checkout", "-q", "-b", "side", v030);
+  commit(dir, "side work");
+  tag(dir, "v0.9.0");
+  git(dir, "checkout", "-q", "main");
+  git(dir, "update-ref", "refs/remotes/origin/main", newest);
+  let outputSeq = 0;
+  const runMeta = (repo, releaseTag) => {
+    outputSeq += 1;
+    const output = join(repo, `.github-output-${outputSeq}`);
     const result = spawnSync("bash", ["-c", script], {
-      cwd: join(HERE, "..", ".."), encoding: "utf8",
-      env: { ...process.env, RELEASE_TAG: tag, GITHUB_REPOSITORY: "Hikariming/DSH-EE", GITHUB_OUTPUT: join(dir, tag) },
+      cwd: repo, encoding: "utf8",
+      env: { ...process.env, RELEASE_TAG: releaseTag, GITHUB_REPOSITORY: "Hikariming/DSH-EE", GITHUB_OUTPUT: output },
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(readFileSync(join(dir, tag), "utf8").split("\n").filter((line) => line.startsWith("ghcr.io/")),
-      expected.map((value) => `ghcr.io/hikariming/dsh-ee:${value}`));
+    return readFileSync(output, "utf8").split("\n").filter((line) => line.startsWith("ghcr.io/"));
+  };
+  for (const [releaseTag, expected] of [
+    ["v0.3.1", ["v0.3.1", "0.3", "latest"]],
+    // 补发早于最新稳定 tag 的版本：只推完整版本，不能把 0.2 / 0.3 / latest 指回旧镜像。
+    ["v0.2.0", ["v0.2.0"]],
+    ["v0.3.0", ["v0.3.0"]],
+    ["v0.4.0-rc.1", ["v0.4.0-rc.1"]],
+    ["v0.4.0-beta.1", ["v0.4.0-beta.1"]],
+    ["v0.4.0-alpha.1", ["v0.4.0-alpha.1"]],
+    ["v0.3.1+build.7", ["v0.3.1_build.7"]],
+  ]) {
+    assert.deepEqual(runMeta(dir, releaseTag), expected.map((value) => `ghcr.io/hikariming/dsh-ee:${value}`), releaseTag);
   }
+  // 边界：还没有 origin/main（首个稳定 tag 之前）时不崩，也不推浮动标签。
+  const empty = mkdtempSync(join(tmpdir(), "image-tags-empty-"));
+  t.after(() => rmSync(empty, { recursive: true, force: true }));
+  git(empty, "init", "-q", "-b", "main");
+  git(empty, "config", "user.email", "image-tags@example.com");
+  git(empty, "config", "user.name", "image-tags");
+  commit(empty, "base");
+  assert.deepEqual(runMeta(empty, "v0.1.0"), ["ghcr.io/hikariming/dsh-ee:v0.1.0"]);
   const verify = spawnSync(process.execPath, [join(HERE, "verify-tag.mjs"), "--tag", "", "--no-github-output"], { encoding: "utf8" });
   assert.notEqual(verify.status, 0);
   assert.match(verify.stderr, /需要一个值/);

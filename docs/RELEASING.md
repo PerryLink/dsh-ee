@@ -93,8 +93,11 @@ workflow 只用仓库内置的 `GITHUB_TOKEN`（`contents: write`），不需要
 `ghcr.io/hikariming/dsh-ee`。仅用 `GITHUB_TOKEN`，权限为 `contents: read`、`packages: write`，无需额外 secret。
 镜像带 OCI source/version/revision 标签；revision 是 tag 的 commit，而不是手动触发时的分支 HEAD。
 
-每次发布都有完整版本标签（如 `v0.2.0`）；只有稳定版更新 `0.2` 与 `latest`，`-rc` / `-beta` / `-alpha`
-等预发布不更新浮动标签。SemVer 若有 `+build` 元数据，Docker 标签用 `_build`（Docker 不接受 `+`）。
+每次发布都有完整版本标签（如 `v0.2.0`）；浮动标签（`X.Y` 与 `latest`）只跟随 `origin/main` 上
+**最新**的稳定 tag：只有 tag 等于该最新稳定 tag 时才推进，`-rc` / `-beta` / `-alpha` 等预发布不更新浮动标签。
+补发已存在的旧 tag 也只推完整版本标签——**补发旧 tag 不会把 `latest` / `X.Y` 回退到旧镜像**，
+消费方按 `latest` 拉取时不会被拉回旧二进制、对着已迁移的新库跑。SemVer 若有 `+build` 元数据，
+Docker 标签用 `_build`（Docker 不接受 `+`）；带 `+build` 的 tag 不等于最新稳定 tag，同样不推进浮动标签。
 生产环境建议固定完整版本。GHCR 包已设为 public，匿名用户可以直接拉取。
 
 已存在的 tag 可在合并 workflow 后补发，例如 v0.2.0：
@@ -104,6 +107,7 @@ gh workflow run image.yml --ref main -f tag=v0.2.0
 ```
 
 手动触发会检出输入的 tag 并校验其在 `origin/main` 上，不重打 tag，也不重建 GitHub Release。
+补发**不会推进浮动标签**：输入的不是 `origin/main` 上最新的稳定 tag 时，只推完整版本镜像。
 
 ## 5. Release notes 要求
 
@@ -159,7 +163,8 @@ make bundle VERSION=v0.2.0 ARCH=arm64
 - [ ] 下载二进制与 docs 快照包复核：`sha256sum -c SHA256SUMS`，`./dsh-ee-<tag>-linux-amd64 version` 输出等于 tag
 - [ ] release notes 已补齐行为变化/升级步骤/回滚说明/已知限制；弃用项按 VERSIONING §4 标注
 - [ ] image workflow 成功，GHCR 完整版本的 amd64 / arm64 可匿名拉取
-- [ ] 稳定版有 minor / latest 标签，预发布不更新浮动标签；需要时手工补发离线包，与 tag 同 commit，分发物已归档
+- [ ] `origin/main` 上最新的稳定 tag 有 `X.Y` / `latest` 标签；预发布与补发的旧 tag 不推进浮动标签；
+      需要时手工补发离线包，与 tag 同 commit，分发物已归档
 - [ ] 部署验证至少覆盖：`/healthz`、`/readyz`、登录、`/v1/models` 或模型网关、npm 源（见
       [operations.md](./operations.md) §8）
 - [ ] 触发一次 docs 快照归档 PR（可选）；`--check` 与 `check-docs` 通过
