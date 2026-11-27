@@ -618,7 +618,7 @@ func currentClientKind(r *http.Request) string {
 
 func notFound(err error) bool { return errors.Is(err, store.ErrNotFound) }
 
-// RunBackground 跑定时任务：LDAP、飞书组织同步、插件更新、接入插件与 Desktop 版本同步。
+// RunBackground 跑定时任务：LDAP、飞书组织同步、飞书聊天清理、插件更新、接入插件与 Desktop 版本同步。
 func (s *Server) RunBackground(ctx context.Context) {
 	if s.opts.Runtime.Provider != nil && s.opts.DemoSite == nil {
 		go s.runCloudWorker(ctx)
@@ -629,6 +629,7 @@ func (s *Server) RunBackground(ctx context.Context) {
 	go s.runFeishuSync(ctx)
 	go s.runDingTalkSync(ctx)
 	go s.runDingTalkChat(ctx)
+	go s.runFeishuChatPurge(ctx)
 	go s.runExtHealth(ctx)
 	go s.runKBSourceSync(ctx)
 	go s.runElevationExpiry(ctx)

@@ -18,6 +18,7 @@ import (
 const (
 	MsgChatLogin               = "feishu.chat.login"
 	MsgChatTextOnly            = "feishu.chat.text_only"
+	MsgChatTooLong             = "feishu.chat.too_long"
 	MsgChatOffline             = "feishu.chat.offline"
 	MsgCardHubTitle            = "feishu.card.hub.title"
 	MsgCardHubDetail           = "feishu.card.hub.detail"
@@ -73,6 +74,13 @@ var messages = map[string]map[string]string{
 		i18n.Es: "Solo se admiten mensajes de texto.",
 		i18n.Pt: "Somente mensagens de texto são aceitas.",
 		i18n.Hi: "केवल टेक्स्ट संदेश समर्थित हैं।",
+	},
+	MsgChatTooLong: {
+		i18n.Zh: "消息太长了，请拆成多条发送",
+		i18n.En: "This message is too long. Please split it into several shorter messages.",
+		i18n.Es: "El mensaje es demasiado largo. Divídelo en varios mensajes más cortos.",
+		i18n.Pt: "A mensagem é muito longa. Divida-a em várias mensagens menores.",
+		i18n.Hi: "संदेश बहुत लंबा है। कृपया इसे कई छोटे संदेशों में बाँटकर भेजें।",
 	},
 	MsgChatOffline: {
 		i18n.Zh: "你的 DSH 当前不在线。请在电脑上打开 DSH，消息会在连接后处理。",

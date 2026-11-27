@@ -8,6 +8,10 @@ import (
 
 const feishuChatRedelivery = 10 * time.Minute
 
+// FeishuChatLifetime 是入站消息可被领取/回复的时间窗口，也是队列行的保留期：
+// 更早的行客户端不会再领取，由后台周期任务通过 PurgeFeishuChats 整行删除。
+const FeishuChatLifetime = time.Hour
+
 type FeishuChatMessage struct {
 	ID        int64     `json:"id"`
 	Text      string    `json:"text"`
@@ -37,14 +41,14 @@ func (s *Store) EnqueueFeishuChat(ctx context.Context, key FeishuChatKey, messag
 func (s *Store) NextFeishuChat(ctx context.Context, key FeishuChatKey) (*FeishuChatMessage, error) {
 	t := now()
 	if _, err := s.db.ExecContext(ctx, `UPDATE feishu_chat_messages SET status='expired' WHERE app_scope=? AND user_id=? AND sender_user_id=?
-		AND status IN ('pending','delivered') AND created_at < ?`, key.AppScope, key.UserID, key.SenderID, t.Add(-time.Hour)); err != nil {
+		AND status IN ('pending','delivered') AND created_at < ?`, key.AppScope, key.UserID, key.SenderID, t.Add(-FeishuChatLifetime)); err != nil {
 		return nil, err
 	}
 	for {
 		var m FeishuChatMessage
 		err := s.db.QueryRowContext(ctx, `SELECT id,text,created_at FROM feishu_chat_messages WHERE app_scope=? AND user_id=? AND sender_user_id=?
 			AND created_at>=? AND (status='pending' OR (status='delivered' AND delivered_at<?)) ORDER BY id LIMIT 1`,
-			key.AppScope, key.UserID, key.SenderID, t.Add(-time.Hour), t.Add(-feishuChatRedelivery)).Scan(&m.ID, &m.Text, &m.CreatedAt)
+			key.AppScope, key.UserID, key.SenderID, t.Add(-FeishuChatLifetime), t.Add(-feishuChatRedelivery)).Scan(&m.ID, &m.Text, &m.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -66,7 +70,7 @@ func (s *Store) HasActiveFeishuChat(ctx context.Context, key FeishuChatKey) (boo
 	t := now()
 	var active bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM feishu_chat_messages WHERE app_scope=? AND user_id=? AND sender_user_id=?
-		AND status='delivered' AND delivered_at>=? AND created_at>=?)`, key.AppScope, key.UserID, key.SenderID, t.Add(-feishuChatRedelivery), t.Add(-time.Hour)).Scan(&active)
+		AND status='delivered' AND delivered_at>=? AND created_at>=?)`, key.AppScope, key.UserID, key.SenderID, t.Add(-feishuChatRedelivery), t.Add(-FeishuChatLifetime)).Scan(&active)
 	return active, err
 }
 
@@ -75,6 +79,16 @@ func (s *Store) FeishuChatForReply(ctx context.Context, key FeishuChatKey, id in
 	err := s.db.QueryRowContext(ctx, `SELECT id,message_id,text,created_at FROM feishu_chat_messages WHERE id=? AND app_scope=? AND user_id=? AND sender_user_id=?
 		AND status IN ('pending','delivered','replied')`, id, key.AppScope, key.UserID, key.SenderID).Scan(&m.ID, &m.MessageID, &m.Text, &m.CreatedAt)
 	return &m, err
+}
+
+// PurgeFeishuChats 按创建时间整行删除超过保留期 keep 的队列行，返回删除行数。
+// 注意是 DELETE 而不是把 status 标成 expired：过期标记不清空间，队列表会无界增长。
+func (s *Store) PurgeFeishuChats(ctx context.Context, keep time.Duration) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM feishu_chat_messages WHERE created_at<?`, now().Add(-keep))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s *Store) FinishFeishuChatReply(ctx context.Context, key FeishuChatKey, id int64, text string) error {

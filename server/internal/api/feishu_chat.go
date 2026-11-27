@@ -17,6 +17,10 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
+// feishuChatMaxText 是单条入站文字消息的正文上限，与钉钉机器人对话一致（32KB）。
+// 超限不截断入库，只回提示让用户拆分发送，避免一条事件把队列行写成 MEDIUMTEXT 上限。
+const feishuChatMaxText = 32 * 1024
+
 type feishuChatPresence struct {
 	lastPoll time.Time
 	wake     chan struct{}
@@ -131,23 +135,29 @@ func (s *Server) handleFeishuChatEvent(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusInternalServerError
 		return
 	}
+	// 审计 C1：只有已绑定员工发来的文字消息才入队；未绑定账号（含陌生员工）、
+	// 非文字消息和超长正文只回提示、不落行，队列表不再积累永远不会被领取的记录。
+	queued := false
 	if !chatEmployee(u) {
 		notice = feishu.Text(lang, feishu.MsgChatLogin, map[string]string{"url": s.publicBase(r)})
 	} else if msg.MessageType != "text" || json.Unmarshal([]byte(msg.Content), &content) != nil || strings.TrimSpace(content.Text) == "" {
 		notice = feishu.Text(lang, feishu.MsgChatTextOnly, nil)
+	} else if len(content.Text) > feishuChatMaxText {
+		notice = feishu.Text(lang, feishu.MsgChatTooLong, nil)
 	} else {
 		key.UserID = u.ID
+		queued = true
 	}
-	inserted, err := s.store.EnqueueFeishuChat(ctx, key, msg.MessageID, msg.ChatID, content.Text)
-	if err != nil {
-		s.log.Warn("保存飞书聊天消息失败", "err", err)
-		status = http.StatusInternalServerError
-		return
-	}
-	if !inserted {
-		return
-	}
-	if key.UserID != 0 {
+	if queued {
+		inserted, err := s.store.EnqueueFeishuChat(ctx, key, msg.MessageID, msg.ChatID, content.Text)
+		if err != nil {
+			s.log.Warn("保存飞书聊天消息失败", "err", err)
+			status = http.StatusInternalServerError
+			return
+		}
+		if !inserted {
+			return
+		}
 		s.chatPresence(key, false, true)
 		s.auditAs(r, u, "feishu_chat.received", strconv.FormatInt(key.UserID, 10), nil)
 		online, err := s.feishuChatOnline(ctx, key)
@@ -271,4 +281,30 @@ func (s *Server) handleFeishuChatReply(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditAs(r, currentUser(r), "feishu_chat.replied", strconv.FormatInt(id, 10), nil)
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// runFeishuChatPurge 周期清理过期飞书聊天队列（审计 C1：过去只把过期行标成
+// expired、从不删除，队列表只增不减）。保留期与投递窗口一致（1 小时），
+// 启动先跑一轮。和钉钉对话的清理一样直接跑 DELETE、不加租约：删除条件固定、
+// 可重复执行，多实例并发删同一批行没有副作用。
+func (s *Server) runFeishuChatPurge(ctx context.Context) {
+	purge := func() {
+		n, err := s.store.PurgeFeishuChats(ctx, store.FeishuChatLifetime)
+		if err != nil {
+			s.log.Warn("清理过期飞书聊天失败", "err", err)
+		} else if n > 0 {
+			s.log.Info("清理了过期的飞书聊天队列", "rows", n)
+		}
+	}
+	purge()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			purge()
+		}
+	}
 }

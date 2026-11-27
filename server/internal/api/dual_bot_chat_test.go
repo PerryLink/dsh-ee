@@ -2,7 +2,9 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -310,7 +312,13 @@ func TestFeishuDingTalkDualBotChat(t *testing.T) {
 			}
 			wantReply(secondary, unboundTarget, "")
 			var routedUser int64
-			if err := st.DB().QueryRowContext(ctx, "SELECT user_id FROM "+secondary+"_chat_messages WHERE message_id='unbound-message'").Scan(&routedUser); err != nil || routedUser != 0 {
+			err = st.DB().QueryRowContext(ctx, "SELECT user_id FROM "+secondary+"_chat_messages WHERE message_id='unbound-message'").Scan(&routedUser)
+			if secondary == "feishu" {
+				// 审计 C1：飞书未绑定账号（含陌生员工）的入站不再入队，只回登录提示。
+				if !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("飞书未绑定账号的消息不应入队：user %d, err %v", routedUser, err)
+				}
+			} else if err != nil || routedUser != 0 {
 				t.Fatalf("unbound chat routed to user %d: %v", routedUser, err)
 			}
 			bind("staff-replacement")

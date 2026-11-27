@@ -142,6 +142,31 @@ func TestFeishuBotChat(t *testing.T) {
 	notice("请先使用飞书登录")
 	post(event("image", "ou-chat-user", "image"), 200)
 	notice("只支持文字消息")
+	// 审计 C1：只有已绑定员工发来的文字消息才入队。未绑定账号（含陌生员工）与
+	// 非文字消息只回提示、不落任何行，避免队列变成陌生人的私聊记录仓库。
+	queued := func(messageID string) (int, string) {
+		t.Helper()
+		var n int
+		var text string
+		if err := st.DB().QueryRowContext(ctx, "SELECT COUNT(*), COALESCE(MAX(text),'') FROM feishu_chat_messages WHERE message_id=?", messageID).Scan(&n, &text); err != nil {
+			t.Fatal(err)
+		}
+		return n, text
+	}
+	if n, text := queued("unknown"); n != 0 || text != "" {
+		t.Fatalf("未绑定账号的事件不应入队：%d 行，正文 %q", n, text)
+	}
+	if n, text := queued("image"); n != 0 || text != "" {
+		t.Fatalf("非文字消息不应入队：%d 行，正文 %q", n, text)
+	}
+	// 正文上限 32KB，与钉钉机器人对话一致：超限不截断入库，只回提示让用户拆分。
+	tooLong := event("too-long", "ou-chat-user", "text")
+	tooLong["event"].(map[string]any)["message"].(map[string]string)["content"] = fmt.Sprintf("{\"text\":%q}", strings.Repeat("a", 32*1024+1))
+	post(tooLong, 200)
+	notice("消息太长了")
+	if n, text := queued("too-long"); n != 0 || text != "" {
+		t.Fatalf("超过 32KB 的正文不应入库：%d 行，正文 %d 字节", n, len(text))
+	}
 	post(event("first", "ou-chat-user", "text"), 200)
 	notice("当前不在线")
 	setFeishuTestOrgLanguage(t, admin, "es")
