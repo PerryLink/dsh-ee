@@ -236,11 +236,7 @@ func (s *Server) writeRuntimeChatUploads(ctx context.Context, task *store.Runtim
 	note.WriteString("The employee attached these documents to the current message. They are in your working directory; next to each original is an extracted-text copy (same path plus .md). Read the .md copy to answer, and open the original only if you need something the text lost:\n")
 	used := map[string]bool{}
 	for _, u := range uploads {
-		// 原件和正文副本（加 .md）都不能跟别的附件撞名：budget.csv 的正文和原件 budget.csv.md 是同一个路径
-		name := u.Name
-		if used[name] || used[name+".md"] {
-			name = strconv.FormatInt(u.ID, 10) + "-" + name
-		}
+		name := uniqueRuntimeChatUploadName(used, u.Name, u.ID)
 		used[name], used[name+".md"] = true, true
 		for _, f := range []struct{ local, remote string }{
 			{s.runtimeChatUploadPath(u.StorageKey), path.Join(workDir, rel, name)},
@@ -263,6 +259,21 @@ func (s *Server) writeRuntimeChatUploads(ctx context.Context, task *store.Runtim
 	}
 	note.WriteString("\n")
 	return note.String(), nil
+}
+
+// uniqueRuntimeChatUploadName 给附件在工作目录里挑一个不撞名的名字：原件和正文副本（加 .md）都不能跟更早的
+// 附件撞名（budget.csv 的正文和原件 budget.csv.md 是同一个路径）。撞了就加 "<ID>-" 前缀，前缀后的名字还要
+// 继续查重：更早的附件可能正好就叫 "<ID>-同名文件"，只加一次前缀会覆盖它。
+func uniqueRuntimeChatUploadName(used map[string]bool, name string, id int64) string {
+	if !used[name] && !used[name+".md"] {
+		return name
+	}
+	base := strconv.FormatInt(id, 10) + "-" + name
+	name = base
+	for n := 2; used[name] || used[name+".md"]; n++ {
+		name = strconv.Itoa(n) + "-" + base
+	}
+	return name
 }
 
 func runtimeChatSize(n int64) string {

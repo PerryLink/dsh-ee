@@ -318,6 +318,18 @@ func (s *Server) handleRuntimeChatMessage(w http.ResponseWriter, r *http.Request
 		s.runtimeChatError(w, r, err)
 		return
 	}
+	if turn.Replayed && len(in.Uploads) > 0 {
+		// 幂等重放不会新建任务，也不会把这次请求带的附件挂到原来那一轮上：客户端重试时重新上传的文件
+		// 再没有消息会引用它们，留在待发状态只会占着本人额度到过期（前端已经把这些 chip 当成发出去了）。
+		discarded, err := s.store.DiscardRuntimeChatUploads(r.Context(), owner, conversation.ID, in.Uploads)
+		for _, u := range discarded {
+			s.removeRuntimeChatUpload(u)
+		}
+		if err != nil {
+			s.internalErr(w, r, err)
+			return
+		}
+	}
 	attachments, err := s.store.RuntimeChatUploadsForTasks(r.Context(), []int64{turn.ID})
 	if err != nil {
 		s.internalErr(w, r, err)

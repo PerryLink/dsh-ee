@@ -188,3 +188,160 @@ func TestRuntimeChatUploadFileName(t *testing.T) {
 		}
 	}
 }
+
+// 附件名二次撞名：两份 x.md 后一份会加 "<id>-" 前缀，而更早的附件正好也叫 "<id>-x.md"。
+// 去重后的名字必须继续查重：三个附件各自的原件和正文副本都要保留，不能互相覆盖。
+func TestRuntimeChatUploadNameCollisionKeepsBoth(t *testing.T) {
+	c, employee, admin := newRuntimeChatTest(t)
+	ws := &workspaceRuntime{writes: map[string]string{}}
+	c.s.opts.Runtime.Provider = ws
+	ownerID, owner := employee("collision-owner")
+	upload := runtimeUploadClient(t, c.s, ownerID)
+	on := true
+	const chat = "/api/runtime/chat"
+	bot := decodeRuntimeChat[store.RuntimeBot](t, "create bot", admin("POST", runtimeBotsTestPath, runtimeChatBotBody(t, ownerID, "Reader", false, &on)), http.StatusOK)
+	thread := decodeRuntimeChat[store.RuntimeChatConversation](t, "open thread", owner("POST", chat+"/conversations", fmt.Sprintf(`{"bot_id":%d}`, bot.ID)), http.StatusOK)
+	threadPath := chat + "/conversations/" + strconv.FormatInt(thread.ID, 10)
+	uploadOne := func(what, name string, data []byte) store.RuntimeChatUpload {
+		t.Helper()
+		return decodeRuntimeChat[store.RuntimeChatUpload](t, what, upload(threadPath+"/uploads", name, data), http.StatusCreated)
+	}
+
+	// 上传顺序（按附件 ID）：x.md、<id>-x.md、x.md。第三份原名被占后加成 "<最后一份的 id>-x.md"，
+	// 也就是第二份的名字：只加一次前缀不查重就会把第二份覆盖掉。
+	middle := uploadOne("upload middle", "x.md", []byte("中间那份"))
+	clash := fmt.Sprintf("%d-x.md", middle.ID+2)
+	earlier := uploadOne("upload earlier", clash, []byte("更早那份"))
+	last := uploadOne("upload last", "x.md", []byte("最后那份"))
+	if earlier.ID != middle.ID+1 || last.ID != earlier.ID+1 {
+		t.Fatalf("unexpected upload ids: %d %d %d", middle.ID, earlier.ID, last.ID)
+	}
+	body, _ := json.Marshal(map[string]any{"content": "对比一下", "idempotency_key": "collision", "uploads": []int64{middle.ID, earlier.ID, last.ID}})
+	turn := decodeRuntimeChat[store.RuntimeChatTurn](t, "send", owner("POST", threadPath+"/messages", string(body)), http.StatusAccepted)
+	c.runNext()
+	dir := ws.dirs[len(ws.dirs)-1]
+	base := fmt.Sprintf("%s/.uploads/%d/", dir, turn.ID)
+	renamed := "2-" + clash
+	for name, want := range map[string]string{
+		base + "x.md":          "中间那份",
+		base + "x.md.md":       "中间那份\n",
+		base + clash:           "更早那份",
+		base + clash + ".md":   "更早那份\n",
+		base + renamed:         "最后那份",
+		base + renamed + ".md": "最后那份\n",
+	} {
+		if ws.files[name] != want {
+			t.Fatalf("colliding attachment names: %q = %q, want %q (files: %v)", name, ws.files[name], want, ws.files)
+		}
+	}
+	for _, name := range []string{base + "x.md", base + clash, base + renamed} {
+		if !strings.Contains(ws.prompt, name[len(dir)+1:]) {
+			t.Fatalf("prompt does not mention %q: %q", name[len(dir)+1:], ws.prompt)
+		}
+	}
+}
+
+// 幂等重放不新建任务，这次请求带的新附件再也没机会挂上去：行和文件都要当场清掉，
+// 不再占本人待发额度；第一次请求已经挂好的附件、以及另一个线程的待发附件都不受影响。
+func TestRuntimeChatReplayDiscardsPendingUploads(t *testing.T) {
+	c, employee, admin := newRuntimeChatTest(t)
+	ws := &workspaceRuntime{writes: map[string]string{}}
+	c.s.opts.Runtime.Provider = ws
+	ctx := context.Background()
+	ownerID, owner := employee("replay-owner")
+	upload := runtimeUploadClient(t, c.s, ownerID)
+	on := true
+	const chat = "/api/runtime/chat"
+	bot := decodeRuntimeChat[store.RuntimeBot](t, "create bot", admin("POST", runtimeBotsTestPath, runtimeChatBotBody(t, ownerID, "Reader", false, &on)), http.StatusOK)
+	thread := decodeRuntimeChat[store.RuntimeChatConversation](t, "open thread", owner("POST", chat+"/conversations", fmt.Sprintf(`{"bot_id":%d}`, bot.ID)), http.StatusOK)
+	threadPath := chat + "/conversations/" + strconv.FormatInt(thread.ID, 10)
+	send := func(content, key string, uploads ...int64) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"content": content, "idempotency_key": key, "uploads": uploads})
+		return owner("POST", threadPath+"/messages", string(body))
+	}
+	storageKey := func(id int64) string {
+		t.Helper()
+		var key string
+		if err := c.s.store.DB().QueryRowContext(ctx, `SELECT storage_key FROM runtime_chat_uploads WHERE id=?`, id).Scan(&key); err != nil {
+			t.Fatalf("storage key of upload %d: %v", id, err)
+		}
+		return key
+	}
+
+	first := decodeRuntimeChat[store.RuntimeChatUpload](t, "upload first", upload(threadPath+"/uploads", "first.md", []byte("# 第一份")), http.StatusCreated)
+	firstKey := storageKey(first.ID)
+	turn := decodeRuntimeChat[store.RuntimeChatTurn](t, "send", send("总结一下", "replay", first.ID), http.StatusAccepted)
+	if len(turn.Attachments) != 1 || turn.Attachments[0].ID != first.ID {
+		t.Fatalf("first turn attachments: %+v", turn)
+	}
+
+	// 重试时重新上传的附件：重放同一个幂等键不会把它挂到任何一轮上。
+	second := decodeRuntimeChat[store.RuntimeChatUpload](t, "upload second", upload(threadPath+"/uploads", "second.md", []byte("# 第二份")), http.StatusCreated)
+	secondKey := storageKey(second.ID)
+	replay := decodeRuntimeChat[store.RuntimeChatTurn](t, "replay with a new upload", send("总结一下", "replay", second.ID), http.StatusAccepted)
+	if replay.ID != turn.ID || replay.Content != turn.Content || replay.Status != turn.Status || !replay.CreatedAt.Equal(turn.CreatedAt) {
+		t.Fatalf("replay changed the first turn: %+v, want %+v", replay, turn)
+	}
+	if len(replay.Attachments) != 1 || replay.Attachments[0].ID != first.ID {
+		t.Fatalf("replay attachments changed: %+v", replay.Attachments)
+	}
+	var n int
+	if err := c.s.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_chat_uploads WHERE id=?`, second.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("upload from the replayed request kept its row: %d %v", n, err)
+	}
+	if pending, err := c.s.store.RuntimeChatPendingUploadBytes(ctx, ownerID); err != nil || pending != 0 {
+		t.Fatalf("replayed request left pending bytes: %d %v", pending, err)
+	}
+	for _, p := range []string{secondKey, secondKey + ".md"} {
+		if _, err := os.Stat(c.s.runtimeChatUploadPath(p)); !os.IsNotExist(err) {
+			t.Fatalf("upload from the replayed request kept %s: %v", p, err)
+		}
+	}
+	// 第一次请求挂上去的附件原样保留。
+	if _, err := os.Stat(c.s.runtimeChatUploadPath(firstKey)); err != nil {
+		t.Fatalf("first request's attachment file: %v", err)
+	}
+	if err := c.s.store.DB().QueryRowContext(ctx, `SELECT COALESCE(task_id,0) FROM runtime_chat_uploads WHERE id=?`, first.ID).Scan(&n); err != nil || int64(n) != turn.ID {
+		t.Fatalf("first request's attachment lost its turn: %d %v", n, err)
+	}
+
+	// 引用第一次就挂好的附件原样重放：仍然是幂等成功，附件不动。
+	again := decodeRuntimeChat[store.RuntimeChatTurn](t, "replay the same attachments", send("总结一下", "replay", first.ID), http.StatusAccepted)
+	if again.ID != turn.ID || len(again.Attachments) != 1 || again.Attachments[0].ID != first.ID {
+		t.Fatalf("replaying the attached upload changed the turn: %+v", again)
+	}
+	if pending, err := c.s.store.RuntimeChatPendingUploadBytes(ctx, ownerID); err != nil || pending != 0 {
+		t.Fatalf("pending bytes after the plain replay: %d %v", pending, err)
+	}
+
+	// 另一个线程里还没发出的附件不归这次重放管，别顺手删掉。
+	otherBot := decodeRuntimeChat[store.RuntimeBot](t, "create other bot", admin("POST", runtimeBotsTestPath, runtimeChatBotBody(t, ownerID, "Writer", false, &on)), http.StatusOK)
+	otherThread := decodeRuntimeChat[store.RuntimeChatConversation](t, "open other thread", owner("POST", chat+"/conversations", fmt.Sprintf(`{"bot_id":%d}`, otherBot.ID)), http.StatusOK)
+	otherPath := chat + "/conversations/" + strconv.FormatInt(otherThread.ID, 10)
+	otherUpload := decodeRuntimeChat[store.RuntimeChatUpload](t, "upload in another thread", upload(otherPath+"/uploads", "elsewhere.md", []byte("# 别的线程")), http.StatusCreated)
+	decodeRuntimeChat[store.RuntimeChatTurn](t, "replay with another thread's upload", send("总结一下", "replay", otherUpload.ID), http.StatusAccepted)
+	if pending, err := c.s.store.RuntimeChatPendingUploadBytes(ctx, ownerID); err != nil || pending != otherUpload.Size+otherUpload.TextBytes {
+		t.Fatalf("another thread's pending upload: %d %v", pending, err)
+	}
+
+	// 执行这一轮：工作目录里只有第一次那份附件，提示词不提重试上传的文件。
+	c.runNext()
+	dir := ws.dirs[len(ws.dirs)-1]
+	base := fmt.Sprintf("%s/.uploads/%d/", dir, turn.ID)
+	if got := ws.files[base+"first.md"]; got != "# 第一份" {
+		t.Fatalf("attachment missing from the sandbox: %v", ws.files)
+	}
+	attached := 0
+	for name := range ws.files {
+		if strings.HasPrefix(name, base) {
+			attached++
+		}
+	}
+	if attached != 2 || strings.Contains(ws.prompt, "second.md") {
+		t.Fatalf("sandbox picked up a discarded upload: %v %q", ws.files, ws.prompt)
+	}
+	history := decodeRuntimeChat[runtimeChatDetail](t, "history", owner("GET", threadPath, ""), http.StatusOK)
+	if len(history.Messages) != 1 || len(history.Messages[0].Attachments) != 1 || history.Messages[0].Attachments[0].ID != first.ID {
+		t.Fatalf("history after the replay: %+v", history.Messages)
+	}
+}

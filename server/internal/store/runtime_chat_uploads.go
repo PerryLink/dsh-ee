@@ -91,6 +91,47 @@ func (s *Store) DeleteRuntimeChatUpload(ctx context.Context, ownerID, id int64) 
 	return &list[0], nil
 }
 
+// DiscardRuntimeChatUploads 删掉本人这条对话里还没发出、又被这次请求引用的附件，返回被删的记录（调用方删文件）。
+// 幂等重放不会新建任务，这次请求带的附件再也不会挂到任何一轮上；不删就会一直占着本人待发附件的额度到过期。
+// 已经挂在某一轮上的不动：同一次请求原样重试时，引用的就是第一次已经挂好的那些附件。
+func (s *Store) DiscardRuntimeChatUploads(ctx context.Context, ownerID, conversationID int64, ids []int64) ([]RuntimeChatUpload, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	seen := map[int64]bool{}
+	unique := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
+	}
+	args := []any{ownerID, conversationID}
+	for _, id := range unique {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeChatUploadColumns+` FROM runtime_chat_uploads
+		WHERE owner_id=? AND conversation_id=? AND task_id IS NULL AND id IN (?`+strings.Repeat(",?", len(unique)-1)+`) ORDER BY id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	list, err := scanRuntimeChatUploads(rows)
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	removed := list[:0]
+	for _, u := range list {
+		r, err := s.db.ExecContext(ctx, `DELETE FROM runtime_chat_uploads WHERE id=? AND owner_id=? AND conversation_id=? AND task_id IS NULL`, u.ID, ownerID, conversationID)
+		if err != nil {
+			return removed, err
+		}
+		if n, _ := r.RowsAffected(); n > 0 {
+			removed = append(removed, u)
+		}
+	}
+	return removed, nil
+}
+
 // PruneRuntimeChatUploads 删掉早于 before 还没发出的附件（上传了却没发消息），返回被删的记录，调用方删文件。
 func (s *Store) PruneRuntimeChatUploads(ctx context.Context, before time.Time) ([]RuntimeChatUpload, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runtimeChatUploadColumns+` FROM runtime_chat_uploads WHERE task_id IS NULL AND created_at<? LIMIT 200`, before)
