@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"time"
@@ -41,7 +43,7 @@ func (s *Store) InsertAudit(ctx context.Context, a *AuditLog) error {
 	a.CreatedAt = now()
 	res, err := s.db.ExecContext(ctx,
 		"INSERT INTO audit_logs (actor_id, actor_name, action, target, detail, ip, via, token_id, client, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		a.ActorID, truncateRunes(a.ActorName, 64), a.Action, truncateRunes(a.Target, 255), detail, truncateRunes(a.IP, 64), a.Via, a.TokenID, truncateRunes(a.Client, 128), a.CreatedAt)
+		a.ActorID, truncateRunes(a.ActorName, 64), a.Action, auditTarget(a.Target), detail, truncateRunes(a.IP, 64), a.Via, a.TokenID, truncateRunes(a.Client, 128), a.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -150,4 +152,27 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
+}
+
+// auditTargetMaxRunes 是 audit_logs.target 列（VARCHAR(255)）的字符上限。
+const auditTargetMaxRunes = 255
+
+// auditTargetHashHexLen 是保留的 sha256 十六进制前缀长度：12 位 = 48 bit。
+const auditTargetHashHexLen = 12
+
+// auditTarget 把审计对象压进 target 列的 VARCHAR(255)。
+//
+// 不能照其它短字段那样直接截断：Conan 等包源的对象路径合法长度可达约 459 字符
+// （conans/<name>/<version>/<user>/<channel>/revisions/<40hex>/packages/<40hex>/…），
+// 前 255 字符相同、只有尾部（revision、包 digest、文件名）不同的两条路径截断后
+// 完全一样，事后无法区分是谁。这里保留前缀并追加完整 target 的 sha256 短哈希：
+// 长度仍 ≤255，不同 target 可区分，同一 target 多次出现仍稳定；短 target 原样保存。
+func auditTarget(s string) string {
+	r := []rune(s)
+	if len(r) <= auditTargetMaxRunes {
+		return s
+	}
+	sum := sha256.Sum256([]byte(s))
+	suffix := "~" + hex.EncodeToString(sum[:])[:auditTargetHashHexLen]
+	return string(r[:auditTargetMaxRunes-len(suffix)]) + suffix
 }
