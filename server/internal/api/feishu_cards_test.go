@@ -649,3 +649,120 @@ func TestFeishuApplyAccessCardCAS(t *testing.T) {
 		t.Fatalf("授权失败的卡片应留 failed 终态：%+v err=%v", action, err)
 	}
 }
+
+// 审计 C3：飞书 Verification Token 是公开回调（/api/auth/feishu/card、/api/auth/feishu/event）
+// 的唯一认证因子，只能加密存在 settings.value 里、管理接口不回显；旧版本按明文存的配置
+// 要能继续读，并在下次保存时迁移成密文。
+func TestFeishuVerificationTokenEncryptedStorage(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	idp := newFakeIdP(t)
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	box, _ := secret.NewBox(key)
+	srv := api.New(st, box, api.Options{DataDir: t.TempDir(), OIDCClient: idp.Client()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "管理员登录", code, 200, body)
+
+	// oidc 设置行的原始 JSON：直接看数据库里到底存了什么（审计 PoC 就是这么看到明文的）。
+	storedRaw := func() string {
+		t.Helper()
+		var raw string
+		if err := st.DB().QueryRowContext(ctx, "SELECT value FROM settings WHERE name = 'oidc'").Scan(&raw); err != nil {
+			t.Fatalf("读取 oidc 设置行：%v", err)
+		}
+		return raw
+	}
+	// 飞书配置回调地址时发的 url_verification：token 对才原样回 challenge。
+	verifyCallback := func(token string, want int) {
+		t.Helper()
+		code, body := admin.do("POST", "/api/auth/feishu/card", map[string]any{"type": "url_verification", "token": token, "challenge": "c3-challenge"}, nil)
+		expect(t, "飞书 url_verification（token="+token+"）", code, want, body)
+		if want == http.StatusOK && !strings.Contains(string(body), `"challenge":"c3-challenge"`) {
+			t.Fatalf("应原样回 challenge：%s", body)
+		}
+	}
+	view := func() string {
+		t.Helper()
+		return string(mustGet(t, admin, "/api/admin/auth/oidc"))
+	}
+	feishuCfg := func(extra map[string]any) map[string]any {
+		cfg := map[string]any{
+			"enabled": true, "preset": "feishu", "name": "飞书", "issuer": idp.URL, "clientId": "dsh-ee",
+			"clientSecret": "idp-secret", "feishuApiBase": idp.URL, "feishuNotify": true,
+			"feishuNotifyActions": true, "autoCreate": true,
+		}
+		for k, v := range extra {
+			cfg[k] = v
+		}
+		return cfg
+	}
+
+	// 1) 保存带 token 的配置：settings 里只有密文，管理接口只回「填了没有」。
+	code, body = admin.do("PUT", "/api/admin/auth/oidc", feishuCfg(map[string]any{"feishuVerificationToken": feishuTestToken}), nil)
+	expect(t, "保存带 Verification Token 的配置", code, 200, body)
+	if raw := storedRaw(); strings.Contains(raw, feishuTestToken) {
+		t.Fatalf("settings 里不该出现 Verification Token 明文：%s", raw)
+	} else if !strings.Contains(raw, `"feishuVerificationTokenEnc"`) {
+		t.Fatalf("应写入密文槽 feishuVerificationTokenEnc：%s", raw)
+	}
+	got := view()
+	if strings.Contains(got, feishuTestToken) {
+		t.Fatalf("GET 不该回显 Verification Token：%s", got)
+	}
+	if !strings.Contains(got, `"feishuVerificationTokenSet":true`) {
+		t.Fatalf("GET 应只告诉页面 token 已填：%s", got)
+	}
+	// 加密存进去以后，公开回调仍然按解出来的 token 校验来源。
+	verifyCallback(feishuTestToken, http.StatusOK)
+	verifyCallback("guess", http.StatusForbidden)
+
+	// 2) 页面保存时不会把 token 带回来：不传 = 沿用已存的，不能因此把 token 清掉。
+	code, body = admin.do("PUT", "/api/admin/auth/oidc", decodeAs[map[string]any](t, []byte(view())), nil)
+	expect(t, "不重返 token 保存配置", code, 200, body)
+	if raw := storedRaw(); strings.Contains(raw, feishuTestToken) || !strings.Contains(raw, `"feishuVerificationTokenEnc"`) {
+		t.Fatalf("沿用已存 token 时应保持密文存储：%s", raw)
+	}
+	verifyCallback(feishuTestToken, http.StatusOK)
+
+	// 3) 旧版本明文配置：照常读出来用，保存后迁移成密文，旧明文从设置行里消失。
+	legacy := map[string]any{
+		"enabled": true, "preset": "feishu", "name": "飞书", "issuer": idp.URL, "clientId": "dsh-ee",
+		"feishuApiBase": idp.URL, "feishuNotify": true, "feishuNotifyActions": true, "autoCreate": true,
+		// 修复前 saveOIDC 就是把它明文写在同一行设置里
+		"feishuVerificationToken": feishuTestToken,
+	}
+	if err := st.PutSettingJSON(ctx, "oidc", legacy, 0); err != nil {
+		t.Fatalf("写入旧版明文配置：%v", err)
+	}
+	got = view()
+	if strings.Contains(got, feishuTestToken) || !strings.Contains(got, `"feishuVerificationTokenSet":true`) {
+		t.Fatalf("旧明文配置应能读到并只报已填：%s", got)
+	}
+	verifyCallback(feishuTestToken, http.StatusOK)
+	code, body = admin.do("PUT", "/api/admin/auth/oidc", decodeAs[map[string]any](t, []byte(view())), nil)
+	expect(t, "保存旧明文配置", code, 200, body)
+	if raw := storedRaw(); strings.Contains(raw, feishuTestToken) || strings.Contains(raw, `"feishuVerificationToken":`) {
+		t.Fatalf("保存后旧明文应迁移成密文：%s", raw)
+	} else if !strings.Contains(raw, `"feishuVerificationTokenEnc"`) {
+		t.Fatalf("迁移后应写密文槽：%s", raw)
+	}
+	verifyCallback(feishuTestToken, http.StatusOK)
+
+	// 4) 显式传空串 = 清除（先关掉依赖 token 的卡片审批，否则 Validate 会拒绝）。
+	code, body = admin.do("PUT", "/api/admin/auth/oidc", feishuCfg(map[string]any{"feishuNotifyActions": false, "feishuVerificationToken": ""}), nil)
+	expect(t, "清除 Verification Token", code, 200, body)
+	if raw := storedRaw(); strings.Contains(raw, `"feishuVerificationTokenEnc"`) {
+		t.Fatalf("清除后不该保留密文槽：%s", raw)
+	}
+	if got = view(); !strings.Contains(got, `"feishuVerificationTokenSet":false`) {
+		t.Fatalf("清除后应报告 token 未填：%s", got)
+	}
+	verifyCallback(feishuTestToken, http.StatusNotFound)
+}

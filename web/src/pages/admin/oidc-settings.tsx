@@ -21,7 +21,7 @@ const PRESETS: Record<OidcConfig["preset"], Partial<OidcConfig>> = {
 };
 
 function configOf(v: OidcView): OidcConfig {
-  const { clientSecretSet: _s, redirectUri: _r, ...c } = v;
+  const { clientSecretSet: _s, feishuVerificationTokenSet: _t, redirectUri: _r, ...c } = v;
   return c;
 }
 
@@ -300,7 +300,7 @@ export default function OidcSettings({ slot = "primary", only, onSaved }: { slot
             )}
             {(form.feishuNotifyActions || form.feishuBot) && (
               <Field label={t("oidcAdmin.feishu.verificationToken")} hint={t("oidcAdmin.feishu.verificationTokenHint")}>
-                <input className={cx(inputCls, "font-mono")} autoComplete="off" value={form.feishuVerificationToken ?? ""} onChange={(e) => set({ feishuVerificationToken: e.target.value })} />
+                <input className={cx(inputCls, "font-mono")} type="password" autoComplete="new-password" value={form.feishuVerificationToken ?? ""} placeholder={saved.feishuVerificationTokenSet ? t("oidcAdmin.clientSecretSet") : ""} onChange={(e) => set({ feishuVerificationToken: e.target.value })} />
               </Field>
             )}
             {(form.feishuNotifyActions || form.feishuBot) && (

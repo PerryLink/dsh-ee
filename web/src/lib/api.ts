@@ -612,7 +612,7 @@ export interface OidcConfig {
   feishuNotify?: boolean;
   feishuNotifyActions?: boolean;
   feishuBot?: boolean;
-  /** 飞书开发者后台的 Verification Token；开卡片审批或机器人对话必须填 */
+  /** 飞书开发者后台的 Verification Token；开卡片审批或机器人对话必须填。只写，不回显；不传沿用已存的，传空串清除 */
   feishuVerificationToken?: string;
   /** 飞书 Encrypt Key：只写，不回显；不传沿用已存的，传空串清除 */
   feishuEncryptKey?: string;
@@ -641,6 +641,8 @@ export interface IdentityBinding {
 
 export interface OidcView extends OidcConfig {
   clientSecretSet: boolean;
+  /** 飞书 Verification Token 只告诉页面填没填，不回传 token 本身 */
+  feishuVerificationTokenSet: boolean;
   redirectUri: string;
 }
 

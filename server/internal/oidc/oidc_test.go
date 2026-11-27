@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -26,9 +27,16 @@ func TestFeishuBotVerificationToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 审计 C3：Verification Token 是回调的唯一认证因子，不能参与 JSON（调用方只存密文）。
+	if strings.Contains(string(raw), c.FeishuVerificationToken) || strings.Contains(string(raw), "feishuVerificationToken") {
+		t.Fatalf("Verification Token 不该序列化进配置 JSON：%s", raw)
+	}
 	var back Config
 	if err := json.Unmarshal(raw, &back); err != nil || !back.FeishuBot {
 		t.Fatalf("bot roundtrip %s %v", raw, err)
+	}
+	if back.FeishuVerificationToken != "" {
+		t.Fatalf("Verification Token 不该从配置文件 JSON 读回：%s", raw)
 	}
 }
 

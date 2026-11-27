@@ -65,8 +65,9 @@ type Config struct {
 	FeishuNotifyActions bool   `json:"feishuNotifyActions"`
 	FeishuBot           bool   `json:"feishuBot"`
 	// 飞书开发者后台「事件与回调 → 加密策略」里的 Verification Token。卡片回调是公开接口，
-	// 靠它确认请求确实是飞书发来的；开卡片审批必须填。
-	FeishuVerificationToken string `json:"feishuVerificationToken,omitempty"`
+	// 靠它确认请求确实是飞书发来的；开卡片审批必须填。它是这个回环的唯一认证因子，
+	// 和 ClientSecret 一样不参与 JSON，由调用方加密保存（密文槽 feishuVerificationTokenEnc）。
+	FeishuVerificationToken string `json:"-"`
 	// 飞书后台同一页的 Encrypt Key（可选）。填了，回调就按加密的收；不参与 JSON，由调用方加密保存。
 	FeishuEncryptKey string `json:"-"`
 	DingTalkCorpID   string `json:"dingTalkCorpId,omitempty"`

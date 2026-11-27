@@ -40,6 +40,12 @@ type oidcStored struct {
 	ClientSecretEnc string `json:"clientSecretEnc,omitempty"`
 	// 飞书回调的 Encrypt Key，同样加密保存
 	FeishuEncryptKeyEnc string `json:"feishuEncryptKeyEnc,omitempty"`
+	// 飞书卡片 / 事件回调的 Verification Token：唯一认证因子，只存 AES-GCM 密文。
+	FeishuVerificationTokenEnc string `json:"feishuVerificationTokenEnc,omitempty"`
+	// 旧版本的 Verification Token 以明文保存在配置里（字段名就是 feishuVerificationToken）。
+	// 只在读路径兼容它：读到就照常生效，下次保存时由 saveOIDC 改写成上面的密文槽；
+	// 写路径永远不填这个字段，所以设置表里不会再出现明文。
+	FeishuVerificationTokenLegacy string `json:"feishuVerificationToken,omitempty"`
 }
 
 func (s *Server) loadOIDC(ctx context.Context) (*oidc.Config, error) {
@@ -80,6 +86,20 @@ func (s *Server) loadOIDCSlot(ctx context.Context, key string) (*oidc.Config, er
 		}
 		cfg.FeishuEncryptKey = string(key)
 	}
+	if st.FeishuVerificationTokenEnc != "" {
+		raw, err := base64.StdEncoding.DecodeString(st.FeishuVerificationTokenEnc)
+		if err != nil {
+			return nil, err
+		}
+		token, err := s.box.Open(raw)
+		if err != nil {
+			return nil, fmt.Errorf("解密飞书 Verification Token（主密钥是否换过？）: %w", err)
+		}
+		cfg.FeishuVerificationToken = string(token)
+	} else {
+		// 兼容旧版本的明文存法：照常生效，下一次保存时 saveOIDC 会把它迁移成密文。
+		cfg.FeishuVerificationToken = st.FeishuVerificationTokenLegacy
+	}
 	return &cfg, nil
 }
 
@@ -98,6 +118,14 @@ func (s *Server) saveOIDC(ctx context.Context, key string, cfg *oidc.Config, use
 			return err
 		}
 		st.FeishuEncryptKeyEnc = base64.StdEncoding.EncodeToString(sealed)
+	}
+	// Verification Token 只写密文槽：旧明文在 loadOIDCSlot 里读出来，再保存时就迁成密文。
+	if cfg.FeishuVerificationToken != "" {
+		sealed, err := s.box.Seal([]byte(cfg.FeishuVerificationToken))
+		if err != nil {
+			return err
+		}
+		st.FeishuVerificationTokenEnc = base64.StdEncoding.EncodeToString(sealed)
 	}
 	return s.store.PutSettingJSON(ctx, key, st, userID)
 }
@@ -207,8 +235,10 @@ type oidcView struct {
 	oidc.Config
 	ClientSecretSet bool `json:"clientSecretSet"`
 	// 飞书 Encrypt Key 只告诉页面填没填，不回显
-	FeishuEncryptKeySet bool   `json:"feishuEncryptKeySet"`
-	RedirectURI         string `json:"redirectUri"`
+	FeishuEncryptKeySet bool `json:"feishuEncryptKeySet"`
+	// 飞书 Verification Token 同样只写不读：这里只说填没填
+	FeishuVerificationTokenSet bool   `json:"feishuVerificationTokenSet"`
+	RedirectURI                string `json:"redirectUri"`
 }
 
 // GET /api/admin/auth/oidc（?slot=secondary 是第二登录入口）
@@ -218,7 +248,13 @@ func (s *Server) handleGetOIDC(w http.ResponseWriter, r *http.Request) {
 		s.internalErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, oidcView{Config: *cfg, ClientSecretSet: cfg.ClientSecret != "", FeishuEncryptKeySet: cfg.FeishuEncryptKey != "", RedirectURI: s.oidcRedirect(r)})
+	writeJSON(w, http.StatusOK, oidcView{
+		Config:                     *cfg,
+		ClientSecretSet:            cfg.ClientSecret != "",
+		FeishuEncryptKeySet:        cfg.FeishuEncryptKey != "",
+		FeishuVerificationTokenSet: cfg.FeishuVerificationToken != "",
+		RedirectURI:                s.oidcRedirect(r),
+	})
 }
 
 // oidcInput：clientSecret 不传表示沿用已存的，传空串表示清除。
@@ -226,8 +262,11 @@ type oidcInput struct {
 	oidc.Config
 	ClientSecret *string `json:"clientSecret"`
 	// 同 clientSecret：不传沿用已存的，传空串清除
-	FeishuEncryptKey    *string `json:"feishuEncryptKey"`
-	FeishuEncryptKeySet *bool   `json:"feishuEncryptKeySet"`
+	FeishuEncryptKey *string `json:"feishuEncryptKey"`
+	// 飞书 Verification Token 也只写不读：不传沿用已存的，传空串清除
+	FeishuVerificationToken    *string `json:"feishuVerificationToken"`
+	FeishuEncryptKeySet        *bool   `json:"feishuEncryptKeySet"`
+	FeishuVerificationTokenSet *bool   `json:"feishuVerificationTokenSet"`
 	// 只读字段，页面会原样带回来
 	ClientSecretSet *bool   `json:"clientSecretSet"`
 	RedirectURI     *string `json:"redirectUri"`
@@ -235,23 +274,27 @@ type oidcInput struct {
 
 func (s *Server) resolveOIDCInput(ctx context.Context, key string, in *oidcInput) (*oidc.Config, string, error) {
 	cfg := in.Config
+	var cur *oidc.Config
+	if in.ClientSecret == nil || in.FeishuEncryptKey == nil || in.FeishuVerificationToken == nil {
+		var err error
+		if cur, err = s.loadOIDCSlot(ctx, key); err != nil {
+			return nil, "", err
+		}
+	}
 	if in.ClientSecret != nil {
 		cfg.ClientSecret = strings.TrimSpace(*in.ClientSecret)
 	} else {
-		cur, err := s.loadOIDCSlot(ctx, key)
-		if err != nil {
-			return nil, "", err
-		}
 		cfg.ClientSecret = cur.ClientSecret
 	}
 	if in.FeishuEncryptKey != nil {
 		cfg.FeishuEncryptKey = strings.TrimSpace(*in.FeishuEncryptKey)
 	} else {
-		cur, err := s.loadOIDCSlot(ctx, key)
-		if err != nil {
-			return nil, "", err
-		}
 		cfg.FeishuEncryptKey = cur.FeishuEncryptKey
+	}
+	if in.FeishuVerificationToken != nil {
+		cfg.FeishuVerificationToken = strings.TrimSpace(*in.FeishuVerificationToken)
+	} else {
+		cfg.FeishuVerificationToken = cur.FeishuVerificationToken
 	}
 	if key == oidcSecondaryKey {
 		cfg.FeishuNotify, cfg.FeishuNotifyActions = false, false
