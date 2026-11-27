@@ -31,6 +31,10 @@ const (
 	dataUploadMax     = 20 << 20
 )
 
+// dataUploadSlots 限制同时解析 / 写库的上传数。解析一个 20MB 的 .xlsx 峰值可能几十 MB，
+// 公开演示站人人可上传，不能让人并发几十个把进程内存叠起来；等不到就等请求取消。
+var dataUploadSlots = make(chan struct{}, 2)
+
 // dataAutoParams 是系统按当前员工自动填的参数，数据集里直接写 :me_department 等。
 var dataAutoParams = map[string]string{
 	"me_department": "当前员工的部门",
@@ -139,6 +143,16 @@ func (s *Server) handleDataUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("文件最大 %d MB", dataUploadMax>>20))
 		return
 	}
+	// 解析 + 类型推断 + 写库都是内存 / CPU 密集的，同一时刻最多 2 个上传在做。
+	// 演示站是公开可写的，不限并发的话多个访客同时上传大文件就能把内存叠起来。
+	select {
+	case dataUploadSlots <- struct{}{}:
+		defer func() { <-dataUploadSlots }()
+	case <-r.Context().Done():
+		writeErr(w, http.StatusServiceUnavailable, "服务器忙，请稍后重试")
+		return
+	}
+
 	var sheet *datahub.Sheet
 	switch strings.ToLower(filepath.Ext(hdr.Filename)) {
 	case ".csv", ".txt":
