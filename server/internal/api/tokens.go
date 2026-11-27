@@ -373,14 +373,25 @@ func (s *Server) handleRevokeMyToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) adminTokenScope(r *http.Request) (string, bool) {
-	if currentAccess(r).Has(rbac.KeysManage) {
+// tokenDeptRevokeDenied 是部门令牌管理员动到非本部门机器人令牌时的统一提示。
+// 网页执行（handleRevokeTokens）与 Agent 预览共用，避免两边对「能不能吊销」说法不一致。
+const tokenDeptRevokeDenied = "只能吊销本部门机器人账号的令牌"
+
+// tokenManageScope 返回调用者能管令牌的部门范围：department 为空表示全员（keys.manage），
+// 非空表示只限该部门的机器人账号（tokens.dept_manage）。ok 为 false 表示没有令牌管理权限。
+// 网页处理函数与 Agent 预览共用同一套规则，避免预览与执行的部门作用域漂移。
+func tokenManageScope(access *rbac.Access, u *store.User) (department string, ok bool) {
+	if access.Has(rbac.KeysManage) {
 		return "", true
 	}
-	if currentAccess(r).Has(rbac.TokensDeptManage) && currentUser(r).Department != "" {
-		return currentUser(r).Department, true
+	if access.Has(rbac.TokensDeptManage) && u != nil && u.Department != "" {
+		return u.Department, true
 	}
 	return "", false
+}
+
+func (s *Server) adminTokenScope(r *http.Request) (string, bool) {
+	return tokenManageScope(currentAccess(r), currentUser(r))
 }
 
 func (s *Server) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
@@ -475,7 +486,7 @@ func (s *Server) handleRevokeTokens(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	const deptOnly = "只能吊销本部门机器人账号的令牌"
+	const deptOnly = tokenDeptRevokeDenied
 	if len(req.IDs) > 0 {
 		ids := make([]int64, 0, len(req.IDs))
 		for _, raw := range req.IDs {

@@ -625,7 +625,14 @@ func adminSpecs() map[string]*agentSpec {
 				{Name: "ids", Type: "array", Desc: "令牌 id，形如 at:12"},
 				{Name: "user_id", Type: "integer"}, {Name: "client_name", Type: "string"}, {Name: "department", Type: "string"},
 			},
-			Preview: func(ctx context.Context, s *Server, _ *Principal, args map[string]any) (string, error) {
+			Preview: func(ctx context.Context, s *Server, p *Principal, args map[string]any) (string, error) {
+				// 预览与执行（tokens.go handleRevokeTokens）用同一套部门作用域：
+				// 只有 keys.manage 能看全员，否则只能看本部门机器人账号的令牌。
+				// 否则部门令牌管理员可以让 Agent 读到别的部门的用户名 / 令牌名 / 前缀与数量。
+				department, ok := tokenManageScope(p.Access, p.User)
+				if !ok {
+					return "", fmt.Errorf("没有令牌管理权限")
+				}
 				if ids, ok := args["ids"].([]any); ok && len(ids) > 0 {
 					var names []string
 					for _, raw := range ids {
@@ -637,6 +644,9 @@ func adminSpecs() map[string]*agentSpec {
 						t, err := s.store.AccessTokenByID(ctx, n)
 						if err != nil {
 							return "", fmt.Errorf("没有令牌 %s", id)
+						}
+						if department != "" && (t.Department != department || t.AccountType != store.AccountBot) {
+							return "", errors.New(tokenDeptRevokeDenied)
 						}
 						names = append(names, fmt.Sprintf("%s 的「%s」(%s…)", t.Username, t.Name, t.Prefix))
 					}
@@ -655,6 +665,20 @@ func adminSpecs() map[string]*agentSpec {
 				}
 				if f.Empty() {
 					return "", fmt.Errorf("请指定要吊销的令牌 id、账号、设备名或部门")
+				}
+				if department != "" {
+					// 与执行一致：点名别的部门 / 非本部门机器人账号直接拒绝，其余条件强制收窄。
+					if f.Department != nil && *f.Department != department {
+						return "", errors.New(tokenDeptRevokeDenied)
+					}
+					if f.UserID != nil {
+						u, err := s.store.GetUser(ctx, *f.UserID)
+						if err != nil || u.Department != department || u.AccountType != store.AccountBot {
+							return "", errors.New(tokenDeptRevokeDenied)
+						}
+					}
+					f.Department = &department
+					f.BotOnly = true
 				}
 				n, err := s.store.CountTokensBy(ctx, f)
 				if err != nil {
