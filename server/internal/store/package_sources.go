@@ -203,8 +203,12 @@ func (s *Store) PackageRevisions(ctx context.Context, sourceID int64, parent str
 	return items, rows.Err()
 }
 
-func (s *Store) PackageRevisionParents(ctx context.Context, sourceID int64, prefix, end string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT parent FROM package_source_revisions WHERE source_id=? AND parent>=? AND parent<? ORDER BY parent", sourceID, prefix, end)
+// PackageRevisionParents 返回 parent 落在 [prefix, end) 区间内的去重 parent。
+// limit 限制最多返回的行数：发布者能用两个小文件造一条 revision 行，调用方必须设上限，
+// 否则一次读请求就会把源里所有 revision 载入内存。
+func (s *Store) PackageRevisionParents(ctx context.Context, sourceID int64, prefix, end string, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT parent FROM package_source_revisions WHERE source_id=? AND parent>=? AND parent<? ORDER BY parent LIMIT ?",
+		sourceID, prefix, end, limit)
 	if err != nil {
 		return nil, err
 	}

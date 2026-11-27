@@ -12,6 +12,14 @@ import (
 	"github.com/hikariming/dsh-ee/server/internal/store"
 )
 
+// conanListLimit 限制单次 Conan 列表请求（search / packages）最多载入的 parent 行数。
+// 发布者花两个小文件就能造一条 revision；没有上限时，一次读请求会把该源下所有
+// revision 行全部载入内存，成为低成本放大。变量而非常量，测试可以调小上限。
+var conanListLimit = 10000
+
+// conanFilesLimit 限制单次 files 请求最多聚合的制品行数，超出返回 413。
+var conanFilesLimit = 10000
+
 func (s *Server) handleConanSource(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
@@ -109,6 +117,13 @@ func (s *Server) conanFiles(w http.ResponseWriter, r *http.Request, sourceID int
 			after = f.Path
 			files[strings.TrimPrefix(f.Path, revision+"/files/")] = map[string]string{}
 		}
+		// files 的响应体是「该 revision 的完整文件清单」，Conan 客户端把它当成完整集合
+		// 来决定下载/校验哪些文件；截断后的清单会让客户端静默漏文件，且它无法补救，
+		// 所以超出上限时显式失败（413），而不是返回一份看起来完整的残缺清单。
+		if len(files) > conanFilesLimit {
+			writeErr(w, http.StatusRequestEntityTooLarge, "Conan revision has too many files")
+			return
+		}
 		if len(items) < 200 {
 			break
 		}
@@ -151,10 +166,15 @@ func (s *Server) conanRevisions(w http.ResponseWriter, r *http.Request, sourceID
 }
 
 func (s *Server) conanSearch(w http.ResponseWriter, r *http.Request, sourceID int64) {
-	parents, err := s.store.PackageRevisionParents(r.Context(), sourceID, "conans/", "conans0")
+	// 多取一行用来精确判断是否被上限截断，避免「恰好等于上限」被误报成截断。
+	parents, err := s.store.PackageRevisionParents(r.Context(), sourceID, "conans/", "conans0", conanListLimit+1)
 	if err != nil {
 		s.packageSourceErr(w, r, err)
 		return
+	}
+	truncated := len(parents) > conanListLimit
+	if truncated {
+		parents = parents[:conanListLimit]
 	}
 	pattern := r.URL.Query().Get("q")
 	ignoreCase := !strings.EqualFold(r.URL.Query().Get("ignorecase"), "false")
@@ -164,7 +184,9 @@ func (s *Server) conanSearch(w http.ResponseWriter, r *http.Request, sourceID in
 			items = append(items, ref)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": items})
+	// truncated 是新增的顶层布尔字段：Conan 客户端只读 results，忽略未知字段，
+	// 老客户端行为不变；新客户端至少能知道还有结果没返回。
+	writeJSON(w, http.StatusOK, map[string]any{"results": items, "truncated": truncated})
 }
 
 func (s *Server) conanPackages(w http.ResponseWriter, r *http.Request, sourceID int64, route registry.ConanPath) {
@@ -181,7 +203,11 @@ func (s *Server) conanPackages(w http.ResponseWriter, r *http.Request, sourceID 
 		}
 		revision = revisions[0].Path
 	}
-	parents, err := s.store.PackageRevisionParents(r.Context(), sourceID, revision+"/packages/", revision+"/packages0")
+	// 包列表同样是「列出全部」语义，也必须设上限。它的响应是 package ID → info 的
+	// map，没有加 truncated 的位置，所以超过上限的部分直接不返回：单个 revision 有
+	// 上万个二进制包本身就不正常，与其为这种数据再引入一种错误形态，不如保持响应
+	// 形状不变、只锁住内存/CPU 上界。
+	parents, err := s.store.PackageRevisionParents(r.Context(), sourceID, revision+"/packages/", revision+"/packages0", conanListLimit)
 	if err != nil {
 		s.packageSourceErr(w, r, err)
 		return
