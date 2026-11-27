@@ -284,6 +284,13 @@ func (s *Server) putPackageFile(w http.ResponseWriter, r *http.Request, p *Princ
 		writeErr(w, http.StatusRequestEntityTooLarge, "Artifact exceeds the upload size limit")
 		return
 	}
+	// 先做与内容无关的 owner 预检：写他人命名空间会在读 body、落 blob 之前 403。
+	// immutable / 重复内容冲突取决于内容摘要，仍由 SavePackageSourceFile 事务内判断
+	// （保持同内容重复 PUT 的 201 幂等语义）；并发下也以事务内结果为准（防御纵深）。
+	if err := s.store.CheckPackageSourceWrite(r.Context(), src.ID, namespace, p.User.ID); err != nil {
+		s.packageSourceErr(w, r, err)
+		return
+	}
 	digest, err := s.registry.Blobs().Put(r.Body, limit)
 	if err != nil {
 		s.packageSourceErr(w, r, err)

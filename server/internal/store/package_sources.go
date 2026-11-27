@@ -79,6 +79,27 @@ func (s *Store) ListPackageSources(ctx context.Context) ([]PackageSource, error)
 	return items, rows.Err()
 }
 
+// CheckPackageSourceWrite 是 SavePackageSourceFile 的只读预检：只做与上传内容无关的 owner 校验，
+// 不落盘、不开写事务、不写库。API 在读取请求体（写 blob）之前调用它，让注定被 403 拒绝的上传
+// （写他人命名空间）不留下永远不被引用的 blob。immutable / 重复内容的冲突取决于内容摘要，
+// 预检阶段还没有读 body，无法判断，仍交给 SavePackageSourceFile 的事务内逻辑（保持 201 幂等语义）；
+// 并发下也以事务内结果为准，所以这里误放行不会写坏数据。
+func (s *Store) CheckPackageSourceWrite(ctx context.Context, sourceID int64, namespace string, uploaderID int64) error {
+	var owner int64
+	err := s.db.QueryRowContext(ctx, "SELECT owner_id FROM package_source_owners WHERE source_id=? AND namespace=?", sourceID, namespace).Scan(&owner)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// 命名空间还没有主：本次上传会成为 owner（SavePackageSourceFile 负责写入这行）。
+		return nil
+	case err != nil:
+		return err
+	case owner != uploaderID:
+		return ErrPackageSourceOwner
+	default:
+		return nil
+	}
+}
+
 // SavePackageSourceFile serializes writes to a Conan recipe namespace, or to one Raw path.
 func (s *Store) SavePackageSourceFile(ctx context.Context, sourceID int64, namespace, revision, parent string, f PackageSourceFile, mutable bool, archive string, required, archives []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
