@@ -42,7 +42,17 @@ func (s *Server) feishuNotificationClient(ctx context.Context) (*feishu.Client, 
 	return feishu.NewClient(cfg.FeishuAPIBase, cfg.ClientID, cfg.ClientSecret, s.oidcHTTP().HTTP), cfg, nil
 }
 
+// feishuOpenID 取主身份里的 open_id。只有调用方已经按 external_dn 的前缀筛过（确认主身份就是飞书）
+// 才能用它；要发给「主身份不是飞书、但关联了飞书身份」的人，用 feishuSender。
 func feishuOpenID(u *store.User) string { return strings.TrimPrefix(u.ExternalDN, "feishu:") }
+
+// feishuSender 是这个人真正能收飞书消息的 open_id：主身份是飞书就用主身份，否则用他关联的飞书身份
+// （见 docs/identity-binding.md）。返回空表示没有可用的飞书身份——本地账号、已禁用、
+// 或者只关联了钉钉身份的人。不能拿 users.external_dn 直接当 open_id：主身份可能是
+// dingtalk:<CorpId>:<userId>，整串不是合法 open_id，飞书会拒发。
+func (s *Server) feishuSender(ctx context.Context, u *store.User) (string, error) {
+	return s.chatSender(ctx, u, "feishu", "feishu:")
+}
 
 // feishuNotifyText 异步给一名接收者发消息；消息失败只写日志，不改变已经落库的审批/申请结果。
 // 文案按「接收者用户语言 → 组织默认语言 → zh」渲染（见 userLanguage）。
@@ -53,10 +63,14 @@ func (s *Server) feishuNotifyText(userID int64, key string, params map[string]st
 		return
 	}
 	u, err := s.store.GetUser(ctx, userID)
-	if err != nil || u.ExternalDN == "" || u.AccountType != store.AccountHuman || u.Disabled {
+	if err != nil {
 		return
 	}
-	if _, err := client.SendText(ctx, feishuOpenID(u), feishu.Text(s.userLanguage(ctx, u), key, params)); err != nil {
+	openID, err := s.feishuSender(ctx, u)
+	if err != nil || openID == "" {
+		return
+	}
+	if _, err := client.SendText(ctx, openID, feishu.Text(s.userLanguage(ctx, u), key, params)); err != nil {
 		s.log.Warn("发送飞书结果通知失败", "user_id", userID, "err", err)
 	}
 }
@@ -109,14 +123,19 @@ func (s *Server) feishuNotifyKBGaps(ctx context.Context) {
 			for _, u := range users {
 				access, err := s.store.UserAccess(ctx, u.ID)
 				maintains := err == nil && (access.Has(rbac.KnowledgeManage) || b.Maintainers.Allows(u.ID, access.RoleIDs))
-				if !maintains || u.Disabled || u.ExternalDN == "" {
+				if !maintains {
+					continue
+				}
+				// 只发给真的能收飞书消息的人：主身份不是飞书时用他关联的飞书身份。
+				openID, senderErr := s.feishuSender(ctx, u)
+				if senderErr != nil || openID == "" {
 					continue
 				}
 				params := map[string]string{
 					"title": b.Title, "query": g.Query, "count": strconv.Itoa(g.Count),
 					"id": strconv.FormatInt(b.ID, 10),
 				}
-				if _, err := client.SendText(ctx, feishuOpenID(u), feishu.Text(s.userLanguage(ctx, u), feishu.MsgKBGap, params)); err != nil {
+				if _, err := client.SendText(ctx, openID, feishu.Text(s.userLanguage(ctx, u), feishu.MsgKBGap, params)); err != nil {
 					s.log.Warn("发送飞书待补文档提醒失败", "kb", b.Slug, "err", err)
 					continue
 				}
@@ -243,7 +262,12 @@ func (s *Server) sendFeishuApproval(ctx context.Context, kind, objectKey string,
 			continue
 		}
 		u, err := s.store.GetUser(ctx, operator)
-		if err != nil || u.ExternalDN == "" || u.Disabled {
+		if err != nil {
+			continue
+		}
+		// 收件人必须是这个人有效的飞书 open_id：主身份是钉钉时用他关联的飞书身份，都没有就不发。
+		openID, err := s.feishuSender(ctx, u)
+		if err != nil || openID == "" {
 			continue
 		}
 		// 每张卡片按收件人自己的语言渲染：审批人设了语言就用它的，否则跟组织默认。
@@ -256,7 +280,7 @@ func (s *Server) sendFeishuApproval(ctx context.Context, kind, objectKey string,
 			feishuButton(feishu.Text(lang, feishu.MsgCardButtonReject, nil), kind, "reject", actionID),
 		}}
 		doc["body"].(map[string]any)["components"] = actions
-		messageID, err := client.SendInteractive(ctx, feishuOpenID(u), doc)
+		messageID, err := client.SendInteractive(ctx, openID, doc)
 		if err != nil {
 			s.log.Warn("发送飞书审批卡失败", "kind", kind, "object", objectKey, "err", err)
 			continue
@@ -278,9 +302,14 @@ func (s *Server) feishuReviewers(ctx context.Context) []int64 {
 	out := []int64{}
 	for _, u := range users {
 		a, err := s.store.UserAccess(ctx, u.ID)
-		if err == nil && a.Has(rbac.PluginsManage) && !u.Disabled && u.ExternalDN != "" {
-			out = append(out, u.ID)
+		if err != nil || !a.Has(rbac.PluginsManage) {
+			continue
 		}
+		// 没有可用飞书身份的人收不到审批卡，就不该被算成审批人：主身份不是飞书时看他关联的飞书身份。
+		if openID, err := s.feishuSender(ctx, u); err != nil || openID == "" {
+			continue
+		}
+		out = append(out, u.ID)
 	}
 	return out
 }
@@ -328,13 +357,18 @@ func (s *Server) feishuAccessRequest(ctx context.Context, q *store.AccessRequest
 	var reviewers []int64
 	for _, u := range users {
 		access, lookupErr := s.store.UserAccess(ctx, u.ID)
-		if lookupErr != nil || u.Disabled || u.ExternalDN == "" {
+		if lookupErr != nil || u.Disabled {
 			continue
 		}
 		allowed, approvalErr := s.canApprove(ctx, viewer{user: u, access: access}, q)
-		if approvalErr == nil && allowed {
-			reviewers = append(reviewers, u.ID)
+		if approvalErr != nil || !allowed {
+			continue
 		}
+		// 和 feishuReviewers 一样：没有可用飞书身份的人收不到卡片，就不该算审批人。
+		if openID, senderErr := s.feishuSender(ctx, u); senderErr != nil || openID == "" {
+			continue
+		}
+		reviewers = append(reviewers, u.ID)
 	}
 	ids := []int64{}
 	for _, r := range reviewers {
@@ -453,11 +487,16 @@ func feishuEventAction(raw json.RawMessage) (actionID, decision string, err erro
 }
 
 func (s *Server) feishuOperator(ctx context.Context, event feishuCardEvent) (viewer, error) {
-	u, err := s.store.GetUserByExternalDN(ctx, store.AuthOIDC, feishu.ExternalSubject(event.OperatorID))
+	// 点卡的人未必以飞书为主身份：先用「主身份或关联身份」认回账号，
+	// 主身份是钉钉、另外绑了飞书的人也要能点自己收到的卡。
+	u, err := s.chatUserBySubject(ctx, feishu.ExternalSubject(event.OperatorID))
 	if err != nil {
+		return viewer{}, err
+	}
+	if u == nil {
 		return viewer{}, feishuErr(feishu.MsgToastOperatorNotProvisioned, nil)
 	}
-	if u.Disabled || u.AccountType != store.AccountHuman {
+	if u.Disabled || u.AccountType != store.AccountHuman || u.AuthSource != store.AuthOIDC {
 		return viewer{}, feishuErr(feishu.MsgToastOperatorDisabled, nil)
 	}
 	access, err := s.store.UserAccess(ctx, u.ID)

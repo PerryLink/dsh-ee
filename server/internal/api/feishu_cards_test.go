@@ -509,6 +509,33 @@ func TestFeishuKBGapNotification(t *testing.T) {
 	}
 }
 
+// sent 返回到目前为止 fake 收到的全部飞书消息（含 receive_id 与消息类型）。
+func (f *fakeFeishuMessages) sent() []feishuMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.messages)
+}
+
+// interactiveFor 找出发给某个飞书 open_id 的那张审批卡。
+func (f *fakeFeishuMessages) interactiveFor(t *testing.T, openID string) (actionID, messageID string) {
+	t.Helper()
+	n, target := 0, -1
+	for _, m := range f.sent() {
+		if m.Type != "interactive" {
+			continue
+		}
+		if m.OpenID == openID {
+			target = n
+			break
+		}
+		n++
+	}
+	if target < 0 {
+		t.Fatalf("没有发给 %s 的审批卡：%+v", openID, f.sent())
+	}
+	return f.interactiveAction(t, target)
+}
+
 func feishuMustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -647,5 +674,133 @@ func TestFeishuApplyAccessCardCAS(t *testing.T) {
 	action, err = st.FeishuCardAction(ctx, secret.Hash(actionID))
 	if err != nil || action.Status != store.FeishuActionFailed {
 		t.Fatalf("授权失败的卡片应留 failed 终态：%+v err=%v", action, err)
+	}
+}
+
+// 主身份是钉钉、另外关联了飞书身份的员工，也要能收到飞书审批卡并点卡：
+// 卡片收件人必须是关联身份的 open_id，不能拿主身份 DN（dingtalk:<CorpId>:<userId>）冒充 open_id；
+// 回调里的操作人 open_id 也要能按关联身份认回账号。主身份就是飞书的人行为不变。
+func TestFeishuCardsFollowLinkedIdentity(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := api.Bootstrap(ctx, st, "admin", "admin-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	idp := newFakeIdP(t)
+	fake := &fakeFeishuMessages{base: idp.Config.Handler}
+	idp.Config.Handler = fake
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	box, _ := secret.NewBox(key)
+	srv := api.New(st, box, api.Options{DataDir: t.TempDir(), OIDCClient: idp.Client()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	admin := newClient(t, ts.URL)
+	code, body := admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": "admin-password-123"}, nil)
+	expect(t, "管理员登录", code, 200, body)
+	super, err := st.GetRoleByCode(ctx, rbac.RoleSuper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := st.GetRoleByCode(ctx, rbac.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 建一个统一登录员工账号；linkedFeishu 非空时再给他关联一个飞书身份（员工自己绑定的那种）。
+	mkEmployee := func(username, homeDN, linkedFeishu string, roles []int64) *store.User {
+		t.Helper()
+		u := &store.User{Username: username, DisplayName: username, Department: "研发部", AuthSource: store.AuthOIDC, ExternalDN: homeDN}
+		if err := st.CreateUser(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetUserRoles(ctx, u.ID, roles); err != nil {
+			t.Fatal(err)
+		}
+		if linkedFeishu != "" {
+			if err := st.LinkIdentity(ctx, u.ID, "feishu", linkedFeishu, store.IdentityExplicit, "", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return u
+	}
+	// 审批人：主身份是钉钉，自己绑了飞书 —— 卡片应发到 ou-linked。
+	mkEmployee("linked-reviewer", "dingtalk:ding-corp:staff-r", "feishu:ou-linked", []int64{super.ID})
+	// 另一个审批人主身份就是飞书：这次改动不能改坏它（回归）。
+	mkEmployee("home-reviewer", "feishu:ou-home-reviewer", "", []int64{super.ID})
+	// 主身份是钉钉、没有飞书身份：收不到卡，也不该被算成审批人。
+	mkEmployee("dingtalk-only-reviewer", "dingtalk:ding-corp:staff-n", "", []int64{super.ID})
+	// 作者同样是用钉钉建的号、关联了飞书：审批结果通知要发到关联的 open_id。
+	author := mkEmployee("linked-author", "dingtalk:ding-corp:staff-a", "feishu:ou-author-linked", []int64{member.ID})
+	token := secret.Token()
+	if err := st.CreateSession(ctx, secret.Hash(token), author.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	authorClient := newClient(t, ts.URL)
+	cookie := map[string]string{"Cookie": "dsh_ee_session=" + token}
+
+	code, body = admin.do("PUT", "/api/admin/auth/oidc", map[string]any{
+		"enabled": true, "preset": "feishu", "issuer": idp.URL, "clientId": "dsh-ee", "clientSecret": "idp-secret",
+		"feishuApiBase": idp.URL, "feishuNotify": true, "feishuNotifyActions": true,
+		"feishuVerificationToken": feishuTestToken, "autoCreate": true,
+	}, nil)
+	expect(t, "开启飞书通知与卡片", code, 200, body)
+
+	code, body = authorClient.do("POST", "/api/hub", map[string]any{
+		"kind": "skill", "slug": "feishu-linked-review", "scope": map[string]any{"departments": []string{"财务部"}},
+		"spec": map[string]any{"title": "关联身份审批技能", "description": "review me", "body": "读取审批流程"},
+	}, cookie)
+	expect(t, "作者提交待审核技能", code, 201, body)
+	assetID := decodeAs[struct {
+		Asset struct{ ID int64 } `json:"asset"`
+	}](t, body).Asset.ID
+
+	// 卡片只发给有可用飞书身份的审批人。主身份 DN 不是 open_id，整串塞进 receive_id 发不出去，
+	// 也会把「主身份=钉钉但没关联飞书」的人错算成审批人。
+	var got []string
+	for _, m := range fake.sent() {
+		got = append(got, m.Type+":"+m.OpenID)
+	}
+	if want := []string{"interactive:ou-linked", "interactive:ou-home-reviewer"}; !slices.Equal(got, want) {
+		t.Fatalf("审批卡应只发给有效飞书身份（关联的 ou-linked、主身份 ou-home-reviewer），实际：%v", got)
+	}
+
+	// 关联飞书身份的人点卡：回调 open_id 要能按关联身份认回账号并通过权限校验。
+	actionID, messageID := fake.interactiveFor(t, "ou-linked")
+	code, body = admin.do("POST", "/api/auth/feishu/card", cardEvent(actionID, messageID, "ou-linked", "approve"), nil)
+	expectToast(t, "关联飞书身份的审批人点卡通过", code, body, "success", "已通过")
+	version, err := st.LiveAssetVersion(ctx, assetID)
+	if err != nil || version.Status != store.StatusPublished {
+		t.Fatalf("关联身份审批通过后技能应上架：%+v err=%v", version, err)
+	}
+
+	// 审批结果通知发给作者本人：他的主身份是钉钉，通知要走关联的飞书身份。
+	sent := fake.sent()
+	if len(sent) != 3 || sent[2].Type != "text" || sent[2].OpenID != "ou-author-linked" {
+		t.Fatalf("审批结果通知应发到作者关联的飞书身份 ou-author-linked：%+v", sent)
+	}
+
+	// 权限申请卡走的是另一条选审批人的路径，同样只选有有效飞书身份的人：
+	// 本地管理员、主身份=钉钉且没关联飞书的人都不该收到卡。
+	applicant := &store.User{Username: "applicant", DisplayName: "申请人", Department: "研发部", AuthSource: store.AuthLocal}
+	if err := st.CreateUser(ctx, applicant); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserRoles(ctx, applicant.ID, []int64{member.ID}); err != nil {
+		t.Fatal(err)
+	}
+	applicantToken := secret.Token()
+	if err := st.CreateSession(ctx, secret.Hash(applicantToken), applicant.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	applicantClient := newClient(t, ts.URL)
+	code, body = applicantClient.do("POST", "/api/me/access-requests", map[string]any{
+		"kind": "skill", "slug": "feishu-linked-review", "reason": "需要查阅流程",
+	}, map[string]string{"Cookie": "dsh_ee_session=" + applicantToken})
+	expect(t, "研发部员工申请财务部技能", code, 201, body)
+	sent = fake.sent()
+	if len(sent) != 5 || sent[3].Type != "interactive" || sent[3].OpenID != "ou-linked" ||
+		sent[4].Type != "interactive" || sent[4].OpenID != "ou-home-reviewer" {
+		t.Fatalf("权限申请卡也应只发给有效飞书身份：%+v", sent)
 	}
 }
