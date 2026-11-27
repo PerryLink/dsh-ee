@@ -149,7 +149,7 @@ var (
   dsh-ee package check <file.tgz> [--json]
                                          hand an npm package to the server for a pre-publish check; nothing is published
   dsh-ee doctor [--json]                 read-only diagnosis of the publish path: server, token scopes, npmrc, Node/dsh
-  dsh-ee blob-gc [--delete]              list unreferenced blobs offline; delete only with --delete
+  dsh-ee blob-gc [--delete] [--force]    list unreferenced blobs offline; --delete removes them
   dsh-ee admin recover                   create a recovery account valid for 1 hour on the server (for lockouts)
   dsh-ee schema list [--json]            list schemas
   dsh-ee schema get <name>               print one schema (manifest: manifest; errors: check list)
@@ -270,7 +270,7 @@ const cliUsageZH = `用法：
   dsh-ee package check <文件.tgz> [--json]
                                          把 npm 包交给服务端做发布前预检，不发布、不占版本号
   dsh-ee doctor [--json]                 只读诊断发布链路：服务连通、令牌范围、npmrc、Node/dsh 版本
-  dsh-ee blob-gc [--delete]              离线列出未引用的 blob；只有加 --delete 才删除
+  dsh-ee blob-gc [--delete] [--force]    离线列出未引用的 blob；只有加 --delete 才删除
   dsh-ee admin recover                   在服务器上生成一个 1 小时有效的恢复账号（把自己锁在外面时用）
   dsh-ee schema list [--json]            列出规格
   dsh-ee schema get <名字>                打印一份规格（manifest：清单；errors：检查项）

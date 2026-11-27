@@ -184,6 +184,11 @@ type MigrationState struct {
 	Latest string
 	// Pending 是还没在 schema_migrations 里登记的迁移版本，按文件名顺序。
 	Pending []string
+	// Ahead 是 schema_migrations 里有、但当前二进制内置迁移里没有的版本，按文件名顺序。
+	// 非空表示数据库比二进制新：回滚到旧版本后，旧二进制连上的还是被新版本迁移过的库。
+	// 这些迁移改了什么当前二进制看不到（可能新增了表/列），所以破坏性离线操作
+	// （blob-gc --delete）必须据此拒绝执行，而不是假设自己的 schema 认知是最新的。
+	Ahead []string
 }
 
 // MigrationStatus 只读查询迁移状态：比对 schema_migrations 与内置迁移文件的差集，
@@ -196,10 +201,12 @@ func (s *Store) MigrationStatus(ctx context.Context) (MigrationState, error) {
 	}
 	sort.Strings(files)
 	known := make([]string, 0, len(files))
+	knownSet := make(map[string]bool, len(files))
 	var state MigrationState
 	for _, f := range files {
 		version := strings.TrimSuffix(strings.TrimPrefix(f, "migrations/"), ".sql")
 		known = append(known, version)
+		knownSet[version] = true
 		state.Latest = version
 	}
 
@@ -224,6 +231,12 @@ func (s *Store) MigrationStatus(ctx context.Context) (MigrationState, error) {
 			state.Pending = append(state.Pending, version)
 		}
 	}
+	for version := range applied {
+		if !knownSet[version] {
+			state.Ahead = append(state.Ahead, version)
+		}
+	}
+	sort.Strings(state.Ahead)
 	return state, nil
 }
 
