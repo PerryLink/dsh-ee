@@ -18,9 +18,12 @@ curl -fsSL https://raw.githubusercontent.com/hikariming/dsh-ee/main/deploy/insta
 | `DSH_EE_VERSION` | 安装的版本，默认最新发布，如 `v0.3.1` |
 | `DSH_EE_IMAGE` | 换镜像，例如内网镜像仓库里的副本 |
 | `DSH_EE_PORT` | 宿主机端口，默认 8080 |
+| `DSH_EE_FORCE_INSTALL` | 默认会拒绝在「主机上已有 dsh-ee 容器/数据卷、且当前目录没有 `.env`」的目录里安装；确认旧实例已停用、`.env` 与数据已备份后设 `1` 强制继续（仍会接管旧的 `dsh-ee-data` 卷，见下） |
 | `TIDB_REGISTRY` | TiDB 镜像来源，默认 Docker Hub 的 `pingcap`，拉不动时可换镜像站 |
 
 升级：在 `dsh-ee/` 里执行 `./install.sh`（或 `DSH_EE_VERSION=v0.x.y ./install.sh`），会下载新版本的 compose 文件、拉新镜像、重建容器，`.env` 与数据不动。
+
+**一台主机只应有一个 dsh-ee 实例/数据卷。** compose 项目名固定 `dsh-ee`、数据卷固定 `dsh-ee-data`，所以从另一个目录再跑一次安装会接管旧容器/卷，却生成新的 `DSH_EE_SECRET_KEY`，已加密的上游 key / 连接凭据就解不开了。`install.sh` 在没有 `.env` 时会检查主机上已有的 dsh-ee 容器/数据卷并拒绝；换目录、重装或恢复前，先确认旧实例已停用，并把旧 `.env` 迁移/备份好（确需继续时设 `DSH_EE_FORCE_INSTALL=1`）。
 
 ## 用离线安装包（推荐给内网环境）
 
@@ -37,7 +40,7 @@ sha256sum -c SHA256SUMS
 
 第一次执行会生成 `.env`（主密钥 `DSH_EE_SECRET_KEY`、初始管理员密码），并打印管理员密码。**`.env` 要和数据库一起备份**：主密钥丢了，已存的上游模型 key 就解不开了。
 
-升级：解压新版本的安装包，把旧目录里的 `.env` 拷过去，再执行一次 `./install.sh`（会载入新镜像、重建 dsh-ee 容器，数据在 docker 卷里不受影响）。
+升级：解压新版本的安装包，把旧目录里的 `.env` 拷过去，再执行一次 `./install.sh`（会载入新镜像、重建 dsh-ee 容器，数据在 docker 卷里不受影响）。**必须带 `.env`**：没有 `.env` 会被当成首次安装，`install.sh` 检测到主机上已有的 dsh-ee 容器/数据卷会拒绝执行。
 
 ### 正式环境的数据库
 

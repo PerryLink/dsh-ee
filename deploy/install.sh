@@ -6,6 +6,8 @@
 #   curl -fsSL …/install.sh | sh -s -- oceanbase      # 选数据库，参数同下
 #   会在当前目录下建 dsh-ee/（可用 DSH_EE_DIR 改），以后在那里执行 ./install.sh 升级。
 #   DSH_EE_VERSION 指定版本（默认最新发布），DSH_EE_IMAGE 指定镜像，DSH_EE_PORT 指定端口。
+#   一台主机只应有一个 dsh-ee 实例/数据卷：没有 .env 时若主机上已有 dsh-ee 容器或数据卷，
+#   安装会拒绝执行（避免生成新主密钥接管旧数据卷）；确认新建时设 DSH_EE_FORCE_INSTALL=1。
 #
 # 离线安装：在离线安装包解压目录里执行 ./install.sh。
 #
@@ -84,6 +86,27 @@ else
 fi
 
 rand() { head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-"$1"; }
+
+# 生成新 .env 之前先确认主机上没有旧的 dsh-ee。换目录重跑、或误删 .env 后重装，会
+# 生成新的主密钥却接管旧的容器与数据卷（compose 项目名固定 dsh-ee），已加密的上游
+# key / 连接凭据随之解不开，看起来像「数据丢了」。docker 查询失败时按「没有」处理
+# （fail-open，不阻塞全新的主机）。
+if [ ! -f .env ]; then
+  existing_containers="$(docker compose -p dsh-ee ps -aq 2>/dev/null)" || existing_containers=""
+  existing_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=dsh-ee 2>/dev/null)" || existing_volumes=""
+  if [ -n "$existing_containers" ] || [ -n "$existing_volumes" ]; then
+    if [ "${DSH_EE_FORCE_INSTALL:-}" = 1 ]; then
+      echo "警告：DSH_EE_FORCE_INSTALL=1，忽略主机上已有的 dsh-ee 容器/数据卷，仍按首次安装继续。" >&2
+      echo "      新生成的 DSH_EE_SECRET_KEY 解不开旧实例已加密的上游 key / 连接凭据；继续会接管旧的容器与数据卷。" >&2
+    else
+      echo "主机上已有 dsh-ee（数据卷仍在）：请到原安装目录升级，或先迁移 .env。" >&2
+      echo "  在这里继续会生成新的主密钥，却接管旧的容器与数据卷，已加密的上游 key / 连接凭据将无法解密。" >&2
+      echo "  确认新建请设 DSH_EE_FORCE_INSTALL=1（会继续使用旧数据卷，请先备份 .env 与数据库）。" >&2
+      echo "  查看：docker compose -p dsh-ee ps -a；docker volume ls --filter label=com.docker.compose.project=dsh-ee" >&2
+      exit 1
+    fi
+  fi
+fi
 
 if [ ! -f .env ]; then
   echo "· 生成 .env"

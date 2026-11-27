@@ -45,6 +45,8 @@ sha256sum -c SHA256SUMS
 
 `install.sh` 第一次执行会生成 `.env`（`DSH_EE_SECRET_KEY`、`DSH_EE_BOOTSTRAP_ADMIN_PASSWORD` 等）并打印管理员密码；之后重复执行就是升级。启动后会轮询 `http://127.0.0.1:<端口>/healthz` 等就绪（最长约 16 分钟，OceanBase 首次启动慢）。
 
+**一台主机只应有一个 dsh-ee 实例/数据卷**：compose 项目名固定 `dsh-ee`、数据卷固定 `dsh-ee-data`，在别的目录重跑安装（或误删 `.env`）会接管旧容器/数据卷、却生成新的 `DSH_EE_SECRET_KEY`，已加密的上游 key / 连接凭据随之解不开。`install.sh` 在没有 `.env` 且检测到主机上已有 dsh-ee 容器/数据卷时会直接退出；换目录、重装、恢复前先确认旧实例已停用、`.env` 已迁移/备份，确需继续时设 `DSH_EE_FORCE_INSTALL=1`。
+
 企业 npm 上游可接 Nexus、Artifactory、GitLab / GitHub Packages、Verdaccio 等 npm 兼容端点，并使用 Bearer 或 Basic 认证。URL 示例、`upstream.auth` 设置与凭据保留 / 清除规则见 [服务端说明「企业制品仓库上游」](../server/README.md#企业制品仓库上游)。公共预设始终匿名；凭据不发给跨源 tarball 或插件目录源。
 
 **`.env` 必须和数据库一起备份**：`DSH_EE_SECRET_KEY` 丢了，已存的上游模型 key、npm 仓库凭据、连接凭据就解不开了。
@@ -168,6 +170,8 @@ curl -fsS https://<域名>/healthz
 ```
 
 `install.sh` 的升级分支只改 `.env` 里的 `DSH_EE_IMAGE`，然后 `docker compose up -d`；数据在 compose 卷里不受影响。
+
+升级时务必带上旧目录的 `.env`：把安装包解压到新目录直接跑、或在没有 `.env` 的目录重装，会被当成首次安装生成新的主密钥（`install.sh` 检测到主机上已有 dsh-ee 容器/数据卷会拒绝，见 §2.1）。
 
 ### 5.3 二进制 + systemd 升级
 
