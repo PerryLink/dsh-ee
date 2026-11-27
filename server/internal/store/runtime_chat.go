@@ -507,6 +507,26 @@ func (s *Store) RuntimeChatConversation(ctx context.Context, id, ownerID int64) 
 	return nil, ErrNotFound
 }
 
+// RuntimeChatConversationScope 返回一条对话的归属：是不是团队线程、机器人是谁、所属部门，供内部审计使用。
+// department 取线程自己的 shared_department（附件上传时所属的部门），不是机器人此刻共享给的部门：
+// 取消共享或改共享到别的部门之后，团队附件仍然是团队附件，归属判断不能跟着变（那正是要修的漏洞）。
+// 与 RuntimeChatConversation 不同，这里不按当前可见性过滤：员工调岗、机器人取消共享之后，
+// 团队附件删除时仍要能判断归属，否则删除成功但审计不写，团队文件传递会出现缺口。
+// 只读线程的归属字段，不返回标题或消息内容；对话不存在时返回 ErrNotFound。
+func (s *Store) RuntimeChatConversationScope(ctx context.Context, id int64) (ownedByTeam bool, botID int64, department string, err error) {
+	var ownerID int64
+	err = s.db.QueryRowContext(ctx, `SELECT owner_id, bot_id, shared_department FROM runtime_chat_conversations WHERE id=?`, id).
+		Scan(&ownerID, &botID, &department)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, 0, "", ErrNotFound
+	}
+	if err != nil {
+		return false, 0, "", err
+	}
+	// 团队线程是 owner_id=0 且带部门的那一类（0059）；个人线程 owner_id>0、部门为空，两个条件都不成立。
+	return ownerID == 0 && department != "", botID, department, nil
+}
+
 // RuntimeChatConversations 按最近活动倒序列出员工本人的线程。
 func (s *Store) RuntimeChatConversations(ctx context.Context, ownerID int64) ([]RuntimeChatConversation, error) {
 	rows, err := s.db.QueryContext(ctx, runtimeChatConversationQuery+` WHERE c.owner_id=? ORDER BY c.updated_at DESC, c.id DESC LIMIT ?`,

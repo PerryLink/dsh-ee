@@ -112,6 +112,12 @@ const (
 	auditFilesUpload = "files.upload"
 	auditFilesDelete = "files.delete"
 	auditFilesList   = "files.list"
+
+	// 团队对话里的附件传递（runtime_chat_uploads.go）：个人对话的附件和消息内容一样不审计，
+	// 但团队对话的附件是部门共享文件，事后要能回答谁在何时上传/删除了哪个文件。
+	// 只记元数据（文件名、大小、格式），不记文件内容和磁盘路径。
+	auditRuntimeChatUpload       = "runtime.chat.upload"
+	auditRuntimeChatUploadDelete = "runtime.chat.upload_delete"
 )
 
 // audit 以当前登录用户的身份记一条操作。写失败只记日志，不影响请求本身。

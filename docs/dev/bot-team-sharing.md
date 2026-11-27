@@ -6,7 +6,7 @@ title_en: "Sharing a bot with a team"
 summary: "把云端机器人共享给一个部门：成员共用一条团队对话、看到彼此的消息和文件，每条消息都用发送人自己的权限运行。"
 summary_en: "Share a cloud bot with a department: members use one team chat and see each other's messages and files, and every message runs with the sender's own permissions."
 tags: [机器人对话, 云端机器人, 团队, 权限]
-updated_at: 2026-11-23
+updated_at: 2026-11-25
 status: draft
 since: 2026-11-22
 lang: zh-CN
@@ -72,6 +72,8 @@ lang: zh-CN
 | --- | --- |
 | `runtime.bot.share` | 共享变更：操作人、机器人、`department`（新部门，空是取消）、`previous`、`by`（`owner` / `admin`） |
 | `runtime.chat.team_turn` | 团队对话里谁触发了任务：操作人就是发消息的员工，带 `bot_id`、`conversation_id`、`department`、`run_as` |
+| `runtime.chat.upload` | 团队对话里上传附件：操作人就是上传的员工，带 `conversation_id`、`bot_id`、`upload_id`、`name`、`size`、`format`（个人对话不记） |
+| `runtime.chat.upload_delete` | 团队对话里删除还没发出的附件：操作人就是删除的员工，字段同上 |
 | `runtime.task.<状态>` | 任务结束（已有），带 `run_as` |
 
 ## 接口

@@ -50,6 +50,20 @@ func (s *Server) removeRuntimeChatUpload(u store.RuntimeChatUpload) {
 	}
 }
 
+// auditRuntimeChatTeamAttachment 记录团队线程里的附件上传 / 删除：团队对话的附件是部门共享文件，
+// 事后要能回答谁在何时上传、删除了哪个文件。个人线程不记（对话内容与附件保持不审计）；
+// 调用方先确认过这是团队线程，detail 只带元数据，不带文件内容和磁盘路径。
+func (s *Server) auditRuntimeChatTeamAttachment(r *http.Request, action string, conversationID, botID int64, upload store.RuntimeChatUpload) {
+	s.audit(r, action, strconv.FormatInt(upload.ID, 10), map[string]any{
+		"conversation_id": conversationID,
+		"bot_id":          botID,
+		"upload_id":       upload.ID,
+		"name":            upload.Name,
+		"size":            upload.Size,
+		"format":          upload.Format,
+	})
+}
+
 // runtimeChatUploadFileName 把浏览器给的文件名收成一个能直接当路径最后一段的名字：去掉目录、控制字符和路径分隔符，
 // 不以点开头，按字符截短但保留扩展名（转换按扩展名判断格式）。
 func runtimeChatUploadFileName(name string) string {
@@ -182,6 +196,10 @@ func (s *Server) handleRuntimeChatUpload(w http.ResponseWriter, r *http.Request)
 		s.internalErr(w, r, err)
 		return
 	}
+	// 团队线程的附件上传记审计；个人线程不记。
+	if conversation.Shared {
+		s.auditRuntimeChatTeamAttachment(r, auditRuntimeChatUpload, conversation.ID, conversation.BotID, *u)
+	}
 	writeJSON(w, http.StatusCreated, u)
 }
 
@@ -200,7 +218,8 @@ func (s *Server) handleRuntimeChatUploadDelete(w http.ResponseWriter, r *http.Re
 	if !s.runtimeAvailable(w) {
 		return
 	}
-	u, err := s.store.DeleteRuntimeChatUpload(r.Context(), currentUser(r).ID, runtimeID(r, "id"))
+	owner := currentUser(r).ID
+	u, err := s.store.DeleteRuntimeChatUpload(r.Context(), owner, runtimeID(r, "id"))
 	if err != nil {
 		if notFound(err) {
 			writeErrCode(w, http.StatusNotFound, codeRuntimeChatUploadUnavailable, nil, "附件不存在或已经发出")
@@ -210,6 +229,14 @@ func (s *Server) handleRuntimeChatUploadDelete(w http.ResponseWriter, r *http.Re
 		return
 	}
 	s.removeRuntimeChatUpload(*u)
+	// 删除已经生效，再按附件所属线程判断是不是团队线程。这里不能用 RuntimeChatConversation：它按当前可见性过滤，
+	// 员工调岗或机器人取消共享之后就查不到了，团队附件的删除会漏审计（团队文件传递出现缺口）。
+	// 读不到对话仍然只 Warn、不影响 204。
+	if ownedByTeam, botID, _, err := s.store.RuntimeChatConversationScope(r.Context(), u.ConversationID); err != nil {
+		s.log.Warn("读取团队附件所属对话失败，删除未记审计", "conversation_id", u.ConversationID, "err", err)
+	} else if ownedByTeam {
+		s.auditRuntimeChatTeamAttachment(r, auditRuntimeChatUploadDelete, u.ConversationID, botID, *u)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
